@@ -148,7 +148,7 @@ Already configured in `release.yml`, but for reference — on
 | Field | Value |
 | --- | --- |
 | PyPI project | `saidex` |
-| Owner | `mlauff-labs` |
+| Owner | `mlauf-labs` |
 | Repository | `saidex` |
 | Workflow | `release.yml` |
 | Environment | `pypi` |
