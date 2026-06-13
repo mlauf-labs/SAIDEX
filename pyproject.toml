@@ -1,0 +1,110 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "saidex"
+dynamic = ["version"]
+description = "SAIDEX — Structured AI Data EXtraction: validated Pydantic models from LLM responses with automatic retry, fallback, and an agentic tool loop"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+authors = [{ name = "Martin Lauff", email = "martin-l22@web.de" }]
+keywords = [
+    "llm",
+    "pydantic",
+    "structured-output",
+    "langchain",
+    "openai",
+    "extraction",
+    "ai",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "pydantic>=2.0",
+    "langchain-core>=0.2.0",
+    "json-repair>=0.60.1",
+]
+
+[project.optional-dependencies]
+openai = ["openai>=1.0.0"]
+benchmarks = ["langchain-openai>=0.1.0", "Pillow>=10.0"]
+
+[project.urls]
+Homepage = "https://github.com/mlauff-labs/saidex"
+Documentation = "https://github.com/mlauff-labs/saidex/blob/main/docs/index.md"
+Repository = "https://github.com/mlauff-labs/saidex"
+"Bug Tracker" = "https://github.com/mlauff-labs/saidex/issues"
+Changelog = "https://github.com/mlauff-labs/saidex/blob/main/CHANGELOG.md"
+
+[tool.hatch.version]
+path = "src/saidex/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/saidex"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["saidex"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+packages = ["saidex"]
+
+# openai is an optional extra (saidex[openai]) — its import is guarded at runtime.
+[[tool.mypy.overrides]]
+module = "openai"
+ignore_missing_imports = true
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+version = "0.2.0"
+version_provider = "commitizen"
+tag_format = "v$version"
+update_changelog_on_bump = true
+major_version_zero = true
+# Keep the single source of truth in __init__.py (read by hatch) in sync.
+version_files = [
+    "src/saidex/__init__.py:__version__",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src/saidex"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.10",
+    "mypy>=1.5",
+    "ruff>=0.3.0",
+    "hatchling",
+    "commitizen>=4.16.3",
+]

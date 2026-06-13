@@ -1,0 +1,13 @@
+#!/usr/bin/env sh
+#
+# commit-msg hook — enforce Conventional Commits via commitizen.
+#
+# Activated by pointing git at this directory once per clone:
+#     git config core.hooksPath .githooks
+#
+# It rejects any commit whose message does not follow the
+# Conventional Commits format (feat:, fix:, docs:, chore!: …).
+# Bypass in an emergency with:  git commit --no-verify
+
+# "$1" is the path to the file holding the proposed commit message.
+uv run cz check --commit-msg-file "$1"
