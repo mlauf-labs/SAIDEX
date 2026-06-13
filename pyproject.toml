@@ -14,9 +14,10 @@ keywords = [
     "llm",
     "pydantic",
     "structured-output",
+    "structured-data",
     "langchain",
-    "openai",
     "extraction",
+    "data-extraction",
     "ai",
 ]
 classifiers = [
