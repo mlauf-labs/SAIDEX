@@ -1,8 +1,13 @@
 name: Release to PyPI
 
-# Publishes to PyPI via Trusted Publishing (OIDC) — no API token needed.
-# One-time setup on https://pypi.org/manage/account/publishing/:
-#   project: saidex, owner: mlauff-labs, repository: saidex,
+# Publishes via Trusted Publishing (OIDC) — no API token needed.
+#
+# TEMPORARY: this targets TestPyPI while we validate the release pipeline.
+# To go live on production PyPI, remove the `with: repository-url:` step below
+# and set up the trusted publisher on https://pypi.org instead.
+#
+# One-time setup on https://test.pypi.org/manage/account/publishing/:
+#   project: saidex, owner: mlauf-labs, repository: SAIDEX,
 #   workflow: release.yml, environment: pypi
 on:
   release:
@@ -38,5 +43,7 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Publish to PyPI
+      - name: Publish to TestPyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
