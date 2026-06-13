@@ -97,10 +97,16 @@ Run these locally before pushing and you won't be surprised by CI.
 
 ## Pull request checklist
 
-1. Create a feature branch in your fork:
+The project follows the **Git Flow** model: `feature/*` branches off `develop`,
+and pull requests target **`develop`** (never `main` directly). See
+[docs/repo-setup.md](docs/repo-setup.md) for the full branching model and the
+branch-protection rules.
+
+1. Create a feature branch off `develop` in your fork:
 
    ```bash
-   git checkout -b feat/my-feature      # or fix/..., docs/...
+   git switch develop
+   git switch -c feature/my-feature      # or fix/..., docs/...
    ```
 
 2. Make your changes:
@@ -112,8 +118,8 @@ Run these locally before pushing and you won't be surprised by CI.
 
 3. Verify everything passes (see [What CI checks](#what-ci-checks)).
 
-4. Open the pull request with a short description of *what* and *why*.
-   Reference the related issue if there is one (`Fixes #123`).
+4. Open the pull request **against `develop`** with a short description of
+   *what* and *why*. Reference the related issue if there is one (`Fixes #123`).
 
 Small, focused PRs are reviewed much faster than large ones — when in doubt,
 split it up.
@@ -132,4 +138,6 @@ uv lock --upgrade && uv sync     # upgrade everything (separate PR, please)
 ## Releases (maintainers)
 
 Versioning, changelog, and tagging are automated with Commitizen. See
-[RELEASING.md](RELEASING.md) for the full step-by-step checklist.
+[RELEASING.md](RELEASING.md) for the full step-by-step checklist, and
+[docs/repo-setup.md](docs/repo-setup.md) for the branch-protection and
+PyPI-publish safeguards.

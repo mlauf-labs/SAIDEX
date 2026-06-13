@@ -2,9 +2,9 @@ name: Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
 
 jobs:
   test:
@@ -36,3 +36,15 @@ jobs:
 
       - name: Run tests with coverage
         run: uv run pytest --cov --cov-report=term-missing
+
+  # Single aggregated check to use as the required status check in branch
+  # protection — stays stable even when the Python matrix above changes.
+  ci-success:
+    name: CI success
+    if: always()
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any matrix job failed
+        if: needs.test.result != 'success'
+        run: exit 1
