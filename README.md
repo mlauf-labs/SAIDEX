@@ -2,11 +2,11 @@
 
 > **LangChain-native · async · Pydantic validated · tool-calling + JSON modes · agentic tool loop · auto-retry · fallback model · multimodal · small & local models**
 
-[![CI](https://img.shields.io/github/actions/workflow/status/mlauff-labs/saidex/tests.yml?label=CI&logo=github)](https://github.com/mlauff-labs/saidex/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/mlauf-labs/saidex/tests.yml?label=CI&logo=github)](https://github.com/mlauf-labs/saidex/actions)
 [![PyPI](https://img.shields.io/pypi/v/saidex.svg)](https://pypi.org/project/saidex/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://github.com/mlauff-labs/saidex/blob/main/docs/index.md)
+[![Docs](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://github.com/mlauf-labs/saidex/blob/main/docs/index.md)
 
 **[Docs](docs/index.md) · [Install](#installation) · [Quick start](#quick-start) · [Examples](examples/) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Changelog](CHANGELOG.md)**
 
@@ -833,7 +833,7 @@ The items below are planned for upcoming releases. Contributions and feedback we
 | **Additional providers** | 🔜 Planned | First-class support for Anthropic, Gemini, Mistral without LangChain wrapper |
 | **Langfuse integration guide** | 🔜 Planned | End-to-end tracing example in the docs |
 
-> Have a use case not listed here? [Open an issue](https://github.com/mlauff-labs/saidex/issues/new) — we'd love to hear about it.
+> Have a use case not listed here? [Open an issue](https://github.com/mlauf-labs/saidex/issues/new) — we'd love to hear about it.
 
 ---
 
@@ -882,7 +882,7 @@ pip install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # 2. Clone the repository
-git clone https://github.com/mlauff-labs/saidex
+git clone https://github.com/mlauf-labs/saidex
 cd saidex
 
 # 3. Create the virtual environment and install all dependencies
@@ -961,7 +961,7 @@ test/lint/type-check commands, and the pull-request checklist.
 
 If you discover a security vulnerability, please **do not** open a public issue.
 Report it privately via
-[GitHub Security Advisories](https://github.com/mlauff-labs/saidex/security/advisories/new) —
+[GitHub Security Advisories](https://github.com/mlauf-labs/saidex/security/advisories/new) —
 see [SECURITY.md](SECURITY.md) for details.
 
 ---

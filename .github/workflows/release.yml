@@ -2,7 +2,7 @@ name: Release to PyPI
 
 # Publishes to PyPI via Trusted Publishing (OIDC) — no API token needed.
 # One-time setup on https://pypi.org/manage/account/publishing/:
-#   project: saidex, owner: mlauff-labs, repository: saidex,
+#   project: saidex, owner: mlauf-labs, repository: SAIDEX,
 #   workflow: release.yml, environment: pypi
 on:
   release:

@@ -14,7 +14,7 @@ Only the latest release receives security updates.
 Please **do not open a public issue** for security problems.
 
 Report vulnerabilities privately via
-[GitHub Security Advisories](https://github.com/mlauff-labs/saidex/security/advisories/new)
+[GitHub Security Advisories](https://github.com/mlauf-labs/saidex/security/advisories/new)
 ("Report a vulnerability" on the repository's Security tab).
 If you cannot use GitHub, email [martin-l22@web.de](mailto:martin-l22@web.de)
 with `[saidex security]` in the subject line.

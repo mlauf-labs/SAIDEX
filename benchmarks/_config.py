@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from langchain_openai import ChatOpenAI
 
-# OLLAMA_BASE_URL = "http://10.0.0.41:30068/v1"
-OLLAMA_BASE_URL = "http://10.0.0.128:11434/v1"
+OLLAMA_BASE_URL = "http://localhost:11434/v1"
 
 MODELS: list[str] = [
     # --- Llama ---

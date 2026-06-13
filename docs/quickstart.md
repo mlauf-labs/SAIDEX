@@ -36,7 +36,7 @@ OpenAI, Anthropic, Google Gemini, Mistral, Azure OpenAI, and others.
 # Install uv (if not already installed)
 pip install uv
 
-git clone https://github.com/mlauff-labs/saidex
+git clone https://github.com/mlauf-labs/saidex
 cd saidex
 uv sync          # creates .venv and installs all dependencies
 ```
