@@ -53,6 +53,6 @@ First public release on PyPI.
 - Full type annotations (PEP 561 `py.typed` marker)
 - Async-first API
 
-[Unreleased]: https://github.com/mlauff-labs/saidex/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/mlauff-labs/saidex/releases/tag/v0.2.0
-[0.1.0]: https://github.com/mlauff-labs/saidex/releases/tag/v0.1.0
+[Unreleased]: https://github.com/mlauf-labs/saidex/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.2.0
+[0.1.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.1.0

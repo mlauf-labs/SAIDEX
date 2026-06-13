@@ -6,7 +6,7 @@ a development environment, what checks must pass, and how to submit changes.
 ## Before you start
 
 - **Bugs and small fixes:** open a pull request directly, or file an
-  [issue](https://github.com/mlauff-labs/saidex/issues) if you can't fix it
+  [issue](https://github.com/mlauf-labs/saidex/issues) if you can't fix it
   yourself.
 - **New features or behaviour changes:** please open an issue first to discuss
   the idea — this avoids wasted work when a feature doesn't fit the project's

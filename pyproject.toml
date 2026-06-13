@@ -6,10 +6,10 @@ build-backend = "hatchling.build"
 name = "saidex"
 dynamic = ["version"]
 description = "SAIDEX — Structured AI Data EXtraction: validated Pydantic models from LLM responses with automatic retry, fallback, and an agentic tool loop"
-readme = "README.md"
+readme = { file = "README_PYPI.md", content-type = "text/markdown" }
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-authors = [{ name = "Martin Lauff", email = "martin-l22@web.de" }]
+authors = [{ name = "Martin Lauff", email = "292779138+mlauf-labs@users.noreply.github.com" }]
 keywords = [
     "llm",
     "pydantic",
@@ -43,11 +43,11 @@ openai = ["openai>=1.0.0"]
 benchmarks = ["langchain-openai>=0.1.0", "Pillow>=10.0"]
 
 [project.urls]
-Homepage = "https://github.com/mlauff-labs/saidex"
-Documentation = "https://github.com/mlauff-labs/saidex/blob/main/docs/index.md"
-Repository = "https://github.com/mlauff-labs/saidex"
-"Bug Tracker" = "https://github.com/mlauff-labs/saidex/issues"
-Changelog = "https://github.com/mlauff-labs/saidex/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/mlauf-labs/saidex"
+Documentation = "https://github.com/mlauf-labs/saidex/blob/main/docs/index.md"
+Repository = "https://github.com/mlauf-labs/saidex"
+"Bug Tracker" = "https://github.com/mlauf-labs/saidex/issues"
+Changelog = "https://github.com/mlauf-labs/saidex/blob/main/CHANGELOG.md"
 
 [tool.hatch.version]
 path = "src/saidex/__init__.py"
