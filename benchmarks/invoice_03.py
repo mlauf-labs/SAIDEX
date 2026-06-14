@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
+from saidex import ISODateStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -23,11 +24,13 @@ from ._base import BenchmarkScenario, run_all_models
 class InvoiceData(BaseModel):
     """Key fields extracted from an invoice document."""
 
-    contract_number: str | None = Field(None, description="Order number or job number, e.g. ORD-88124")
-    customer_number: str | None = Field(None, description="Customer number, e.g. KNR-20091")
-    invoice_date: str | None = Field(None, description="Invoice date in ISO format if possible")
-    address: str | None = Field(None, description="Full delivery or billing address as a single string")
-    company_name: str | None = Field(None, description="Company or shop name of the sender (seller)")
+    contract_number: str = Field(description="Order number or job number, e.g. ORD-88124")
+    customer_number: str = Field(description="Customer number, e.g. KNR-20091")
+    invoice_date: ISODateStr = Field(description="Invoice date as yyyy-mm-dd, e.g. 2024-09-23")
+    address: str = Field(description="Full delivery or billing address as a single string")
+    billed_company_name: str = Field(description="Company name of the invoice recipient (the customer being billed)")
+    issuing_company_name: str = Field(description="Company or shop name of the sender (seller)")
+    total_amount: float = Field(description="Total amount of the order as a plain number, without currency symbol, e.g. 27.43")
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +96,8 @@ SCENARIO = BenchmarkScenario(
         "contract_number": "ORD-88124",
         "customer_number": "KNR-20091",
         "invoice_date": "2024-09-23",
-        "company_name": "HobbyBastel24",
+        "issuing_company_name": "HobbyBastel24",
+        "total_amount": 27.43,
     },
 )
 

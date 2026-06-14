@@ -22,7 +22,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import ExtractionMode, extract_from_text
+from saidex import ExtractionMode, ISODateStr, extract_from_text
 
 from ._config import MODELS, make_llm
 
@@ -34,11 +34,11 @@ from ._config import MODELS, make_llm
 class InvoiceData(BaseModel):
     """Key fields extracted from an invoice document."""
 
-    contract_number: str | None = Field(None, description="Contract or subscription number")
-    customer_number: str | None = Field(None, description="Customer ID or account number")
-    invoice_date: str | None = Field(None, description="Invoice issue date in ISO format if possible")
-    address: str | None = Field(None, description="Full billing address of the customer")
-    company_name: str | None = Field(None, description="Name of the company being billed")
+    contract_number: str = Field(description="Contract or subscription number")
+    customer_number: str = Field(description="Customer ID or account number")
+    invoice_date: ISODateStr = Field(description="Invoice issue date as yyyy-mm-dd")
+    address: str = Field(description="Full billing address of the customer")
+    company_name: str = Field(description="Name of the company being billed")
 
 
 # ---------------------------------------------------------------------------

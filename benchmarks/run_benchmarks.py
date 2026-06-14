@@ -59,7 +59,7 @@ from .vision_invoice import SCENARIOS as VISION_INVOICE
 
 from pydantic import BaseModel
 
-from ._base import BenchmarkResult, BenchmarkScenario, run_scenario, warmup_model
+from ._base import AtLeast, Between, BenchmarkResult, BenchmarkScenario, run_scenario, warmup_model
 from ._config import MODELS, OLLAMA_BASE_URL, VISION_MODELS
 
 # ---------------------------------------------------------------------------
@@ -174,25 +174,169 @@ def _normalise(value: Any) -> str:
     return str(value).strip().lower().replace(" ", "")
 
 
+def _lenient_match(actual: Any, expected: Any) -> bool:
+    """Compare two scalars leniently (equal, or one contained in the other).
+
+    Used for nested object fields (e.g. an ``action_items`` owner) where the
+    model may return ``"Jana Berger"`` while the expected value is ``"Jana"``.
+    """
+    a, e = _normalise(actual), _normalise(expected)
+    if not a or not e:
+        return a == e
+    return a == e or e in a or a in e
+
+
+def _pop_matching_item(remaining: list[Any], expected_item: dict[str, Any]) -> dict[str, Any] | None:
+    """Find and remove the actual item that best matches *expected_item*.
+
+    The first key of *expected_item* (e.g. ``owner``) acts as the identifier:
+    an actual item must match it to be a candidate. Among candidates, the one
+    matching the most additional fields (e.g. ``due_date``) wins and is consumed
+    so it cannot be matched again.
+    """
+    id_key = next(iter(expected_item))
+    id_val = expected_item[id_key]
+    candidates = [
+        (idx, item)
+        for idx, item in enumerate(remaining)
+        if isinstance(item, dict) and _lenient_match(item.get(id_key), id_val)
+    ]
+    if not candidates:
+        return None
+    best_idx, _ = max(
+        candidates,
+        key=lambda pair: sum(
+            1 for k, v in expected_item.items() if _lenient_match(pair[1].get(k), v)
+        ),
+    )
+    return remaining.pop(best_idx)
+
+
+def _check_object_list(
+    actual: Any, expected_items: list[dict[str, Any]]
+) -> tuple[int, int]:
+    """Check a list-of-objects field (e.g. ``action_items``).
+
+    Contributes one check for the element count plus one check per field of each
+    expected item (e.g. ``owner`` and ``due_date``). Items are matched by their
+    identifier field, independent of ordering.
+    """
+    actual_items = list(actual) if isinstance(actual, list) else []
+    correct = 1 if len(actual_items) == len(expected_items) else 0
+    total = 1
+    remaining = list(actual_items)
+    for expected_item in expected_items:
+        match = _pop_matching_item(remaining, expected_item)
+        for key, exp_val in expected_item.items():
+            total += 1
+            if match is not None and _lenient_match(match.get(key), exp_val):
+                correct += 1
+    return (correct, total)
+
+
+def _check_scalar_list(actual: Any, expected_items: list[Any]) -> tuple[int, int]:
+    """Check a list-of-scalars field (e.g. NER person or organisation lists).
+
+    Each expected item contributes one check: it passes when *any* element in
+    the actual list is a lenient match (containment, case-insensitive). Order is
+    not considered — only that the expected items are present.
+    """
+    actual_items = list(actual) if isinstance(actual, list) else []
+    correct = sum(
+        1 for exp in expected_items
+        if any(_lenient_match(act, exp) for act in actual_items)
+    )
+    return (correct, len(expected_items))
+
+
+def _as_float(value: Any) -> float | None:
+    """Coerce *value* to ``float``; return ``None`` if it is not numeric."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _numeric_equal(actual: Any, expected: float) -> bool:
+    """Compare *actual* to a numeric *expected* with a small tolerance.
+
+    Accepts ints, floats, and numeric strings (``"450"``, ``"1.2"``) for
+    *actual*. The tolerance absorbs float representation noise and int/float
+    mismatches (``450`` vs ``450.0``) without being lenient enough to let a
+    genuinely different value pass.
+    """
+    a = _as_float(actual)
+    if a is None:
+        return False
+    return abs(a - float(expected)) <= 1e-9 + 1e-6 * abs(float(expected))
+
+
+def _check_field(actual: Any, expected: Any) -> tuple[int, int]:
+    """Return (correct, total) checks for a single expected field.
+
+    The comparison style is chosen by the *expected* value's type:
+
+    * :class:`AtLeast` / :class:`Between` -> numeric range/threshold check.
+    * ``list[dict]``    -> list-of-objects check (count + per-item field matches).
+    * ``list[str]``     -> subset check: each expected scalar must appear in
+                           actual (order-independent, lenient string matching).
+    * ``bool``          -> exact (string-normalised) comparison.
+    * ``int`` / ``float`` against a list -> element-count check on its length.
+    * ``int`` / ``float`` against a scalar -> numeric comparison with tolerance.
+    * anything else     -> lenient string comparison of the scalar value.
+    """
+    if isinstance(expected, AtLeast):
+        a = _as_float(actual)
+        return (1 if a is not None and a >= expected.value else 0, 1)
+    if isinstance(expected, Between):
+        a = _as_float(actual)
+        return (1 if a is not None and expected.low <= a <= expected.high else 0, 1)
+    if isinstance(expected, list):
+        if expected and isinstance(expected[0], dict):
+            return _check_object_list(actual, expected)
+        return _check_scalar_list(actual, expected)
+    if isinstance(expected, bool):
+        return (1 if actual is not None and _normalise(actual) == _normalise(expected) else 0, 1)
+    if isinstance(expected, (int, float)):
+        if isinstance(actual, list):
+            return (1 if len(actual) == expected else 0, 1)
+        return (1 if _numeric_equal(actual, expected) else 0, 1)
+    if actual is not None and _normalise(actual) == _normalise(expected):
+        return (1, 1)
+    return (0, 1)
+
+
+def _field_total(expected: Any) -> int:
+    """Number of individual checks a single expected value contributes."""
+    if isinstance(expected, list):
+        if expected and isinstance(expected[0], dict):
+            return 1 + sum(len(item) for item in expected if isinstance(item, dict))
+        return len(expected)
+    return 1
+
+
 def _field_accuracy(
     scenario: BenchmarkScenario[Any],
     result: BenchmarkResult,
 ) -> tuple[int, int]:
     """Return (correct, total) field matches against the scenario's expected values.
 
-    Only fields listed in ``scenario.expected`` are evaluated. Returns (0, 0)
-    when there is nothing to compare against.
+    Only fields listed in ``scenario.expected`` are evaluated. Each expected
+    field may contribute more than one check (see :func:`_check_field`): a plain
+    scalar is one check, an ``int`` is an element-count check on a list field,
+    and a list of dicts expands into a count check plus per-item field checks.
+    Returns (0, total) when there is nothing to compare against.
     """
+    total = sum(_field_total(v) for v in scenario.expected.values())
     if not scenario.expected or not result.success or result.value is None:
-        return (0, len(scenario.expected))
+        return (0, total)
 
     data = result.value.model_dump()
     correct = 0
     for key, expected_value in scenario.expected.items():
-        actual = data.get(key)
-        if actual is not None and _normalise(actual) == _normalise(expected_value):
-            correct += 1
-    return (correct, len(scenario.expected))
+        c, _ = _check_field(data.get(key), expected_value)
+        correct += c
+    return (correct, total)
 
 
 def _md_escape(text: Any) -> str:
@@ -201,21 +345,67 @@ def _md_escape(text: Any) -> str:
     return s.replace("|", "\\|").replace("\n", " ").strip()
 
 
-def _value_summary(value: BaseModel | None) -> str:
-    """Compact one-line summary of an extracted Pydantic model for a table cell."""
+def _format_cell_value(value: Any) -> str:
+    """Render a single extracted value compactly and table-cell-safe.
+
+    Lists are summarised by their length (``[3]``); long strings are truncated;
+    ``None`` becomes ``∅``. Pipes and newlines are neutralised so the value can
+    sit inside a Markdown table cell.
+    """
+    if value is None:
+        return "∅"
+    if isinstance(value, list):
+        return f"[{len(value)}]"
+    s = str(value).replace("\n", " ")
+    if len(s) > 40:
+        s = s[:37] + "…"
+    return s.replace("|", "\\|").strip()
+
+
+def _format_expected_value(expected: Any) -> str:
+    """Render an expected value (incl. ``AtLeast``/``Between``) for the hint text."""
+    if isinstance(expected, AtLeast):
+        return f"≥ {expected.value}"
+    if isinstance(expected, Between):
+        return f"{expected.low}–{expected.high}"
+    if isinstance(expected, list):
+        return f"[{len(expected)}]"
+    return _format_cell_value(expected)
+
+
+def _value_detail(value: BaseModel | None, expected: dict[str, Any]) -> str:
+    """Field-by-field breakdown of an extracted model for a table cell.
+
+    Each field is rendered on its own line (joined with ``<br>``) and prefixed
+    with a status marker:
+
+    * 🟢 — field matches the expected value.
+    * 🟡 — list field partially matches (some expected items found).
+    * 🔴 — field is wrong or missing; the expected value is shown after it.
+    * ⚪ — field has no expected value (informational only).
+    """
     if value is None:
         return "—"
-    parts = []
-    for k, v in value.model_dump().items():
-        if v is None:
-            continue
-        if isinstance(v, list):
-            parts.append(f"{k}=[{len(v)}]")
-        elif isinstance(v, str) and len(v) > 40:
-            parts.append(f"{k}={v[:37]}…")
-        else:
-            parts.append(f"{k}={v}")
-    return ", ".join(parts) if parts else "—"
+    data = value.model_dump()
+    lines: list[str] = []
+    for key, val in data.items():
+        if key in expected:
+            correct, total = _check_field(val, expected[key])
+            if correct >= total:
+                marker = "🟢"
+            elif correct > 0:
+                marker = "🟡"
+            else:
+                marker = "🔴"
+            line = f"{marker} {key}={_format_cell_value(val)}"
+            if total > 1:
+                line += f" ({correct}/{total})"
+            if correct < total:
+                line += f" — expected: {_format_expected_value(expected[key])}"
+            lines.append(line)
+        elif val is not None:
+            lines.append(f"⚪ {key}={_format_cell_value(val)}")
+    return "<br>".join(lines) if lines else "—"
 
 
 def _scenario_image_link(scenario: BenchmarkScenario[Any], report_dir: Path) -> str | None:
@@ -248,13 +438,13 @@ def _build_report_md(
     # --- Header ---
     lines.append("# LLM Structured Output — Benchmark Report")
     lines.append("")
-    lines.append(f"- **Erstellt:** {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"- **Created:** {now.strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"- **Ollama URL:** `{OLLAMA_BASE_URL}`")
-    lines.append(f"- **Gruppen:** {', '.join(groups)}")
-    lines.append(f"- **Modelle:** {', '.join(f'`{m}`' for m in models)}")
+    lines.append(f"- **Groups:** {', '.join(groups)}")
+    lines.append(f"- **Models:** {', '.join(f'`{m}`' for m in models)}")
     total_runs = sum(len(r) for r in all_results.values())
     total_ok = sum(1 for rs in all_results.values() for r in rs if r.success)
-    lines.append(f"- **Läufe gesamt:** {total_runs} ({total_ok} erfolgreich)")
+    lines.append(f"- **Total runs:** {total_runs} ({total_ok} successful)")
     lines.append("")
 
     # --- Split results into text vs vision scenarios ---
@@ -274,6 +464,10 @@ def _build_report_md(
         total_cnt: dict[str, int] = defaultdict(int)
         acc_correct: dict[str, int] = defaultdict(int)
         acc_total: dict[str, int] = defaultdict(int)
+        tok_in: dict[str, list[int]] = defaultdict(list)
+        tok_out: dict[str, list[int]] = defaultdict(list)
+        retries: dict[str, list[int]] = defaultdict(list)
+        one_shot: dict[str, int] = defaultdict(int)
 
         for scenario_name, results in subset.items():
             scenario = scenarios_by_name.get(scenario_name)
@@ -282,6 +476,12 @@ def _build_report_md(
                 if r.success:
                     success_cnt[r.model] += 1
                     speed[r.model].append(r.duration_s)
+                    retries[r.model].append(r.retries)
+                    if r.retries == 0:
+                        one_shot[r.model] += 1
+                if r.total_tokens:
+                    tok_in[r.model].append(r.input_tokens)
+                    tok_out[r.model].append(r.output_tokens)
                 if scenario is not None:
                     c, t = _field_accuracy(scenario, r)
                     acc_correct[r.model] += c
@@ -292,8 +492,14 @@ def _build_report_md(
 
         lines.append(f"## {title}")
         lines.append("")
-        lines.append("| # | Modell | Erfolg | Quote | Feld-Genauigkeit | Ø Zeit | Gesamtzeit |")
-        lines.append("|---|--------|--------|-------|------------------|--------|------------|")
+        lines.append(
+            "| # | Model | Success | Rate | One-shot | Ø Retries | Field accuracy | "
+            "Ø Time | Total time | Ø Tokens (In/Out) |"
+        )
+        lines.append(
+            "|---|-------|---------|------|----------|-----------|----------------|"
+            "--------|------------|-------------------|"
+        )
 
         def _sort_key(m: str) -> tuple[float, float]:
             rate = success_cnt[m] / total_cnt[m] if total_cnt[m] else 0.0
@@ -304,30 +510,51 @@ def _build_report_md(
             rate = success_cnt[model] / total_cnt[model] * 100 if total_cnt[model] else 0
             avg = sum(speed[model]) / len(speed[model]) if speed[model] else 0.0
             total = sum(speed[model])
+            if success_cnt[model]:
+                os_pct = one_shot[model] / success_cnt[model] * 100
+                os_str = f"{one_shot[model]}/{success_cnt[model]} ({os_pct:.0f}%)"
+                avg_retries = sum(retries[model]) / len(retries[model])
+                retries_str = f"{avg_retries:.1f}"
+            else:
+                os_str = "—"
+                retries_str = "—"
             if acc_total[model]:
                 acc_pct = acc_correct[model] / acc_total[model] * 100
                 acc_str = f"{acc_correct[model]}/{acc_total[model]} ({acc_pct:.0f}%)"
             else:
                 acc_str = "—"
+            if tok_in[model]:
+                avg_in = sum(tok_in[model]) / len(tok_in[model])
+                avg_out = sum(tok_out[model]) / len(tok_out[model])
+                tok_str = f"{avg_in:.0f} / {avg_out:.0f}"
+            else:
+                tok_str = "—"
             lines.append(
                 f"| {rank} | `{model}` | {success_cnt[model]}/{total_cnt[model]} | "
-                f"{rate:.0f}% | {acc_str} | {avg:.1f}s | {total:.1f}s |"
+                f"{rate:.0f}% | {os_str} | {retries_str} | {acc_str} | "
+                f"{avg:.1f}s | {total:.1f}s | {tok_str} |"
             )
         lines.append("")
 
     if text_results:
-        _emit_ranking("Gesamtranking — Text", text_results)
+        _emit_ranking("Overall Ranking — Text", text_results)
     if vision_results:
-        _emit_ranking("Gesamtranking — Vision (Bild-Eingabe)", vision_results)
+        _emit_ranking("Overall Ranking — Vision (Image Input)", vision_results)
 
     # --- Per-group detailed results ---
-    lines.append("## Detailergebnisse")
+    lines.append("## Detailed Results")
+    lines.append("")
+    lines.append(
+        "_Legend: 🟢 correct · 🟡 partially correct (list) · 🔴 wrong or missing "
+        "(expected value shown) · ⚪ no expected value (informational). "
+        "`∅` = field not extracted; `[n]` = list with n items._"
+    )
     lines.append("")
     for group_name in groups:
         scenarios = ALL_SCENARIOS.get(group_name, [])
         if not scenarios:
             continue
-        lines.append(f"### Gruppe: {group_name.capitalize()}")
+        lines.append(f"### Group: {group_name.capitalize()}")
         lines.append("")
         for scenario in scenarios:
             results = all_results.get(scenario.name, [])
@@ -341,29 +568,34 @@ def _build_report_md(
             if scenario.vision:
                 img_link = _scenario_image_link(scenario, report_dir)
                 if img_link:
-                    lines.append("**Eingabebild (Vision-Input):**")
+                    lines.append("**Input image (vision input):**")
                     lines.append("")
                     lines.append(f"![{_md_escape(scenario.name)}]({img_link})")
                     lines.append("")
-            lines.append("| Modell | OK | Zeit | Retries | Genauigkeit | Extrahierte Werte |")
-            lines.append("|--------|----|------|---------|-------------|-------------------|")
+            lines.append(
+                "| Model | OK | Time | Retries | Tokens (In/Out) | Accuracy | Extracted Values |"
+            )
+            lines.append(
+                "|-------|----|------|---------|-----------------|----------|------------------|"
+            )
             for r in results:
                 ok = "✅" if r.success else "❌"
                 if r.success:
-                    detail = _md_escape(_value_summary(r.value))
+                    detail = _value_detail(r.value, scenario.expected)
                 else:
-                    detail = f"FEHLER: {_md_escape(r.error or '—')[:80]}"
+                    detail = f"ERROR: {_md_escape(r.error or '—')[:80]}"
                 c, t = _field_accuracy(scenario, r)
                 acc = f"{c}/{t}" if t else "—"
+                tokens = f"{r.input_tokens} / {r.output_tokens}" if r.total_tokens else "—"
                 lines.append(
                     f"| `{r.model}` | {ok} | {r.duration_s:.1f}s | {r.retries} | "
-                    f"{acc} | {detail} |"
+                    f"{tokens} | {acc} | {detail} |"
                 )
             lines.append("")
 
     lines.append("---")
     lines.append("")
-    lines.append("_Generiert von `benchmarks/run_benchmarks.py`._")
+    lines.append("_Generated by `benchmarks/run_benchmarks.py`._")
     lines.append("")
     return "\n".join(lines)
 

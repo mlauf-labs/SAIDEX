@@ -731,6 +731,23 @@ formats it into a structured error message, and — inside
 > [`examples/06_pydantic_validators.py`](examples/06_pydantic_validators.py)
 > — [detailed docs](docs/validators.md)
 
+For common cases the library ships **ready-made field types** so you don't have
+to write a validator at all — e.g. `ISODateStr` for `yyyy-mm-dd` dates, plus
+`IbanStr`, `VatIdStr`, `CountryCodeStr`, `CurrencyCodeStr`, `IsinStr`,
+`PhoneStr`, and `LanguageCodeStr`:
+
+```python
+from saidex import ISODateStr, IbanStr, CountryCodeStr
+
+class Payment(BaseModel):
+    due_date: ISODateStr | None = Field(None, description="Due date as yyyy-mm-dd")
+    iban: IbanStr | None = Field(None, description="Payee IBAN")
+    country: CountryCodeStr | None = Field(None, description="ISO 3166-1 alpha-2 code")
+```
+
+> Full list and a guide to building your own:
+> [`docs/built-in-types.md`](docs/built-in-types.md)
+
 ---
 
 ## API reference
@@ -826,12 +843,13 @@ The items below are planned for upcoming releases. Contributions and feedback we
 | Feature | Status | Notes |
 | --- | --- | --- |
 | **Batch extraction** | 🔜 Planned | Extract a list of items from a single document in one call, returning `list[ModelT]` |
-| **Streaming extraction** | 🔜 Planned | Yield validated objects incrementally as the LLM produces output |
 | **Sync API wrapper** | 🔜 Planned | `extract_from_text_sync` / `get_structured_data_sync` for non-async contexts |
 | **Caching layer** | 🔜 Planned | Optional result cache keyed on (schema, text hash) to avoid duplicate LLM calls |
 | **CLI tool** | 🔜 Planned | `saidex` command for quick one-off extractions from the terminal |
 | **Additional providers** | 🔜 Planned | First-class support for Anthropic, Gemini, Mistral without LangChain wrapper |
 | **Langfuse integration guide** | 🔜 Planned | End-to-end tracing example in the docs |
+| **Token Counting guid** | 🔜 Planned | short Guide in docs on how to count the token that are used |
+| **External Validater lambda** | 🔜 Planned | adding an external user lambda funktion parameter to all extration methods to allow more komplex validations on the extracted type. |
 
 > Have a use case not listed here? [Open an issue](https://github.com/mlauf-labs/saidex/issues/new) — we'd love to hear about it.
 

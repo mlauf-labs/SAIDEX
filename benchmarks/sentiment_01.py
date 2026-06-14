@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from ._base import BenchmarkScenario, run_all_models
+from ._base import AtLeast, BenchmarkScenario, run_all_models
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -37,7 +37,6 @@ class SentimentResult(BaseModel):
         description="One to two sentence summary of the overall tone and main points"
     )
     emotions: list[str] = Field(
-        default_factory=list,
         description="Dominant emotions expressed (e.g. joy, gratitude, excitement, frustration)"
     )
 
@@ -101,7 +100,10 @@ SCENARIO = BenchmarkScenario(
     schema=SentimentResult,
     text=REVIEW_TEXT,
     system_prompt="Analyse the sentiment of the following customer feedback precisely and in detail.",
-    expected={"sentiment": "positive", "confidence": 0.95},
+    # confidence: a clear-cut positive review — the model should be confident,
+    # but the exact value is model-subjective, so check a sensible floor rather
+    # than an arbitrary exact number (which would cause false negatives).
+    expected={"sentiment": "positive", "confidence": AtLeast(0.8)},
 )
 
 
