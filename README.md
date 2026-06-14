@@ -6,9 +6,9 @@
 [![PyPI](https://img.shields.io/pypi/v/saidex.svg)](https://pypi.org/project/saidex/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Docs](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://github.com/mlauf-labs/saidex/blob/main/docs/index.md)
+[![Docs](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://mlauf-labs.github.io/SAIDEX/)
 
-**[Docs](docs/index.md) · [Install](#installation) · [Quick start](#quick-start) · [Examples](examples/) · [Roadmap](#roadmap) · [Contributing](#contributing) · [Changelog](CHANGELOG.md)**
+**[Docs](docs/index.md) · [Install](#installation) · [Quick start](#quick-start) · [Examples](examples/) · [Contributing](#contributing) · [Changelog](CHANGELOG.md)**
 
 ---
 
@@ -836,25 +836,6 @@ All parameters of `get_structured_data` plus:
 
 ---
 
-## Roadmap
-
-The items below are planned for upcoming releases. Contributions and feedback welcome — open an issue to discuss or upvote a feature.
-
-| Feature | Status | Notes |
-| --- | --- | --- |
-| **Batch extraction** | 🔜 Planned | Extract a list of items from a single document in one call, returning `list[ModelT]` |
-| **Sync API wrapper** | 🔜 Planned | `extract_from_text_sync` / `get_structured_data_sync` for non-async contexts |
-| **Caching layer** | 🔜 Planned | Optional result cache keyed on (schema, text hash) to avoid duplicate LLM calls |
-| **CLI tool** | 🔜 Planned | `saidex` command for quick one-off extractions from the terminal |
-| **Additional providers** | 🔜 Planned | First-class support for Anthropic, Gemini, Mistral without LangChain wrapper |
-| **Langfuse integration guide** | 🔜 Planned | End-to-end tracing example in the docs |
-| **Token Counting guid** | 🔜 Planned | short Guide in docs on how to count the token that are used |
-| **External Validater lambda** | 🔜 Planned | adding an external user lambda funktion parameter to all extration methods to allow more komplex validations on the extracted type. |
-
-> Have a use case not listed here? [Open an issue](https://github.com/mlauf-labs/saidex/issues/new) — we'd love to hear about it.
-
----
-
 ## Requirements
 
 - Python 3.10+
@@ -972,6 +953,10 @@ Contributions are welcome! Please open an issue first to discuss significant cha
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the
 test/lint/type-check commands, and the pull-request checklist.
+
+Planned work and feature ideas are tracked as [GitHub issues](https://github.com/mlauf-labs/saidex/issues).
+
+> Have a use case SAIDEX doesn't cover yet? [Open an issue](https://github.com/mlauf-labs/saidex/issues/new) — we'd love to hear about it.
 
 ---
 
