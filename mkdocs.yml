@@ -47,6 +47,7 @@ nav:
   - Reliability:
       - Retry & Fallback: retry-and-fallback.md
       - Observability: observability.md
+      - Langfuse Tracing: langfuse-tracing.md
   - Schema & Validation:
       - Schema Design: schema-design.md
       - Built-in Types: built-in-types.md
