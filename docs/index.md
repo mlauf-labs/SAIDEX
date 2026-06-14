@@ -14,6 +14,7 @@
 | **[Agent Loop](agent-loop.md)** | `extract_with_tools` / `run_agent_loop` — let the LLM call your tools before the final answer |
 | **[Retry & Fallback](retry-and-fallback.md)** | Validation retries, network retries, fallback models, error handling |
 | **[Schema Design](schema-design.md)** | Which types to use, field descriptions, types to avoid |
+| **[Built-in Field Types & Validators](built-in-types.md)** | Reusable types the library ships (`ISODateStr`, `IbanStr`, `IsinStr`, …) |
 | **[Pydantic Validators](validators.md)** | Pre/post/model validators, computed fields, patterns, pitfalls |
 | **[Image Extraction](images.md)** | Multimodal messages, OpenAI Vision, local vLLM |
 | **[Observability](observability.md)** | Callbacks, Langfuse, LangSmith, logging, async/sync |
@@ -47,6 +48,7 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 - …let the LLM look things up with my own tools first → [Agent Loop](agent-loop.md)
 - …make extraction more reliable with retries → [Retry & Fallback](retry-and-fallback.md)
 - …understand which Pydantic types to use → [Schema Design](schema-design.md)
+- …validate a date/IBAN/country code field with one annotation → [Built-in Types](built-in-types.md)
 - …clean messy LLM output (currency symbols, date formats) → [Validators — `mode='before'`](validators.md#field_validatormodebefore--clean-raw-llm-output)
 - …add cross-field rules (end > start, total = sum) → [Validators — `mode='after'`](validators.md#model_validatormodeafter--cross-field-consistency-rules)
 - …extract data from images → [Image Extraction](images.md)

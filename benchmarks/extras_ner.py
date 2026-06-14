@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
+from saidex import ISODateStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -36,8 +37,16 @@ class NamedEntities(BaseModel):
         description="All dates or time references mentioned (as they appear in the text)"
     )
     monetary_values: list[str] = Field(
-        default_factory=list,
-        description="All monetary amounts mentioned with their currency, e.g. '€ 450 Millionen'"
+        description="All monetary amounts mentioned with their currency, e.g. '€ 450 million'"
+    )
+    purchase_price_eur_millions: int = Field(
+        description="The acquisition purchase price expressed as a whole number of millions of EUR, e.g. 450 for '€ 450 million'"
+    )
+    isin_codes: list[str] = Field(
+        description="All ISIN securities identifiers mentioned, e.g. 'DE000A2YNH52'"
+    )
+    announcement_date: ISODateStr = Field(
+        description="The date the press release was issued, as yyyy-mm-dd"
     )
 
 
@@ -111,8 +120,17 @@ SCENARIO = BenchmarkScenario(
     text=NER_TEXT,
     system_prompt="Extract all named entities from the following text. Be thorough and include every mentioned person, organization, location, date, and monetary value.",
     expected={
-        "persons_include": ["Dr. Amara Osei", "Dr. Susanne Reimer", "Prof. Dr. Kai Brinkmann"],
-        "organizations_include": ["InnovateTech AG", "NeuroLayer GmbH", "Commerzbank AG"],
+        # list[str]: subset check — each expected entry must appear in the list.
+        "persons": ["Dr. Amara Osei", "Dr. Susanne Reimer", "Prof. Dr. Kai Brinkmann"],
+        "organizations": ["InnovateTech AG", "NeuroLayer GmbH", "Commerzbank AG"],
+        "locations": ["Frankfurt am Main", "Hamburg", "Munich"],
+        "monetary_values": ["450 million", "85 million", "1.2 billion"],
+        "isin_codes": ["DE000A2YNH52"],
+        # int scalar: numeric comparison (tolerant of int/float), the purchase
+        # price normalised to millions of EUR — '€ 450 million' -> 450.
+        "purchase_price_eur_millions": 450,
+        # ISODateStr: validated as a real yyyy-mm-dd calendar date.
+        "announcement_date": "2024-03-08",
     },
 )
 

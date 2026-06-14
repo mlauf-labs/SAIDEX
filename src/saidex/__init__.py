@@ -21,6 +21,15 @@ Public API
         StructuredOutputStats,
         RetryConfig,
         create_instance_safe,
+        # Reusable schema field types
+        ISODateStr,
+        IbanStr,
+        VatIdStr,
+        CountryCodeStr,
+        CurrencyCodeStr,
+        IsinStr,
+        PhoneStr,
+        LanguageCodeStr,
     )
 """
 
@@ -29,6 +38,24 @@ from .models import AgentRunStats, ExtractionMode, StructuredOutputStats
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
 from .tools import Tool
 from .utils import create_instance_safe
+from .validators import (
+    CountryCodeStr,
+    CurrencyCodeStr,
+    IbanStr,
+    IsinStr,
+    ISODateStr,
+    LanguageCodeStr,
+    PhoneStr,
+    VatIdStr,
+    validate_country_code,
+    validate_currency_code,
+    validate_iban,
+    validate_isin,
+    validate_iso_date,
+    validate_language_code,
+    validate_phone,
+    validate_vat_id,
+)
 
 __all__ = [
     # single-shot extraction
@@ -47,6 +74,23 @@ __all__ = [
     "DEFAULT_RETRY_CONFIG",
     "with_retry",
     "create_instance_safe",
+    # reusable schema field types
+    "ISODateStr",
+    "validate_iso_date",
+    "IbanStr",
+    "validate_iban",
+    "VatIdStr",
+    "validate_vat_id",
+    "CountryCodeStr",
+    "validate_country_code",
+    "CurrencyCodeStr",
+    "validate_currency_code",
+    "IsinStr",
+    "validate_isin",
+    "PhoneStr",
+    "validate_phone",
+    "LanguageCodeStr",
+    "validate_language_code",
 ]
 
 __version__ = "0.2.0"
