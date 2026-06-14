@@ -45,7 +45,7 @@ benchmarks = ["langchain-openai>=0.1.0", "Pillow>=10.0"]
 
 [project.urls]
 Homepage = "https://github.com/mlauf-labs/saidex"
-Documentation = "https://github.com/mlauf-labs/saidex/blob/main/docs/index.md"
+Documentation = "https://mlauf-labs.github.io/saidex/"
 Repository = "https://github.com/mlauf-labs/saidex"
 "Bug Tracker" = "https://github.com/mlauf-labs/saidex/issues"
 Changelog = "https://github.com/mlauf-labs/saidex/blob/main/CHANGELOG.md"
@@ -99,6 +99,10 @@ testpaths = ["tests"]
 source = ["src/saidex"]
 
 [dependency-groups]
+docs = [
+    "mkdocs-material>=9.0",
+    "mike>=2.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.23",

@@ -1,0 +1,63 @@
+site_name: SAIDEX
+site_description: "Structured AI Data EXtraction: validated Pydantic models from LLM responses — with automatic retry, fallback, and an agentic tool loop."
+site_url: https://mlauf-labs.github.io/SAIDEX/
+repo_url: https://github.com/mlauf-labs/saidex
+repo_name: mlauf-labs/saidex
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mike:
+      alias_type: symlink
+      canonical_version: latest
+
+extra:
+  version:
+    provider: mike
+
+nav:
+  - Home: index.md
+  - Quickstart: quickstart.md
+  - Extraction:
+      - Core Extraction: extraction.md
+      - Extraction Modes: extraction-modes.md
+      - Agent Loop: agent-loop.md
+      - Image Extraction: images.md
+  - Reliability:
+      - Retry & Fallback: retry-and-fallback.md
+      - Observability: observability.md
+  - Schema & Validation:
+      - Schema Design: schema-design.md
+      - Built-in Types: built-in-types.md
+      - Validators: validators.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - admonition
+  - pymdownx.details
+  - tables
+  - toc:
+      permalink: true

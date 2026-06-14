@@ -1,0 +1,42 @@
+name: Deploy Docs
+
+on:
+  push:
+    branches:
+      - develop
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install docs dependencies
+        run: uv pip install --system mkdocs-material mike
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Deploy dev docs
+        if: github.ref == 'refs/heads/develop'
+        run: mike deploy --push --update-aliases dev
+
+      - name: Deploy versioned docs
+        if: github.event_name == 'release'
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          mike deploy --push --update-aliases "${VERSION#v}" latest
+          mike set-default --push latest
