@@ -873,7 +873,7 @@
   
   
     <li class="md-nav__item">
-      <a href="built-in-types.md" class="md-nav__link">
+      <a href="built-in-types/" class="md-nav__link">
         
   
   
@@ -1050,6 +1050,10 @@
 <td>Which types to use, field descriptions, types to avoid</td>
 </tr>
 <tr>
+<td><strong><a href="built-in-types/">Built-in Field Types &amp; Validators</a></strong></td>
+<td>Reusable types the library ships (<code>ISODateStr</code>, <code>IbanStr</code>, <code>IsinStr</code>, …)</td>
+</tr>
+<tr>
 <td><strong><a href="validators/">Pydantic Validators</a></strong></td>
 <td>Pre/post/model validators, computed fields, patterns, pitfalls</td>
 </tr>
@@ -1118,6 +1122,7 @@
 <li>…let the LLM look things up with my own tools first → <a href="agent-loop/">Agent Loop</a></li>
 <li>…make extraction more reliable with retries → <a href="retry-and-fallback/">Retry &amp; Fallback</a></li>
 <li>…understand which Pydantic types to use → <a href="schema-design/">Schema Design</a></li>
+<li>…validate a date/IBAN/country code field with one annotation → <a href="built-in-types/">Built-in Types</a></li>
 <li>…clean messy LLM output (currency symbols, date formats) → <a href="validators/#field_validatormodebefore--clean-raw-llm-output">Validators — <code>mode='before'</code></a></li>
 <li>…add cross-field rules (end &gt; start, total = sum) → <a href="validators/#model_validatormodeafter--cross-field-consistency-rules">Validators — <code>mode='after'</code></a></li>
 <li>…extract data from images → <a href="images/">Image Extraction</a></li>

@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://mlauf-labs.github.io/SAIDEX/latest/validators/">
       
       
-        <link rel="prev" href="../schema-design/">
+        <link rel="prev" href="../built-in-types/">
       
       
       
@@ -798,7 +798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../built-in-types.md" class="md-nav__link">
+      <a href="../built-in-types/" class="md-nav__link">
         
   
   
@@ -2345,6 +2345,12 @@ any per-field code.</p>
 <p>Instead of defining a validator inside every model that uses a type, you can
 attach validators directly to a type annotation using <code>Annotated</code>.  This makes
 them reusable across multiple models without duplication.</p>
+<blockquote>
+<p>SAIDEX already ships a few of these ready-made — e.g.
+<a href="../built-in-types/#isodatestr"><code>ISODateStr</code></a>, <a href="../built-in-types/#ibanstr"><code>IbanStr</code></a>,
+and <a href="../built-in-types/#countrycodestr"><code>CountryCodeStr</code></a>. See
+<a href="../built-in-types/">Built-in Field Types &amp; Validators</a> before writing your own.</p>
+</blockquote>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span><span class="p">,</span> <span class="n">Any</span>
 <a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">BeforeValidator</span><span class="p">,</span> <span class="n">AfterValidator</span>
 <a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>
@@ -2555,6 +2561,7 @@ correction guidance is clear.</p>
 <hr />
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
+<li><a href="../built-in-types/">Built-in Field Types &amp; Validators</a> — reusable types the library ships (<code>ISODateStr</code>, <code>IbanStr</code>, …)</li>
 <li><a href="../schema-design/">Schema Design</a> — designing schemas the LLM can fill reliably</li>
 <li><a href="../retry-and-fallback/">Retry &amp; Fallback</a> — how the validation loop works end-to-end</li>
 <li><a href="../examples/06_pydantic_validators.py"><code>examples/06_pydantic_validators.py</code></a> — all patterns in one runnable file</li>

@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://mlauf-labs.github.io/SAIDEX/latest/usage/">
+        <link rel="canonical" href="https://mlauf-labs.github.io/SAIDEX/latest/repo-setup/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>Usage Guide - SAIDEX</title>
+        <title>Repository setup: branching model & branch protection - SAIDEX</title>
       
     
     
@@ -74,7 +74,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#usage-guide" class="md-skip">
+        <a href="#repository-setup-branching-model-branch-protection" class="md-skip">
           Skip to content
         </a>
       
@@ -112,7 +112,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Usage Guide
+              Repository setup: branching model &amp; branch protection
             
           </span>
         </div>
@@ -872,10 +872,121 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#quick-links" class="md-nav__link">
+  <a href="#1-branching-model-git-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Quick links
+        1. Branching model (Git Flow)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-push-the-two-long-lived-branches" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Push the two long-lived branches
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Push the two long-lived branches">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#make-develop-the-default-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Make develop the default branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-make-sure-only-you-have-write-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Make sure only you have write access
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-protect-main-and-develop-rulesets-recommended" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Protect main and develop (Rulesets — recommended)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Protect main and develop (Rulesets — recommended)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#solo-maintainer-note-on-required-approvals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ⚠️ Solo-maintainer note on “Required approvals”
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-protect-the-actual-pypi-publish-strongest-safeguard" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Protect the actual PyPI publish (strongest safeguard)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-how-you-work-day-to-day-git-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. How you work day-to-day (Git Flow)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-optional-hardening" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Optional hardening
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checklist
       
     </span>
   </a>
@@ -899,7 +1010,7 @@
 
 
   
-    <a href="https://github.com/mlauf-labs/saidex/edit/main/docs/usage.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mlauf-labs/saidex/edit/main/docs/repo-setup.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -907,57 +1018,199 @@
   
 
 
-<h1 id="usage-guide">Usage Guide<a class="headerlink" href="#usage-guide" title="Permanent link">&para;</a></h1>
-<p>This document has been split into focused topic guides.</p>
-<p>→ <strong><a href="../">Go to the documentation index</a></strong></p>
+<h1 id="repository-setup-branching-model-branch-protection">Repository setup: branching model &amp; branch protection<a class="headerlink" href="#repository-setup-branching-model-branch-protection" title="Permanent link">&para;</a></h1>
+<p>This guide locks the repository down so that <strong>nothing reaches <code>main</code> or
+<code>develop</code> — and therefore the published pip package — without going through a
+reviewed pull request that passed CI.</strong> It also describes the Git Flow branching
+model the project uses.</p>
+<p>Do this once, right after pushing the repo to GitHub.</p>
 <hr />
-<h2 id="quick-links">Quick links<a class="headerlink" href="#quick-links" title="Permanent link">&para;</a></h2>
+<h2 id="1-branching-model-git-flow">1. Branching model (Git Flow)<a class="headerlink" href="#1-branching-model-git-flow" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
-<th>Topic</th>
-<th>Document</th>
+<th>Branch</th>
+<th>Purpose</th>
+<th>Receives merges from</th>
+<th>Lives forever?</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td>Installation &amp; first example</td>
-<td><a href="../quickstart/">Quickstart</a></td>
+<td><code>main</code></td>
+<td>Released, production code. Every commit is a release, tagged <code>vX.Y.Z</code>.</td>
+<td><code>release/*</code>, <code>hotfix/*</code></td>
+<td>yes</td>
 </tr>
 <tr>
-<td><code>extract_from_text</code> / <code>get_structured_data</code></td>
-<td><a href="../extraction/">Extraction</a></td>
+<td><code>develop</code></td>
+<td>Integration branch — the next release in progress.</td>
+<td><code>feature/*</code>, <code>release/*</code>, <code>hotfix/*</code></td>
+<td>yes</td>
 </tr>
 <tr>
-<td>Tool calling vs. raw JSON (no tool calling)</td>
-<td><a href="../extraction-modes/">Extraction Modes</a></td>
+<td><code>feature/&lt;name&gt;</code></td>
+<td>One feature or fix. Branched from <code>develop</code>.</td>
+<td>—</td>
+<td>no (deleted after merge)</td>
 </tr>
 <tr>
-<td>Retries, fallback model, error handling</td>
-<td><a href="../retry-and-fallback/">Retry &amp; Fallback</a></td>
+<td><code>release/&lt;version&gt;</code></td>
+<td>Stabilise a release (version bump, changelog). Branched from <code>develop</code>.</td>
+<td>—</td>
+<td>no</td>
 </tr>
 <tr>
-<td>Which Pydantic types to use + field descriptions</td>
-<td><a href="../schema-design/">Schema Design</a></td>
-</tr>
-<tr>
-<td>Ready-made field types (<code>ISODateStr</code>, <code>IbanStr</code>, …)</td>
-<td><a href="../built-in-types/">Built-in Field Types &amp; Validators</a></td>
-</tr>
-<tr>
-<td><code>@field_validator</code>, <code>@model_validator</code>, <code>@computed_field</code></td>
-<td><a href="../validators/">Validators</a></td>
-</tr>
-<tr>
-<td>Image / multimodal extraction, vLLM</td>
-<td><a href="../images/">Image Extraction</a></td>
-</tr>
-<tr>
-<td>Langfuse, LangSmith, logging, async/sync</td>
-<td><a href="../observability/">Observability</a></td>
+<td><code>hotfix/&lt;version&gt;</code></td>
+<td>Urgent fix against a release. Branched from <code>main</code>.</td>
+<td>—</td>
+<td>no</td>
 </tr>
 </tbody>
 </table>
+<p>Flow in one line: <strong><code>feature/*</code> → PR → <code>develop</code> → (release) → PR → <code>main</code> → tag → PyPI.</strong></p>
+<p>Both long-lived branches (<code>main</code>, <code>develop</code>) are protected; you only ever change
+them through pull requests.</p>
+<hr />
+<h2 id="2-push-the-two-long-lived-branches">2. Push the two long-lived branches<a class="headerlink" href="#2-push-the-two-long-lived-branches" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># main already exists with the initial commit</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>main
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># create develop from main and push it</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>develop
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>develop
+</code></pre></div>
+<h3 id="make-develop-the-default-branch">Make <code>develop</code> the default branch<a class="headerlink" href="#make-develop-the-default-branch" title="Permanent link">&para;</a></h3>
+<p>So new PRs target <code>develop</code> (not <code>main</code>) by default:</p>
+<p><strong>GitHub → repo → Settings → General → Default branch → switch to <code>develop</code>.</strong></p>
+<hr />
+<h2 id="3-make-sure-only-you-have-write-access">3. Make sure only you have write access<a class="headerlink" href="#3-make-sure-only-you-have-write-access" title="Permanent link">&para;</a></h2>
+<p>On a personal repository you are the only one who can push unless you add
+collaborators.</p>
+<ul>
+<li><strong>Settings → Collaborators</strong> — confirm the list contains only you. Add people
+  only with the minimum role they need (<code>Read</code>/<code>Triage</code> for most).</li>
+<li>The branch ruleset in the next step additionally restricts who may push to the
+  protected branches, even among collaborators.</li>
+</ul>
+<hr />
+<h2 id="4-protect-main-and-develop-rulesets-recommended">4. Protect <code>main</code> and <code>develop</code> (Rulesets — recommended)<a class="headerlink" href="#4-protect-main-and-develop-rulesets-recommended" title="Permanent link">&para;</a></h2>
+<p>Rulesets are GitHub's current branch-protection mechanism and can target several
+branches at once.</p>
+<p><strong>Settings → Rules → Rulesets → New ruleset → New branch ruleset.</strong></p>
+<ol>
+<li><strong>Ruleset name:</strong> <code>protect-main-and-develop</code></li>
+<li><strong>Enforcement status:</strong> <code>Active</code></li>
+<li><strong>Bypass list:</strong> leave <strong>empty</strong> (so the rules apply to everyone, including
+   you — this is what guarantees "only via PR"). Add yourself here only if you
+   later need an emergency escape hatch.</li>
+<li><strong>Target branches → Add target → Include by pattern</strong>, add both:</li>
+<li><code>main</code></li>
+<li><code>develop</code></li>
+<li><strong>Rules — enable:</strong></li>
+<li>✅ <strong>Restrict deletions</strong></li>
+<li>✅ <strong>Block force pushes</strong></li>
+<li>✅ <strong>Require a pull request before merging</strong><ul>
+<li>Required approvals: <strong>0</strong> (see the solo-maintainer note below)</li>
+<li>✅ Dismiss stale approvals when new commits are pushed</li>
+<li>✅ Require conversation resolution before merging</li>
+</ul>
+</li>
+<li>✅ <strong>Require status checks to pass</strong><ul>
+<li>✅ Require branches to be up to date before merging</li>
+<li>Add the check named <strong><code>CI success</code></strong> (from <code>tests.yml</code>). If it doesn't
+   appear yet, open one PR first so the check runs once, then add it.</li>
+</ul>
+</li>
+<li>✅ <strong>Restrict who can push</strong> (the “Restrict creations/updates” / push
+     restriction) — limit pushes to the protected branches to yourself only.</li>
+<li>(Optional) ✅ <strong>Require signed commits</strong> — see section 7.</li>
+</ol>
+<p>Save the ruleset.</p>
+<blockquote>
+<p>Direct <code>git push</code> to <code>main</code>/<code>develop</code> is now rejected for everyone. The only
+way to change them is a pull request whose <code>CI success</code> check is green.</p>
+</blockquote>
+<h3 id="solo-maintainer-note-on-required-approvals">⚠️ Solo-maintainer note on “Required approvals”<a class="headerlink" href="#solo-maintainer-note-on-required-approvals" title="Permanent link">&para;</a></h3>
+<p><strong>GitHub does not let you approve your own pull request.</strong> So if you set
+<em>Required approvals</em> to <code>1</code> while you are the only maintainer, you could never
+merge. Two valid choices:</p>
+<ul>
+<li><strong>Required approvals = 0</strong> (recommended for a solo project): every change
+  still goes through a PR, CI must pass, and <em>you read the full diff in the PR
+  and click “Merge” yourself</em>. You review everything; you just aren’t forced to
+  click an “Approve” button you’re not allowed to click.</li>
+<li><strong>Required approvals = 1</strong> only once a second trusted maintainer exists.</li>
+</ul>
+<p>Either way, the hard automated gate against bad/“shady” code is the <strong>required
+<code>CI success</code> status check</strong> plus your own diff review before merging.</p>
+<hr />
+<h2 id="5-protect-the-actual-pypi-publish-strongest-safeguard">5. Protect the actual PyPI publish (strongest safeguard)<a class="headerlink" href="#5-protect-the-actual-pypi-publish-strongest-safeguard" title="Permanent link">&para;</a></h2>
+<p>Branch protection controls what enters the code. This step controls what leaves
+as a release — a manual gate right before anything is uploaded to PyPI.</p>
+<p><strong>Settings → Environments → <code>pypi</code> (used by <code>release.yml</code>):</strong></p>
+<ul>
+<li>✅ <strong>Required reviewers</strong> → add <strong>yourself</strong>. Now the <code>publish</code> job pauses and
+  waits for your explicit approval in the Actions tab before it uploads to PyPI.</li>
+<li>(Optional) <strong>Deployment branches and tags</strong> → restrict to <code>main</code> only / tags
+  matching <code>v*</code>, so a publish can never run off <code>develop</code> or a feature branch.</li>
+</ul>
+<p>Even if something unwanted were merged, it cannot reach the pip package without
+you approving the deployment here.</p>
+<hr />
+<h2 id="6-how-you-work-day-to-day-git-flow">6. How you work day-to-day (Git Flow)<a class="headerlink" href="#6-how-you-work-day-to-day-git-flow" title="Permanent link">&para;</a></h2>
+<p>You can use plain Git or the <code>git flow</code> helper (<code>git-flow</code> / <code>gitflow-avh</code>
+package). Plain Git equivalents:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Start a feature off develop</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>git<span class="w"> </span>switch<span class="w"> </span>develop<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>pull
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>feature/batch-extraction
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># ... commit using Conventional Commits (the commit-msg hook enforces it) ...</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>feature/batch-extraction
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1"># Open a PR:  feature/batch-extraction  -&gt;  develop</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>gh<span class="w"> </span>pr<span class="w"> </span>create<span class="w"> </span>--base<span class="w"> </span>develop<span class="w"> </span>--fill
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="c1"># After CI is green and you&#39;ve reviewed the diff, merge in the GitHub UI,</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="c1"># then delete the feature branch.</span>
+</code></pre></div>
+<p>Cutting a release (see <a href="../RELEASING.md">RELEASING.md</a> for the version/tag part):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>git<span class="w"> </span>switch<span class="w"> </span>develop<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>git<span class="w"> </span>pull
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>git<span class="w"> </span>switch<span class="w"> </span>-c<span class="w"> </span>release/0.3.0
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>uv<span class="w"> </span>run<span class="w"> </span>cz<span class="w"> </span>bump<span class="w">            </span><span class="c1"># version bump + changelog on the release branch</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>git<span class="w"> </span>push<span class="w"> </span>-u<span class="w"> </span>origin<span class="w"> </span>release/0.3.0
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>gh<span class="w"> </span>pr<span class="w"> </span>create<span class="w"> </span>--base<span class="w"> </span>main<span class="w"> </span>--fill<span class="w">     </span><span class="c1"># release/0.3.0 -&gt; main</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># merge -&gt; the tag triggers release.yml -&gt; you approve the `pypi` environment</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># finally merge main back into develop (or PR release/* -&gt; develop too)</span>
+</code></pre></div>
+<p>With the <code>git flow</code> extension the same is <code>git flow feature start …</code>,
+<code>git flow release start …</code>, etc. — configure it once with:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>git<span class="w"> </span>flow<span class="w"> </span>init<span class="w">      </span><span class="c1"># accept: production = main, development = develop</span>
+</code></pre></div>
+<hr />
+<h2 id="7-optional-hardening">7. Optional hardening<a class="headerlink" href="#7-optional-hardening" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Signed commits / tags:</strong> enable “Require signed commits” in the ruleset and
+  sign locally with GPG or SSH (<code>git config commit.gpgsign true</code>). Gives every
+  protected-branch commit a verified author.</li>
+<li><strong>Linear history:</strong> add the “Require linear history” rule and use <em>Squash</em> or
+  <em>Rebase</em> merges only, for a clean, bisectable <code>main</code>.</li>
+<li><strong>Dependabot / secret scanning:</strong> Settings → Code security — turn on Dependabot
+  alerts, the dependency graph, and secret scanning + push protection so leaked
+  credentials are blocked at push time.</li>
+<li><strong>Tag protection:</strong> add a tag ruleset for <code>v*</code> so release tags can't be moved
+  or deleted.</li>
+</ul>
+<hr />
+<h2 id="checklist">Checklist<a class="headerlink" href="#checklist" title="Permanent link">&para;</a></h2>
+<ul>
+<li>[ ] <code>main</code> and <code>develop</code> pushed; <code>develop</code> is the default branch</li>
+<li>[ ] Only you have write access (Collaborators)</li>
+<li>[ ] Ruleset active on <code>main</code> + <code>develop</code>: PR required, force-push/deletion
+      blocked, <code>CI success</code> required, pushes restricted, empty bypass list</li>
+<li>[ ] <code>pypi</code> environment requires your approval before publishing</li>
+<li>[ ] You’ve done one PR end-to-end to confirm the gates work</li>
+</ul>
 
 
 
