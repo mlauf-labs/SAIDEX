@@ -22,7 +22,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install docs dependencies
-        run: uv pip install --system mkdocs-material mike
+        run: uv sync --group docs
 
       - name: Configure git
         run: |
@@ -31,12 +31,12 @@ jobs:
 
       - name: Deploy dev docs
         if: github.ref == 'refs/heads/develop'
-        run: mike deploy --push --update-aliases dev
+        run: uv run mike deploy --push --update-aliases dev
 
       - name: Deploy versioned docs
         if: github.event_name == 'release'
         env:
           VERSION: ${{ github.event.release.tag_name }}
         run: |
-          mike deploy --push --update-aliases "${VERSION#v}" latest
-          mike set-default --push latest
+          uv run mike deploy --push --update-aliases "${VERSION#v}" latest
+          uv run mike set-default --push latest
