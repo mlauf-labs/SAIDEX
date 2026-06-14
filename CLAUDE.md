@@ -19,7 +19,7 @@
 
 ## Repository layout
 
-```
+```text
 src/saidex/       library source (extractor, models, retry, tools, utils, validators)
 tests/            pytest suite — must run without API keys or network access
 examples/         runnable end-to-end scripts
@@ -36,7 +36,7 @@ This repository follows **Git Flow**. Every code change lives on a short-lived b
 ### Branch naming
 
 | Type | Pattern | Base branch | Target |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Feature | `feature/<short-name>` | `develop` | `develop` |
 | Bug fix | `fix/<short-name>` | `develop` | `develop` |
 | Documentation | `docs/<short-name>` | `develop` | `develop` |
@@ -79,7 +79,7 @@ Every commit message **must** follow the [Conventional Commits](https://www.conv
 
 ### Format
 
-```
+```text
 <type>(<optional scope>): <short summary>
 
 [optional body — explain WHY, not WHAT]
@@ -90,7 +90,7 @@ Every commit message **must** follow the [Conventional Commits](https://www.conv
 ### Allowed types
 
 | Type | When to use |
-|---|---|
+| --- | --- |
 | `feat` | New user-visible feature |
 | `fix` | Bug fix |
 | `docs` | Documentation only |
@@ -105,7 +105,7 @@ Every commit message **must** follow the [Conventional Commits](https://www.conv
 
 Add `!` after the type or include a `BREAKING CHANGE:` footer:
 
-```
+```text
 feat!: rename get_structured_data parameter llm to llm_model
 
 BREAKING CHANGE: The `llm` parameter is now `llm_model` in all public functions.
@@ -113,7 +113,7 @@ BREAKING CHANGE: The `llm` parameter is now `llm_model` in all public functions.
 
 ### Good examples
 
-```
+```text
 feat(extractor): add batch extraction returning list[ModelT]
 fix(retry): handle httpx.ReadTimeout as a retryable exception
 docs(schema-design): add section on nested model arrays
@@ -123,7 +123,7 @@ chore: upgrade pydantic to 2.8.0
 
 ### Bad examples (will be rejected by hook)
 
-```
+```text
 WIP
 fixed stuff
 Update README
@@ -162,6 +162,7 @@ uv run cz commit
 ```
 
 All four CI checks must pass locally before pushing:
+
 ```bash
 uv run ruff check src/ tests/ && \
 uv run ruff format --check src/ tests/ && \
@@ -206,6 +207,16 @@ uv run pytest --cov --cov-report=term-missing
 ### Schema changes
 
 - Any change to a public Pydantic model must update `docs/` and the relevant example in `examples/`.
+
+### Context7 index (`context7.json`)
+
+`context7.json` registers this library with [Context7](https://context7.com), so AI coding tools always have access to up-to-date SAIDEX documentation.
+
+Keep it current whenever:
+
+- A new doc page is added or removed from `docs/` → check `excludeFiles` if it should be hidden from AI tools.
+- A new release is published → add the version that was just *replaced as latest* to `previousVersions`. The new current is indexed automatically from `main`. Example: when releasing `v0.3.0`, add `{"tag": "v0.2.0", "title": "version 0.2.0"}` if not already listed.
+- A new usage rule or important constraint for library users is identified → add it to `rules`.
 
 ---
 
