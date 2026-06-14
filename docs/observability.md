@@ -27,20 +27,17 @@ result, stats = await get_structured_data(
 ## Langfuse
 
 [Langfuse](https://langfuse.com) provides open-source LLM observability with
-traces, spans, costs, and prompt management.
+traces, spans, costs, and prompt management. Configure the keys via environment
+variables (or the `Langfuse(...)` client) and attach the LangChain handler:
 
 ```bash
-pip install langfuse
+uv pip install "langfuse>=3"
 ```
 
 ```python
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 
-handler = CallbackHandler(
-    public_key="lf-pub-...",
-    secret_key="lf-sk-...",
-    host="https://cloud.langfuse.com",
-)
+handler = CallbackHandler()  # reads LANGFUSE_* env vars
 
 result, stats = await get_structured_data(
     llm,
@@ -54,18 +51,10 @@ Each retry is recorded as a separate LLM span nested within the parent trace.
 The validation error messages that trigger retries appear as the input to each
 retry span — this makes it easy to see exactly what the LLM was correcting.
 
-### Session and user tracking
-
-```python
-from langfuse.callback import CallbackHandler
-
-handler = CallbackHandler(
-    session_id="session-abc123",
-    user_id="user-xyz",
-    trace_name="invoice-extraction",
-    tags=["production", "v2"],
-)
-```
+!!! tip "Full walkthrough"
+    See [Langfuse Tracing](langfuse-tracing.md) for an end-to-end, runnable
+    guide covering single extractions, retries, the agent loop, and session /
+    user / tag tracking.
 
 ---
 
