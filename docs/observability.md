@@ -221,8 +221,15 @@ asyncio.run(main())
 
 If you are in a purely synchronous context (a CLI script, a Django view, a
 background job), use the **synchronous wrappers** instead of managing the event
-loop yourself.  `extract_from_text_sync` and `get_structured_data_sync` mirror
-their async counterparts exactly and run the coroutine to completion internally:
+loop yourself.  Every async entry point has a `*_sync` counterpart that mirrors
+its signature exactly and runs the coroutine to completion internally:
+
+| Async | Synchronous wrapper |
+| --- | --- |
+| `extract_from_text` | `extract_from_text_sync` |
+| `get_structured_data` | `get_structured_data_sync` |
+| `extract_with_tools` | `extract_with_tools_sync` |
+| `run_agent_loop` | `run_agent_loop_sync` |
 
 ```python
 from saidex import extract_from_text_sync
@@ -230,21 +237,16 @@ from saidex import extract_from_text_sync
 # No async/await, no asyncio.run — just call it.
 result, stats = extract_from_text_sync(llm, MySchema, text)
 
-# get_structured_data_sync takes the same args as the async version:
-from saidex import get_structured_data_sync
+# The agent loop has a sync wrapper too:
+from saidex import extract_with_tools_sync
 
-result, stats = get_structured_data_sync(llm, MySchema, messages)
+result, stats = extract_with_tools_sync(llm, MySchema, text, tools=[my_tool])
 ```
 
 The wrappers delegate to `asyncio.run`, so call them only from code that is
 **not** already inside an event loop.  If a running loop is detected they raise
 a clear `RuntimeError` (rather than deadlocking) telling you to `await` the
 async function directly.
-
-!!! note "Why no `*_sync` for the agent loop?"
-    `extract_with_tools` and `run_agent_loop` are typically used in
-    already-async services.  Wrap them yourself with `asyncio.run(...)` if you
-    need a synchronous entry point.
 
 ### Jupyter / IPython
 

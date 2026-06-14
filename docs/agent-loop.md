@@ -247,6 +247,25 @@ primary and fallback attempts).
 
 ---
 
+## Synchronous usage
+
+Both functions are async, but each has a synchronous wrapper —
+`extract_with_tools_sync` and `run_agent_loop_sync` — for callers outside an
+event loop:
+
+```python
+from saidex import extract_with_tools_sync
+
+result, stats = extract_with_tools_sync(llm, MySchema, text, tools=[my_tool])
+```
+
+The wrappers take the same arguments and return the same `(model, stats)` tuple
+as the async versions, delegating via `asyncio.run`. They must **not** be called
+from within a running event loop — if one is detected they raise a clear
+`RuntimeError`. See [Observability → Async and sync usage](observability.md#async-and-sync-usage).
+
+---
+
 ## See also
 
 - [Extraction](extraction.md) — single-shot extraction without tools

@@ -20,11 +20,17 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from langchain_core.messages.base import BaseMessage
 from pydantic import BaseModel
 
-from .extractor import extract_from_text, get_structured_data
-from .models import ExtractionMode, StructuredOutputStats
+from .extractor import (
+    extract_from_text,
+    extract_with_tools,
+    get_structured_data,
+    run_agent_loop,
+)
+from .models import AgentRunStats, ExtractionMode, StructuredOutputStats
 
 if TYPE_CHECKING:
     from .retry import RetryConfig
+    from .tools import Tool
 
 MODEL_T = TypeVar("MODEL_T", bound=BaseModel)
 _T = TypeVar("_T")
@@ -166,4 +172,117 @@ def extract_from_text_sync(
         ),
         sync_name="extract_from_text_sync",
         async_name="extract_from_text",
+    )
+
+
+def extract_with_tools_sync(
+    llm_model: Any,
+    schema: type[MODEL_T],
+    text: str,
+    *,
+    tools: list[Tool],
+    final_answer_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    system_prompt: str | None = None,
+    callbacks: list[Any] | None = None,
+    fallback_llm_model: Any = None,
+    max_iterations: int = 12,
+    max_validation_retries: int = 3,
+    retry_config: RetryConfig | None = None,
+) -> tuple[MODEL_T | None, AgentRunStats]:
+    """Synchronous wrapper around :func:`~saidex.extract_with_tools`.
+
+    Identical behaviour and return value; runs the agent loop to completion on a
+    fresh event loop.  See :func:`~saidex.extract_with_tools` for the full
+    parameter documentation.
+
+    Args:
+        llm_model: Any LangChain-compatible chat model supporting ``bind_tools``.
+        schema: The Pydantic ``BaseModel`` subclass for the final answer.
+        text: The human-turn text describing the task.
+        tools: Helper tools the LLM may call before producing its final answer.
+        final_answer_mode: How the final answer is collected.
+        system_prompt: Optional system instruction.
+        callbacks: Optional LangChain callback handlers.
+        fallback_llm_model: Optional fallback model.
+        max_iterations: Maximum LLM invocations per model attempt.
+        max_validation_retries: Max final-answer validation failures tolerated.
+        retry_config: Network-level retry configuration.
+
+    Returns:
+        ``(model_instance, AgentRunStats)`` — see :func:`~saidex.extract_with_tools`.
+
+    Raises:
+        RuntimeError: If called from within a running event loop.
+    """
+    return _run_sync(
+        extract_with_tools(
+            llm_model,
+            schema,
+            text,
+            tools=tools,
+            final_answer_mode=final_answer_mode,
+            system_prompt=system_prompt,
+            callbacks=callbacks,
+            fallback_llm_model=fallback_llm_model,
+            max_iterations=max_iterations,
+            max_validation_retries=max_validation_retries,
+            retry_config=retry_config,
+        ),
+        sync_name="extract_with_tools_sync",
+        async_name="extract_with_tools",
+    )
+
+
+def run_agent_loop_sync(
+    llm_model: Any,
+    schema: type[MODEL_T],
+    messages: list[BaseMessage],
+    *,
+    tools: list[Tool],
+    final_answer_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    callbacks: list[Any] | None = None,
+    fallback_llm_model: Any = None,
+    max_iterations: int = 12,
+    max_validation_retries: int = 3,
+    retry_config: RetryConfig | None = None,
+) -> tuple[MODEL_T | None, AgentRunStats]:
+    """Synchronous wrapper around :func:`~saidex.run_agent_loop`.
+
+    Identical behaviour and return value; runs the agent loop to completion on a
+    fresh event loop.  See :func:`~saidex.run_agent_loop` for the full parameter
+    documentation.
+
+    Args:
+        llm_model: Any LangChain-compatible chat model supporting ``bind_tools``.
+        schema: The Pydantic ``BaseModel`` subclass for the final answer.
+        messages: Conversation history passed to the model.
+        tools: Helper tools the LLM may call before producing its final answer.
+        final_answer_mode: How the final answer is collected.
+        callbacks: Optional LangChain callback handlers.
+        fallback_llm_model: Optional fallback model.
+        max_iterations: Maximum LLM invocations per model attempt.
+        max_validation_retries: Max final-answer validation failures tolerated.
+        retry_config: Network-level retry configuration.
+
+    Returns:
+        ``(model_instance, AgentRunStats)`` — see :func:`~saidex.run_agent_loop`.
+
+    Raises:
+        RuntimeError: If called from within a running event loop.
+    """
+    return _run_sync(
+        run_agent_loop(
+            llm_model,
+            schema,
+            messages,
+            tools=tools,
+            final_answer_mode=final_answer_mode,
+            callbacks=callbacks,
+            fallback_llm_model=fallback_llm_model,
+            max_iterations=max_iterations,
+            max_validation_retries=max_validation_retries,
+            retry_config=retry_config,
+        ),
+        sync_name="run_agent_loop_sync",
+        async_name="run_agent_loop",
     )
