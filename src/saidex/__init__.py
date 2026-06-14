@@ -11,6 +11,9 @@ Public API
         # Single-shot extraction (no caller tools)
         get_structured_data,
         extract_from_text,
+        # Synchronous wrappers (for non-async callers)
+        get_structured_data_sync,
+        extract_from_text_sync,
         # Agentic tool loop
         run_agent_loop,
         extract_with_tools,
@@ -36,6 +39,7 @@ Public API
 from .extractor import extract_from_text, extract_with_tools, get_structured_data, run_agent_loop
 from .models import AgentRunStats, ExtractionMode, StructuredOutputStats
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
+from .sync import extract_from_text_sync, get_structured_data_sync
 from .tools import Tool
 from .utils import create_instance_safe
 from .validators import (
@@ -61,6 +65,9 @@ __all__ = [
     # single-shot extraction
     "get_structured_data",
     "extract_from_text",
+    # synchronous wrappers
+    "get_structured_data_sync",
+    "extract_from_text_sync",
     # agentic tool loop
     "run_agent_loop",
     "extract_with_tools",

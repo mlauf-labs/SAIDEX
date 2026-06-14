@@ -219,27 +219,37 @@ asyncio.run(main())
 
 ### Calling from synchronous code
 
-If you need to call the library from synchronous code (e.g. a Django view, a
-CLI script, or a background job):
+If you are in a purely synchronous context (a CLI script, a Django view, a
+background job), use the **synchronous wrappers** instead of managing the event
+loop yourself.  `extract_from_text_sync` and `get_structured_data_sync` mirror
+their async counterparts exactly and run the coroutine to completion internally:
 
 ```python
-import asyncio
-from saidex import extract_from_text
+from saidex import extract_from_text_sync
 
-# Option 1 — create a new event loop (simplest, always works)
-result, stats = asyncio.run(extract_from_text(llm, MySchema, text))
+# No async/await, no asyncio.run — just call it.
+result, stats = extract_from_text_sync(llm, MySchema, text)
 
-# Option 2 — reuse an existing loop (e.g. inside a synchronous pytest test)
-import asyncio
+# get_structured_data_sync takes the same args as the async version:
+from saidex import get_structured_data_sync
 
-loop = asyncio.new_event_loop()
-result, stats = loop.run_until_complete(extract_from_text(llm, MySchema, text))
-loop.close()
+result, stats = get_structured_data_sync(llm, MySchema, messages)
 ```
+
+The wrappers delegate to `asyncio.run`, so call them only from code that is
+**not** already inside an event loop.  If a running loop is detected they raise
+a clear `RuntimeError` (rather than deadlocking) telling you to `await` the
+async function directly.
+
+!!! note "Why no `*_sync` for the agent loop?"
+    `extract_with_tools` and `run_agent_loop` are typically used in
+    already-async services.  Wrap them yourself with `asyncio.run(...)` if you
+    need a synchronous entry point.
 
 ### Jupyter / IPython
 
-Jupyter notebooks already run an event loop.  Use `await` directly in a cell:
+Jupyter notebooks already run an event loop, so the sync wrappers would raise.
+Use `await` directly in a cell instead:
 
 ```python
 result, stats = await extract_from_text(llm, MySchema, text)

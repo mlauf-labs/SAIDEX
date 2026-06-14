@@ -230,6 +230,26 @@ For a complete discussion of retry budgets and fallback models see
 
 ---
 
+## Synchronous usage
+
+Both entry points are async, but each has a thin synchronous wrapper —
+`extract_from_text_sync` and `get_structured_data_sync` — for callers that are
+not running inside an event loop (CLI scripts, sync web views, background jobs):
+
+```python
+from saidex import extract_from_text_sync
+
+result, stats = extract_from_text_sync(llm, MySchema, text)
+```
+
+The wrappers accept exactly the same arguments and return the same
+`(model, stats)` tuple as the async versions. They run the coroutine via
+`asyncio.run`, so they must **not** be called from within an already-running
+event loop — if one is detected they raise a clear `RuntimeError` pointing you
+to the async function. See [Observability → Async and sync usage](observability.md#async-and-sync-usage).
+
+---
+
 ## Related
 
 - [Retry & Fallback](retry-and-fallback.md) — controlling retries and adding a fallback model
