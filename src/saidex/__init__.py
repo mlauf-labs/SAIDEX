@@ -30,6 +30,7 @@ Public API
         # Shared
         ExtractionMode,
         ExtractDataStats,
+        FieldIssue,
         RetryConfig,
         create_instance_safe,
         # Reusable schema field types
@@ -52,7 +53,7 @@ from .extractor import (
     extract_data_with_tools,
     run_extractor_agent,
 )
-from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats
+from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats, FieldIssue
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
 from .sync import (
     extract_data_from_text_sync,
@@ -106,6 +107,7 @@ __all__ = [
     # shared
     "ExtractionMode",
     "ExtractDataStats",
+    "FieldIssue",
     "RetryConfig",
     "RetryResult",
     "DEFAULT_RETRY_CONFIG",

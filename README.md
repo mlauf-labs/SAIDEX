@@ -216,14 +216,24 @@ When a validation attempt fails, the library appends a **detailed error message*
 ```python
 result, stats = await extract_data(...)
 
+stats.success           # bool — did the run produce a validated instance?
+stats.failure_reason    # str | None — why it failed (None on success)
 stats.primary_retries   # int — retries against the primary model
 stats.fallback_retries  # int — retries against the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — was the fallback model invoked?
 stats.item_count        # int — items returned by extract_data_list (else 0)
+stats.format_errors     # int — pure parse / tool-call failures
+stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
+stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
 
-int(stats)  # == stats.total_retries  (backward compatible)
+if not stats.success:
+    print(stats.failure_reason, stats.problem_fields)
 ```
+
+> **Breaking change:** `int(stats)` and the comparison shims were removed —
+> use `stats.total_retries`. `field_issues` are kept even on a successful run
+> when an earlier attempt was self-corrected.
 
 ---
 

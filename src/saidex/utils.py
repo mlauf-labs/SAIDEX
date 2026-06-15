@@ -6,7 +6,12 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from .models import FieldIssue
+
 MODEL_T = TypeVar("MODEL_T", bound=BaseModel)
+
+# Maximum length of a captured ``received`` value before it is truncated.
+_MAX_RECEIVED_LEN = 120
 
 
 def create_instance_safe(
@@ -27,15 +32,92 @@ def create_instance_safe(
     Returns:
         ``(instance, None)`` on success, ``(None, error_text)`` on failure.
     """
+    instance, _, error_text = create_instance_with_issues(schema, **data)
+    return instance, error_text
+
+
+def create_instance_with_issues(
+    schema: type[MODEL_T],
+    **data: Any,
+) -> tuple[MODEL_T | None, list[FieldIssue], str | None]:
+    """Like :func:`create_instance_safe` but also return structured issues.
+
+    The third element is the same LLM-facing error string as
+    :func:`create_instance_safe`; the second is a structured
+    :class:`~saidex.models.FieldIssue` list describing the same failures, ready
+    for aggregation.  ``attempt`` is left at ``0`` here — the caller (which owns
+    the retry loop) sets the real attempt index.
+
+    Args:
+        schema: The Pydantic model class to instantiate.
+        **data: Keyword arguments forwarded to the model constructor.
+
+    Returns:
+        ``(instance, [], None)`` on success;
+        ``(None, issues, error_text)`` on validation failure.
+    """
     try:
-        return schema(**data), None
+        return schema(**data), [], None
     except ValidationError as exc:
-        return None, _format_validation_error(schema, exc)
+        issues = _collect_field_issues(schema, exc)
+        return None, issues, _format_validation_error(schema, exc)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _categorize_error(error_type: str) -> str:
+    """Map a raw Pydantic error type to a coarse, human-facing category."""
+    if error_type == "missing":
+        return "missing"
+    if error_type in ("enum", "literal_error") or "enum" in error_type:
+        return "enum"
+    if "type" in error_type or "parsing" in error_type:
+        return "type"
+    if error_type in {
+        "string_too_short",
+        "string_too_long",
+        "value_error",
+        "greater_than",
+        "less_than",
+        "greater_than_equal",
+        "less_than_equal",
+    }:
+        return "value"
+    return "other"
+
+
+def _truncate_received(value: Any) -> str | None:
+    """Render an error's input value as a short string, or ``None`` if absent."""
+    if value is None or value == "N/A":
+        return None
+    text = str(value)
+    if len(text) > _MAX_RECEIVED_LEN:
+        return text[: _MAX_RECEIVED_LEN - 1] + "…"
+    return text
+
+
+def _collect_field_issues(schema: type[BaseModel], exc: ValidationError) -> list[FieldIssue]:
+    """Turn a :class:`~pydantic.ValidationError` into structured field issues."""
+    issues: list[FieldIssue] = []
+    for error in exc.errors():
+        field_path = " -> ".join(str(loc) for loc in error["loc"])
+        error_type = error["type"]
+        received = None if error_type == "missing" else _truncate_received(error.get("input"))
+        issues.append(
+            FieldIssue(
+                schema_name=schema.__name__,
+                field_path=field_path,
+                category=_categorize_error(error_type),
+                error_type=error_type,
+                message=error["msg"],
+                attempt=0,
+                received=received,
+            )
+        )
+    return issues
 
 
 def _format_validation_error(schema: type[BaseModel], exc: ValidationError) -> str:
