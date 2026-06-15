@@ -1251,13 +1251,23 @@ without tool-calling support.  See <a href="../extraction-modes/">Extraction Mod
 <h3 id="extractdatastats"><code>ExtractDataStats</code><a class="headerlink" href="#extractdatastats" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">stats</span><span class="o">.</span><span class="n">primary_retries</span>   <span class="c1"># int — retries on the primary model</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_retries</span>  <span class="c1"># int — retries on the fallback model</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">stats</span><span class="o">.</span><span class="n">total_retries</span>     <span class="c1"># int — sum of both</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_used</span>     <span class="c1"># bool — did the fallback model run?</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="nb">int</span><span class="p">(</span><span class="n">stats</span><span class="p">)</span>   <span class="c1"># == stats.total_retries  (backward-compatible)</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">stats</span><span class="o">.</span><span class="n">success</span>           <span class="c1"># bool — did the run produce a validated instance?</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">stats</span><span class="o">.</span><span class="n">failure_reason</span>    <span class="c1"># str | None — why it failed (None on success)</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">stats</span><span class="o">.</span><span class="n">primary_retries</span>   <span class="c1"># int — retries on the primary model</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_retries</span>  <span class="c1"># int — retries on the fallback model</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">stats</span><span class="o">.</span><span class="n">total_retries</span>     <span class="c1"># int — sum of both</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_used</span>     <span class="c1"># bool — did the fallback model run?</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">stats</span><span class="o">.</span><span class="n">format_errors</span>     <span class="c1"># int — pure parse / tool-call failures</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="n">stats</span><span class="o">.</span><span class="n">problem_fields</span>    <span class="c1"># tuple[str, ...] — fields that ever failed validation</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="n">stats</span><span class="o">.</span><span class="n">field_issues</span>      <span class="c1"># tuple[FieldIssue, ...] — structured per-field problems</span>
 </code></pre></div>
+<p>Prefer <code>stats.success</code> over <code>result is not None</code> to branch on the outcome.
+<code>field_issues</code> are recorded even on a successful run when an earlier attempt was
+self-corrected, so you can see which fields the model struggled with.</p>
+<blockquote>
+<p><strong>Breaking change (was <code>int(stats)</code>):</strong> the legacy integer shims were removed.
+Use <code>stats.total_retries</code> instead of <code>int(stats)</code>.</p>
+</blockquote>
 <hr />
 <h2 id="your-first-extraction">Your first extraction<a class="headerlink" href="#your-first-extraction" title="Permanent link">&para;</a></h2>
 <blockquote>
