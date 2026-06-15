@@ -98,6 +98,17 @@ class FieldIssueSummary:
 
     schemas: tuple[SchemaProblemSummary, ...] = ()
 
+    def to_markdown(self) -> str:
+        """Render this summary as a deterministic Markdown report.
+
+        Convenience wrapper around :func:`render_field_issue_report`.
+
+        Returns:
+            A Markdown document with one section per schema, each listing its
+            problem fields (most severe first) as a table.
+        """
+        return render_field_issue_report(self)
+
 
 # ---------------------------------------------------------------------------
 # Internal accumulators
@@ -244,3 +255,83 @@ def _finalize_field(schema_name: str, field_path: str, acc: _FieldAccumulator) -
         sample_received=tuple(acc.samples),
         severity=severity,
     )
+
+
+# ---------------------------------------------------------------------------
+# Markdown report
+# ---------------------------------------------------------------------------
+
+# Maximum number of sample values rendered in a report cell.
+_REPORT_MAX_SAMPLES = 3
+
+_REPORT_HEADER = (
+    "| Field | Category | Top error | Hits | In failed runs | Recovery | Samples |\n"
+    "| --- | --- | --- | ---: | ---: | ---: | --- |"
+)
+
+
+def render_field_issue_report(summary: FieldIssueSummary) -> str:
+    """Render a :class:`FieldIssueSummary` as a deterministic Markdown report.
+
+    Produces one section per schema — a heading with the success rate and
+    failed-run count, followed by a table of problem fields sorted by descending
+    severity (most failure-causing first).  Output is stable for the same input,
+    so it is safe to snapshot or diff across benchmark runs.
+
+    Args:
+        summary: The summary to render.
+
+    Returns:
+        A Markdown document.  When the summary is empty, a short placeholder is
+        returned instead of an empty string.
+    """
+    lines: list[str] = ["# Field issue report", ""]
+
+    if not summary.schemas:
+        lines.append("_No field issues recorded._")
+        return "\n".join(lines)
+
+    for schema in summary.schemas:
+        lines.append(
+            f"## {schema.schema_name} — {schema.success_rate:.0%} success "
+            f"({schema.failed_runs}/{schema.total_runs} runs failed)"
+        )
+        lines.append("")
+        if not schema.field_problems:
+            lines.append("_No field issues recorded._")
+            lines.append("")
+            continue
+        lines.append(_REPORT_HEADER)
+        for fp in schema.field_problems:
+            lines.append(_render_field_row(fp))
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _render_field_row(fp: FieldProblemStat) -> str:
+    """Render one :class:`FieldProblemStat` as a Markdown table row."""
+    category = _dominant(fp.by_category)
+    top_error = _dominant(fp.by_error_type)
+    samples = ", ".join(f"`{_escape_cell(s)}`" for s in fp.sample_received[:_REPORT_MAX_SAMPLES])
+    return (
+        f"| {_escape_cell(fp.field_path)} "
+        f"| {category} "
+        f"| {top_error} "
+        f"| {fp.total_occurrences} "
+        f"| {fp.failed_runs_with_problem} "
+        f"| {fp.recovery_rate:.0%} "
+        f"| {samples} |"
+    )
+
+
+def _dominant(counts: dict[str, int]) -> str:
+    """Return the most frequent key, breaking ties alphabetically."""
+    if not counts:
+        return "—"
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
+
+
+def _escape_cell(text: str) -> str:
+    """Make *text* safe for a single Markdown table cell."""
+    return text.replace("|", "\\|").replace("\n", " ").replace("\r", "")

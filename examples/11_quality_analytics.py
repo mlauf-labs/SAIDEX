@@ -58,6 +58,7 @@ async def main() -> None:
 
     summary = summarize_field_issues(runs)
 
+    # Inspect the structured summary programmatically …
     for schema in summary.schemas:
         print(
             f"\n{schema.schema_name}: {schema.success_rate:.0%} success "
@@ -76,6 +77,10 @@ async def main() -> None:
                 f"top_error={top_error}  "
                 f"examples={list(fp.sample_received)}"
             )
+
+    # … or render a deterministic Markdown report (great as a benchmark artifact).
+    print("\n" + "=" * 60)
+    print(summary.to_markdown())
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ Public API
         create_instance_safe,
         # Cross-run field-issue analytics
         summarize_field_issues,
+        render_field_issue_report,
         FieldIssueSummary,
         SchemaProblemSummary,
         FieldProblemStat,
@@ -54,6 +55,7 @@ from .analytics import (
     FieldIssueSummary,
     FieldProblemStat,
     SchemaProblemSummary,
+    render_field_issue_report,
     summarize_field_issues,
 )
 from .extractor import (
@@ -122,6 +124,7 @@ __all__ = [
     "RetryConfig",
     # cross-run field-issue analytics
     "summarize_field_issues",
+    "render_field_issue_report",
     "FieldIssueSummary",
     "SchemaProblemSummary",
     "FieldProblemStat",
