@@ -53,6 +53,9 @@ This repository follows **Git Flow**. Every code change lives on a short-lived b
 4. **Open a PR against `develop`** when the work is done. `main` is only touched by `release/*` and `hotfix/*` PRs.
 5. **Delete the branch after it is merged.**
 6. **Keep branches short-lived.** Rebase on `develop` regularly to avoid large merge conflicts.
+7. **Always `git fetch` + `git pull` on `develop` before creating a new branch** so you branch from the latest state.
+8. **Never delete or discard uncommitted changes on your own.** No `git reset --hard`, `git checkout -- <file>`, `git stash drop`, `git clean`, or force-overwrite of a dirty working tree without explicit user approval. Preserving the user's work always takes priority.
+9. **If switching to `develop` fails** (e.g. uncommitted changes, a dirty working tree, or a merge conflict), **stop and report it to the user.** Do not auto-resolve by throwing away changes — ask how to proceed (commit, stash, or keep them).
 
 ### Starting work — required sequence
 
@@ -70,6 +73,19 @@ git switch -c feature/my-feature   # or fix/..., docs/..., etc.
 git push -u origin feature/my-feature
 gh pr create --base develop --fill
 ```
+
+### AI agent workflow — required for every implementation
+
+Follow this for **every** feature/fix/docs/refactor/chore task, without exception:
+
+1. **Sync `develop` first.** Run `git fetch` and `git pull` on `develop` before doing anything else.
+   - If you cannot switch to `develop` cleanly (uncommitted changes, dirty working tree, conflicts), **stop and tell the user.** Never delete or discard their changes to "unblock" the switch — ask whether to commit, stash, or keep them.
+2. **Create a new branch from the freshly updated `develop`** (`feature/…`, `fix/…`, etc.) — one branch per logical change.
+3. **Work and commit on that branch** using Conventional Commits.
+4. **Run all tests and CI checks** (see [Development commands](#development-commands)) and make them pass.
+5. **Open a PR targeting `develop`** only once the work is complete and the tests are green.
+
+> ⚠️ **Never delete a user's changes on your own initiative.** Preserving uncommitted work always takes priority over any git operation.
 
 ---
 
