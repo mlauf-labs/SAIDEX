@@ -219,27 +219,39 @@ asyncio.run(main())
 
 ### Calling from synchronous code
 
-If you need to call the library from synchronous code (e.g. a Django view, a
-CLI script, or a background job):
+If you are in a purely synchronous context (a CLI script, a Django view, a
+background job), use the **synchronous wrappers** instead of managing the event
+loop yourself.  Every async entry point has a `*_sync` counterpart that mirrors
+its signature exactly and runs the coroutine to completion internally:
+
+| Async | Synchronous wrapper |
+| --- | --- |
+| `extract_from_text` | `extract_from_text_sync` |
+| `get_structured_data` | `get_structured_data_sync` |
+| `extract_with_tools` | `extract_with_tools_sync` |
+| `run_agent_loop` | `run_agent_loop_sync` |
 
 ```python
-import asyncio
-from saidex import extract_from_text
+from saidex import extract_from_text_sync
 
-# Option 1 — create a new event loop (simplest, always works)
-result, stats = asyncio.run(extract_from_text(llm, MySchema, text))
+# No async/await, no asyncio.run — just call it.
+result, stats = extract_from_text_sync(llm, MySchema, text)
 
-# Option 2 — reuse an existing loop (e.g. inside a synchronous pytest test)
-import asyncio
+# The agent loop has a sync wrapper too:
+from saidex import extract_with_tools_sync
 
-loop = asyncio.new_event_loop()
-result, stats = loop.run_until_complete(extract_from_text(llm, MySchema, text))
-loop.close()
+result, stats = extract_with_tools_sync(llm, MySchema, text, tools=[my_tool])
 ```
+
+The wrappers delegate to `asyncio.run`, so call them only from code that is
+**not** already inside an event loop.  If a running loop is detected they raise
+a clear `RuntimeError` (rather than deadlocking) telling you to `await` the
+async function directly.
 
 ### Jupyter / IPython
 
-Jupyter notebooks already run an event loop.  Use `await` directly in a cell:
+Jupyter notebooks already run an event loop, so the sync wrappers would raise.
+Use `await` directly in a cell instead:
 
 ```python
 result, stats = await extract_from_text(llm, MySchema, text)
