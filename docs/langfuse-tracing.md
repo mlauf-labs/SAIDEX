@@ -282,6 +282,67 @@ iterations — is grouped under one trace tagged with the session and user.
 
 ---
 
+## Attaching the extraction verdict (`on_complete`)
+
+The `callbacks` handler sees every **LLM call**, but it has no concept of the
+extraction-level *verdict* — whether the run ultimately succeeded, *why* it
+failed, and **which fields** caused trouble. There is no `on_llm_end`-style hook
+for "the whole extraction finished". SAIDEX fills that gap with its own
+`on_complete` hook, which fires **exactly once per call** (success or failure,
+after all retries and fallback) with an
+[`ExtractionEvent`][saidex.ExtractionEvent].
+
+Run the hook **inside the same enclosing span** as the extraction and its data
+lands on the *same trace* as the LLM generations — so the verdict and the calls
+that produced it sit together:
+
+```python
+from langfuse import get_client, propagate_attributes
+from langfuse.langchain import CallbackHandler
+
+from saidex import ExtractionEvent, extract_data_from_text
+
+langfuse = get_client()
+
+
+async def main() -> None:
+    with langfuse.start_as_current_observation(
+        as_type="span", name="invoice-extraction"
+    ) as span:
+
+        async def on_complete(event: ExtractionEvent) -> None:
+            # Same trace context → attached to this span's trace.
+            span.update_trace(
+                output=event.result,
+                metadata={
+                    "success": event.stats.success,
+                    "failure_reason": event.stats.failure_reason,
+                    "problem_fields": list(event.stats.problem_fields),
+                    "total_retries": event.stats.total_retries,
+                },
+            )
+            langfuse.create_score(name="extraction_success", value=int(event.stats.success))
+
+        handler = CallbackHandler()
+        invoice, stats = await extract_data_from_text(
+            llm,
+            Invoice,
+            text,
+            callbacks=[handler],
+            on_complete=on_complete,
+            capture_source_text=True,  # also stores event.source_text / stats.source_text
+        )
+
+    langfuse.flush()
+```
+
+The hook is isolated: if it raises, the error is logged and **the extraction
+still returns normally** — observability can never break the run. Set
+`capture_source_text=True` to also receive the input text on the event (off by
+default to avoid retaining potentially sensitive input).
+
+---
+
 ## Companion example
 
 A complete, runnable version of all three scenarios lives at

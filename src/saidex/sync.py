@@ -21,6 +21,7 @@ from langchain_core.messages.base import BaseMessage
 from pydantic import BaseModel
 
 from .extractor import (
+    OnComplete,
     extract_data,
     extract_data_from_text,
     extract_data_list,
@@ -81,6 +82,8 @@ def extract_data_sync(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data`.
 
@@ -116,6 +119,8 @@ def extract_data_sync(
             max_primary_retries=max_primary_retries,
             max_fallback_retries=max_fallback_retries,
             retry_config=retry_config,
+            on_complete=on_complete,
+            capture_source_text=capture_source_text,
         ),
         sync_name="extract_data_sync",
         async_name="extract_data",
@@ -134,6 +139,8 @@ def extract_data_from_text_sync(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_from_text`.
 
@@ -171,6 +178,8 @@ def extract_data_from_text_sync(
             max_primary_retries=max_primary_retries,
             max_fallback_retries=max_fallback_retries,
             retry_config=retry_config,
+            on_complete=on_complete,
+            capture_source_text=capture_source_text,
         ),
         sync_name="extract_data_from_text_sync",
         async_name="extract_data_from_text",
@@ -188,6 +197,8 @@ def extract_data_list_sync(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list`.
 
@@ -223,6 +234,8 @@ def extract_data_list_sync(
             max_primary_retries=max_primary_retries,
             max_fallback_retries=max_fallback_retries,
             retry_config=retry_config,
+            on_complete=on_complete,
+            capture_source_text=capture_source_text,
         ),
         sync_name="extract_data_list_sync",
         async_name="extract_data_list",
@@ -241,6 +254,8 @@ def extract_data_list_from_text_sync(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list_from_text`.
 
@@ -278,6 +293,8 @@ def extract_data_list_from_text_sync(
             max_primary_retries=max_primary_retries,
             max_fallback_retries=max_fallback_retries,
             retry_config=retry_config,
+            on_complete=on_complete,
+            capture_source_text=capture_source_text,
         ),
         sync_name="extract_data_list_from_text_sync",
         async_name="extract_data_list_from_text",
@@ -297,6 +314,8 @@ def extract_data_with_tools_sync(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_with_tools`.
 
@@ -336,6 +355,8 @@ def extract_data_with_tools_sync(
             max_iterations=max_iterations,
             max_validation_retries=max_validation_retries,
             retry_config=retry_config,
+            on_complete=on_complete,
+            capture_source_text=capture_source_text,
         ),
         sync_name="extract_data_with_tools_sync",
         async_name="extract_data_with_tools",
@@ -354,6 +375,8 @@ def run_extractor_agent_sync(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.run_extractor_agent`.
 
@@ -391,6 +414,8 @@ def run_extractor_agent_sync(
             max_iterations=max_iterations,
             max_validation_retries=max_validation_retries,
             retry_config=retry_config,
+            on_complete=on_complete,
+            capture_source_text=capture_source_text,
         ),
         sync_name="run_extractor_agent_sync",
         async_name="run_extractor_agent",

@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -17,7 +18,13 @@ from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field, create_model
 
-from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats, FieldIssue
+from .models import (
+    ExtractDataStats,
+    ExtractionEvent,
+    ExtractionMode,
+    ExtractorRunStats,
+    FieldIssue,
+)
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
 from .utils import create_instance_with_issues
 
@@ -27,6 +34,47 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MODEL_T = TypeVar("MODEL_T", bound=BaseModel)
+
+#: Signature of an ``on_complete`` hook: an async callable receiving a single
+#: :class:`~saidex.models.ExtractionEvent`.
+OnComplete = Callable[[ExtractionEvent], Awaitable[None]]
+
+
+def _source_text_from_messages(messages: list[BaseMessage]) -> str:
+    """Concatenate the human-turn text content of *messages*.
+
+    Used to populate :attr:`ExtractionEvent.source_text` when the caller opts in
+    via ``capture_source_text``.  Multimodal (list) content keeps only its text
+    parts; non-text parts (e.g. images) are skipped.
+    """
+    parts: list[str] = []
+    for message in messages:
+        if message.__class__.__name__ != "HumanMessage":
+            continue
+        content = message.content
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(str(part.get("text", "")))
+    return "\n".join(p for p in parts if p)
+
+
+async def _emit_completion(on_complete: OnComplete | None, event: ExtractionEvent) -> None:
+    """Invoke an ``on_complete`` hook, isolating any error it raises.
+
+    A failing hook must never break the extraction it is observing, so its
+    exceptions are logged and swallowed.
+    """
+    if on_complete is None:
+        return
+    try:
+        await on_complete(event)
+    except Exception as exc:  # noqa: BLE001 — observers must not break the run
+        logger.error("on_complete hook raised and was suppressed: %s", exc)
 
 
 async def extract_data(
@@ -40,6 +88,8 @@ async def extract_data(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a LangChain message list.
 
@@ -85,6 +135,13 @@ async def extract_data(
             model (default 3).
         retry_config: Network-level retry config (rate limits, timeouts).
             Defaults to :data:`~saidex.retry.DEFAULT_RETRY_CONFIG`.
+        on_complete: Optional async hook invoked exactly once when the run ends
+            (success or failure), receiving an
+            :class:`~saidex.models.ExtractionEvent`.  Exceptions it raises are
+            logged and suppressed so they cannot break the extraction.
+        capture_source_text: When ``True``, the human-turn text of *messages* is
+            stored on ``stats.source_text`` and passed to *on_complete*.  Off by
+            default to avoid retaining potentially sensitive input.
 
     Returns:
         A tuple of ``(model_instance, stats)``:
@@ -117,6 +174,24 @@ async def extract_data(
         mode.value,
     )
 
+    async def _finish(
+        result: MODEL_T | None, stats: ExtractDataStats
+    ) -> tuple[MODEL_T | None, ExtractDataStats]:
+        source_text = _source_text_from_messages(original_messages) if capture_source_text else None
+        if source_text is not None:
+            stats = replace(stats, source_text=source_text)
+        await _emit_completion(
+            on_complete,
+            ExtractionEvent(
+                schema_name=schema.__name__,
+                result=result,
+                stats=stats,
+                messages=original_messages,
+                source_text=source_text,
+            ),
+        )
+        return result, stats
+
     primary = await _try_with_model(
         llm_model=llm_model,
         schema=schema,
@@ -129,12 +204,15 @@ async def extract_data(
     )
 
     if primary.instance is not None:
-        return primary.instance, ExtractDataStats(
-            primary_retries=primary.retries,
-            success=True,
-            schema_name=schema.__name__,
-            format_errors=primary.format_errors,
-            field_issues=tuple(primary.field_issues),
+        return await _finish(
+            primary.instance,
+            ExtractDataStats(
+                primary_retries=primary.retries,
+                success=True,
+                schema_name=schema.__name__,
+                format_errors=primary.format_errors,
+                field_issues=tuple(primary.field_issues),
+            ),
         )
 
     if fallback_llm_model is not None:
@@ -171,14 +249,17 @@ async def extract_data(
 
         if fallback.instance is not None:
             logger.info("Fallback model succeeded for %s.", schema.__name__)
-            return fallback.instance, ExtractDataStats(
-                primary_retries=primary.retries,
-                fallback_retries=fallback.retries,
-                fallback_used=True,
-                success=True,
-                schema_name=schema.__name__,
-                format_errors=combined_format_errors,
-                field_issues=combined_issues,
+            return await _finish(
+                fallback.instance,
+                ExtractDataStats(
+                    primary_retries=primary.retries,
+                    fallback_retries=fallback.retries,
+                    fallback_used=True,
+                    success=True,
+                    schema_name=schema.__name__,
+                    format_errors=combined_format_errors,
+                    field_issues=combined_issues,
+                ),
             )
 
         logger.error(
@@ -188,14 +269,17 @@ async def extract_data(
             fallback.retries,
             primary.retries + fallback.retries,
         )
-        return None, ExtractDataStats(
-            primary_retries=primary.retries,
-            fallback_retries=fallback.retries,
-            fallback_used=True,
-            schema_name=schema.__name__,
-            failure_reason=fallback.failure_reason or primary.failure_reason,
-            format_errors=combined_format_errors,
-            field_issues=combined_issues,
+        return await _finish(
+            None,
+            ExtractDataStats(
+                primary_retries=primary.retries,
+                fallback_retries=fallback.retries,
+                fallback_used=True,
+                schema_name=schema.__name__,
+                failure_reason=fallback.failure_reason or primary.failure_reason,
+                format_errors=combined_format_errors,
+                field_issues=combined_issues,
+            ),
         )
 
     logger.error(
@@ -203,12 +287,15 @@ async def extract_data(
         schema.__name__,
         primary.retries,
     )
-    return None, ExtractDataStats(
-        primary_retries=primary.retries,
-        schema_name=schema.__name__,
-        failure_reason=primary.failure_reason,
-        format_errors=primary.format_errors,
-        field_issues=tuple(primary.field_issues),
+    return await _finish(
+        None,
+        ExtractDataStats(
+            primary_retries=primary.retries,
+            schema_name=schema.__name__,
+            failure_reason=primary.failure_reason,
+            format_errors=primary.format_errors,
+            field_issues=tuple(primary.field_issues),
+        ),
     )
 
 
@@ -224,6 +311,8 @@ async def extract_data_from_text(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a plain text string.
 
@@ -244,6 +333,9 @@ async def extract_data_from_text(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+        capture_source_text: When ``True``, *text* is stored on
+            ``stats.source_text`` and passed to *on_complete*.
 
     Returns:
         Same as :func:`extract_data`.
@@ -278,6 +370,8 @@ async def extract_data_from_text(
         max_primary_retries=max_primary_retries,
         max_fallback_retries=max_fallback_retries,
         retry_config=retry_config,
+        on_complete=on_complete,
+        capture_source_text=capture_source_text,
     )
 
 
@@ -320,6 +414,8 @@ async def extract_data_list(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a message list.
 
@@ -347,6 +443,10 @@ async def extract_data_list(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+            Fires once with the list result and the item schema name.
+        capture_source_text: When ``True``, the human-turn text is stored on
+            ``stats.source_text`` and passed to *on_complete*.
 
     Returns:
         A tuple of ``(items, stats)``:
@@ -364,6 +464,8 @@ async def extract_data_list(
             print(f"Extracted {stats.item_count} line items")
     """
     container = _build_list_container(schema)
+    # The inner call must not fire the hook: it would report the internal
+    # ``…List`` container and the wrapper instance instead of the list result.
     result, stats = await extract_data(
         llm_model=llm_model,
         schema=container,
@@ -374,15 +476,27 @@ async def extract_data_list(
         max_primary_retries=max_primary_retries,
         max_fallback_retries=max_fallback_retries,
         retry_config=retry_config,
+        capture_source_text=capture_source_text,
     )
     # Report the item schema name (not the internal ``…List`` container) so the
     # stats group under the schema the caller actually passed.
     item_issues = tuple(replace(i, schema_name=schema.__name__) for i in stats.field_issues)
     stats = replace(stats, schema_name=schema.__name__, field_issues=item_issues)
-    if result is None:
-        return None, stats
-    items: list[MODEL_T] = cast(Any, result).items
-    return items, replace(stats, item_count=len(items))
+    items: list[MODEL_T] | None = None if result is None else cast(Any, result).items
+    if items is not None:
+        stats = replace(stats, item_count=len(items))
+
+    await _emit_completion(
+        on_complete,
+        ExtractionEvent(
+            schema_name=schema.__name__,
+            result=cast("BaseModel | list[BaseModel] | None", items),
+            stats=stats,
+            messages=list(messages),
+            source_text=stats.source_text,
+        ),
+    )
+    return items, stats
 
 
 async def extract_data_list_from_text(
@@ -397,6 +511,8 @@ async def extract_data_list_from_text(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a plain text string.
 
@@ -419,6 +535,9 @@ async def extract_data_list_from_text(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+        capture_source_text: When ``True``, *text* is stored on
+            ``stats.source_text`` and passed to *on_complete*.
 
     Returns:
         Same as :func:`extract_data_list`.
@@ -454,6 +573,8 @@ async def extract_data_list_from_text(
         max_primary_retries=max_primary_retries,
         max_fallback_retries=max_fallback_retries,
         retry_config=retry_config,
+        on_complete=on_complete,
+        capture_source_text=capture_source_text,
     )
 
 
@@ -470,6 +591,8 @@ async def extract_data_with_tools(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Run an agentic tool-loop to produce a validated Pydantic model.
 
@@ -501,6 +624,9 @@ async def extract_data_with_tools(
         max_validation_retries: Max times the final-answer schema may fail
             validation before giving up (default 3).
         retry_config: Network-level retry configuration.
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+        capture_source_text: When ``True``, *text* is stored on
+            ``stats.source_text`` and passed to *on_complete*.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -537,6 +663,8 @@ async def extract_data_with_tools(
         max_iterations=max_iterations,
         max_validation_retries=max_validation_retries,
         retry_config=retry_config,
+        on_complete=on_complete,
+        capture_source_text=capture_source_text,
     )
 
 
@@ -552,6 +680,8 @@ async def run_extractor_agent(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Low-level agent loop that accepts a full message list.
 
@@ -565,12 +695,35 @@ async def run_extractor_agent(
     fallback model receives a fresh conversation starting from the original
     messages with a brief hint.
 
+    Args:
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+        capture_source_text: When ``True``, the human-turn text of *messages* is
+            stored on ``stats.source_text`` and passed to *on_complete*.
+
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
         failure.
     """
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
     original_messages = list(messages)
+
+    async def _finish(
+        result: MODEL_T | None, stats: ExtractorRunStats
+    ) -> tuple[MODEL_T | None, ExtractorRunStats]:
+        source_text = _source_text_from_messages(original_messages) if capture_source_text else None
+        if source_text is not None:
+            stats = replace(stats, source_text=source_text)
+        await _emit_completion(
+            on_complete,
+            ExtractionEvent(
+                schema_name=schema.__name__,
+                result=result,
+                stats=stats,
+                messages=original_messages,
+                source_text=source_text,
+            ),
+        )
+        return result, stats
 
     result, primary_stats = await _run_extractor_agent_with_model(
         llm_model=llm_model,
@@ -586,7 +739,7 @@ async def run_extractor_agent(
     )
 
     if result is not None:
-        return result, primary_stats
+        return await _finish(result, primary_stats)
 
     if fallback_llm_model is not None:
         logger.info(
@@ -635,14 +788,14 @@ async def run_extractor_agent(
                 schema.__name__,
                 combined.iterations,
             )
-        return result, combined
+        return await _finish(result, combined)
 
     logger.error(
         "Agent loop failed for %s after %d iterations (no fallback configured).",
         schema.__name__,
         primary_stats.iterations,
     )
-    return None, primary_stats
+    return await _finish(None, primary_stats)
 
 
 # ---------------------------------------------------------------------------

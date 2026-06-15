@@ -1,8 +1,14 @@
 """Return types and configuration enums for structured output extraction."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from langchain_core.messages.base import BaseMessage
+    from pydantic import BaseModel
 
 
 class ExtractionMode(str, Enum):
@@ -76,6 +82,9 @@ class _ExtractionStatsBase:
         field_issues: Every field-level validation problem seen across all
             attempts, in chronological order.  Populated even when
             :attr:`success` is ``True`` (self-corrected errors).
+        source_text: The input text the run was performed on, or ``None``.  Only
+            populated when the caller opts in via ``capture_source_text=True``
+            (off by default for PII/memory reasons).
     """
 
     success: bool = False
@@ -83,6 +92,7 @@ class _ExtractionStatsBase:
     schema_name: str = ""
     format_errors: int = 0
     field_issues: tuple[FieldIssue, ...] = ()
+    source_text: str | None = None
 
     @property
     def problem_fields(self) -> tuple[str, ...]:
@@ -147,7 +157,7 @@ class ExtractorRunStats(_ExtractionStatsBase):
     validation_retries: int = 0
     fallback_used: bool = False
 
-    def __add__(self, other: Any) -> "ExtractorRunStats":
+    def __add__(self, other: Any) -> ExtractorRunStats:
         """Merge two stats instances (used when combining primary + fallback)."""
         if not isinstance(other, ExtractorRunStats):
             return NotImplemented
@@ -162,3 +172,32 @@ class ExtractorRunStats(_ExtractionStatsBase):
             format_errors=self.format_errors + other.format_errors,
             field_issues=(*self.field_issues, *other.field_issues),
         )
+
+
+@dataclass(frozen=True)
+class ExtractionEvent:
+    """Payload handed to an ``on_complete`` hook at the end of one extraction.
+
+    The hook fires exactly once per top-level call, on both success and failure,
+    after all retries and any fallback. It bundles the run's outcome with the
+    conversation so observability backends (e.g. Langfuse) can attach the
+    extraction-level verdict — which LangChain ``callbacks`` never see — to the
+    same trace as the LLM calls.
+
+    Attributes:
+        schema_name: Name of the schema that was extracted.
+        result: The validated instance, a list of instances (batch), or ``None``
+            when the run failed.
+        stats: The stats object returned to the caller.
+        messages: The full message list as sent to the model.  Always present,
+            so the hook can derive its own context even when ``source_text`` is
+            not captured.
+        source_text: The input text, when ``capture_source_text=True`` was
+            passed; otherwise ``None``.
+    """
+
+    schema_name: str
+    result: BaseModel | list[BaseModel] | None
+    stats: ExtractDataStats | ExtractorRunStats
+    messages: list[BaseMessage]
+    source_text: str | None = None
