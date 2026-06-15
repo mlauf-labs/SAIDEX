@@ -12,6 +12,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from saidex import (
     ExtractionMode,
     ExtractDataStats,
+    FieldIssue,
     extract_data_from_text,
     extract_data,
 )
@@ -84,6 +85,9 @@ class BenchmarkResult:
     error: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    schema_name: str = ""
+    failure_reason: str | None = None
+    field_issues: tuple[FieldIssue, ...] = ()
 
     @property
     def total_tokens(self) -> int:
@@ -102,6 +106,18 @@ class BenchmarkResult:
             "total_tokens": self.total_tokens,
             "value": self.value.model_dump() if self.value else None,
             "error": self.error,
+            "schema_name": self.schema_name,
+            "failure_reason": self.failure_reason,
+            "field_issues": [
+                {
+                    "field_path": fi.field_path,
+                    "category": fi.category,
+                    "error_type": fi.error_type,
+                    "attempt": fi.attempt,
+                    "received": fi.received,
+                }
+                for fi in self.field_issues
+            ],
         }
 
 
@@ -204,6 +220,9 @@ async def run_scenario(
             value=value,
             input_tokens=in_tok,
             output_tokens=out_tok,
+            schema_name=stats.schema_name or scenario.schema.__name__,
+            failure_reason=stats.failure_reason,
+            field_issues=stats.field_issues,
         )
     except Exception as exc:  # noqa: BLE001
         duration = time.perf_counter() - t0
@@ -219,6 +238,8 @@ async def run_scenario(
             error=str(exc),
             input_tokens=in_tok,
             output_tokens=out_tok,
+            schema_name=scenario.schema.__name__,
+            failure_reason="exception",
         )
 
 
