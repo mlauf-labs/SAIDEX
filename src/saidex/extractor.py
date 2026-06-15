@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import json
 import logging
 import re
@@ -38,6 +39,61 @@ MODEL_T = TypeVar("MODEL_T", bound=BaseModel)
 #: Signature of an ``on_complete`` hook: an async callable receiving a single
 #: :class:`~saidex.models.ExtractionEvent`.
 OnComplete = Callable[[ExtractionEvent], Awaitable[None]]
+
+#: Signature of an external ``validator``: a sync **or** async callable that
+#: receives the freshly validated model instance and either accepts it (returns
+#: ``None`` / an empty string) or rejects it (returns a non-empty error message
+#: or raises an exception).  A rejection re-enters the existing field-level retry
+#: loop with the message surfaced to the model, exactly like a Pydantic failure.
+Validator = Callable[[MODEL_T], "str | None | Awaitable[str | None]"]
+
+
+def _external_validator_issue(schema_name: str, message: str, attempt: int) -> FieldIssue:
+    """Build a :class:`~saidex.models.FieldIssue` for an external-validator rejection."""
+    return FieldIssue(
+        schema_name=schema_name,
+        field_path="<external validator>",
+        category="value",
+        error_type="external_validator",
+        message=message,
+        attempt=attempt,
+        received=None,
+    )
+
+
+async def _run_external_validator(
+    validator: Validator[MODEL_T] | None,
+    instance: MODEL_T,
+    schema_name: str,
+) -> str | None:
+    """Run an optional external *validator* against a validated *instance*.
+
+    The validator may be sync or async.  It signals rejection either by raising
+    any exception or by returning a non-empty string; both are turned into a
+    human-readable message suitable for feeding back to the model.
+
+    Args:
+        validator: The caller-supplied validation callable, or ``None``.
+        instance: The instance that already passed Pydantic validation.
+        schema_name: Used to build a fallback message when an exception carries
+            no text of its own.
+
+    Returns:
+        ``None`` when the instance is accepted, otherwise the rejection message.
+    """
+    if validator is None:
+        return None
+    try:
+        outcome = validator(instance)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+    except Exception as exc:  # noqa: BLE001 — any raise is a deliberate rejection
+        return (
+            str(exc) or f"{exc.__class__.__name__} raised by external validator for {schema_name}"
+        )
+    if outcome:
+        return str(outcome)
+    return None
 
 
 def _source_text_from_messages(messages: list[BaseMessage]) -> str:
@@ -90,6 +146,7 @@ async def extract_data(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a LangChain message list.
 
@@ -142,6 +199,13 @@ async def extract_data(
         capture_source_text: When ``True``, the human-turn text of *messages* is
             stored on ``stats.source_text`` and passed to *on_complete*.  Off by
             default to avoid retaining potentially sensitive input.
+        validator: Optional external validation callable (sync or async).  After
+            the model passes Pydantic validation it is handed to *validator*,
+            which accepts it by returning ``None`` or rejects it by returning a
+            non-empty error string or raising.  A rejection re-enters the same
+            field-level retry loop with the message surfaced to the model, so it
+            can correct cross-field, stateful, or reference-data problems that
+            Pydantic alone cannot express.
 
     Returns:
         A tuple of ``(model_instance, stats)``:
@@ -201,6 +265,7 @@ async def extract_data(
         model_label="primary",
         retry_config=effective_retry_config,
         mode=mode,
+        validator=validator,
     )
 
     if primary.instance is not None:
@@ -242,6 +307,7 @@ async def extract_data(
             model_label="fallback",
             retry_config=effective_retry_config,
             mode=mode,
+            validator=validator,
         )
 
         combined_issues = (*primary.field_issues, *fallback.field_issues)
@@ -313,6 +379,7 @@ async def extract_data_from_text(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a plain text string.
 
@@ -336,6 +403,7 @@ async def extract_data_from_text(
         on_complete: Optional async completion hook — see :func:`extract_data`.
         capture_source_text: When ``True``, *text* is stored on
             ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable — see :func:`extract_data`.
 
     Returns:
         Same as :func:`extract_data`.
@@ -372,6 +440,7 @@ async def extract_data_from_text(
         retry_config=retry_config,
         on_complete=on_complete,
         capture_source_text=capture_source_text,
+        validator=validator,
     )
 
 
@@ -416,6 +485,7 @@ async def extract_data_list(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a message list.
 
@@ -447,6 +517,10 @@ async def extract_data_list(
             Fires once with the list result and the item schema name.
         capture_source_text: When ``True``, the human-turn text is stored on
             ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable run on **each** extracted
+            item (sync or async).  Any item it rejects re-enters the shared retry
+            loop with a per-item message (e.g. ``items -> 2: …``) surfaced to the
+            model.  See :func:`extract_data`.
 
     Returns:
         A tuple of ``(items, stats)``:
@@ -464,6 +538,22 @@ async def extract_data_list(
             print(f"Extracted {stats.item_count} line items")
     """
     container = _build_list_container(schema)
+
+    container_validator: Validator[BaseModel] | None = None
+    if validator is not None:
+        item_validator = validator
+
+        async def _validate_each_item(container_instance: BaseModel) -> str | None:
+            """Run the item *validator* over every container item, joining failures."""
+            errors: list[str] = []
+            for index, item in enumerate(cast(Any, container_instance).items):
+                item_error = await _run_external_validator(item_validator, item, schema.__name__)
+                if item_error is not None:
+                    errors.append(f"items -> {index}: {item_error}")
+            return "\n".join(errors) if errors else None
+
+        container_validator = _validate_each_item
+
     # The inner call must not fire the hook: it would report the internal
     # ``…List`` container and the wrapper instance instead of the list result.
     result, stats = await extract_data(
@@ -477,6 +567,7 @@ async def extract_data_list(
         max_fallback_retries=max_fallback_retries,
         retry_config=retry_config,
         capture_source_text=capture_source_text,
+        validator=container_validator,
     )
     # Report the item schema name (not the internal ``…List`` container) so the
     # stats group under the schema the caller actually passed.
@@ -513,6 +604,7 @@ async def extract_data_list_from_text(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a plain text string.
 
@@ -538,6 +630,8 @@ async def extract_data_list_from_text(
         on_complete: Optional async completion hook — see :func:`extract_data`.
         capture_source_text: When ``True``, *text* is stored on
             ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable run on each item — see
+            :func:`extract_data_list`.
 
     Returns:
         Same as :func:`extract_data_list`.
@@ -575,6 +669,7 @@ async def extract_data_list_from_text(
         retry_config=retry_config,
         on_complete=on_complete,
         capture_source_text=capture_source_text,
+        validator=validator,
     )
 
 
@@ -593,6 +688,7 @@ async def extract_data_with_tools(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Run an agentic tool-loop to produce a validated Pydantic model.
 
@@ -627,6 +723,9 @@ async def extract_data_with_tools(
         on_complete: Optional async completion hook — see :func:`extract_data`.
         capture_source_text: When ``True``, *text* is stored on
             ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable applied to the final
+            answer (sync or async).  A rejection keeps the agent loop running
+            with the message surfaced to the model — see :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -665,6 +764,7 @@ async def extract_data_with_tools(
         retry_config=retry_config,
         on_complete=on_complete,
         capture_source_text=capture_source_text,
+        validator=validator,
     )
 
 
@@ -682,6 +782,7 @@ async def run_extractor_agent(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Low-level agent loop that accepts a full message list.
 
@@ -699,6 +800,8 @@ async def run_extractor_agent(
         on_complete: Optional async completion hook — see :func:`extract_data`.
         capture_source_text: When ``True``, the human-turn text of *messages* is
             stored on ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable applied to the final
+            answer — see :func:`extract_data_with_tools`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -736,6 +839,7 @@ async def run_extractor_agent(
         max_validation_retries=max_validation_retries,
         model_label="primary",
         retry_config=effective_retry_config,
+        validator=validator,
     )
 
     if result is not None:
@@ -767,6 +871,7 @@ async def run_extractor_agent(
             max_validation_retries=max_validation_retries,
             model_label="fallback",
             retry_config=effective_retry_config,
+            validator=validator,
         )
         succeeded = result is not None
         combined = ExtractorRunStats(
@@ -814,6 +919,7 @@ async def _run_extractor_agent_with_model(
     max_validation_retries: int,
     model_label: str,
     retry_config: RetryConfig,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Execute the agent loop with one model; return (instance, stats)."""
     from .tools import Tool as ToolType  # noqa: F401 – used for type clarity only
@@ -931,6 +1037,35 @@ async def _run_extractor_agent_with_model(
                     )
                     validation_retries += 1
                     continue
+                assert instance is not None
+                validator_error = await _run_external_validator(
+                    validator, instance, schema.__name__
+                )
+                if validator_error is not None:
+                    agent_issues.append(
+                        _external_validator_issue(
+                            schema.__name__, validator_error, validation_retries
+                        )
+                    )
+                    failure_reason = "validation_exhausted"
+                    if validation_retries >= max_validation_retries:
+                        break
+                    logger.warning(
+                        "%s: agent loop JSON final answer failed external validation: %s",
+                        model_label,
+                        validator_error,
+                    )
+                    messages.append(
+                        HumanMessage(
+                            content=(
+                                f"The JSON output is structurally valid but failed an "
+                                f"additional validation check:\n\n{validator_error}\n\n"
+                                f"Please correct it and return only the fixed JSON object."
+                            )
+                        )
+                    )
+                    validation_retries += 1
+                    continue
                 logger.debug("%s: agent loop JSON final answer validated.", model_label)
                 return instance, _stats(success=True, reason=None)
             else:
@@ -1031,11 +1166,43 @@ async def _run_extractor_agent_with_model(
                         )
                         validation_retries += 1
                 else:
-                    tool_result_messages.append(
-                        ToolMessage(content="Final answer accepted.", tool_call_id=tc_id)
+                    assert instance is not None
+                    validator_error = await _run_external_validator(
+                        validator, instance, schema.__name__
                     )
-                    found_final_answer = instance
-                    final_answer_valid = True
+                    if validator_error is not None:
+                        agent_issues.append(
+                            _external_validator_issue(
+                                schema.__name__, validator_error, validation_retries
+                            )
+                        )
+                        failure_reason = "validation_exhausted"
+                        if validation_retries >= max_validation_retries:
+                            tool_result_messages.append(
+                                ToolMessage(
+                                    content=f"External validation failed: {validator_error}",
+                                    tool_call_id=tc_id,
+                                )
+                            )
+                        else:
+                            tool_result_messages.append(
+                                ToolMessage(
+                                    content=(
+                                        f"The final answer is structurally valid but failed an "
+                                        f"additional validation check:\n\n{validator_error}\n\n"
+                                        f"Please call '{final_tool_name}' again with corrected "
+                                        f"values."
+                                    ),
+                                    tool_call_id=tc_id,
+                                )
+                            )
+                            validation_retries += 1
+                    else:
+                        tool_result_messages.append(
+                            ToolMessage(content="Final answer accepted.", tool_call_id=tc_id)
+                        )
+                        found_final_answer = instance
+                        final_answer_valid = True
 
             # ── Helper tool ───────────────────────────────────────────────
             else:
@@ -1118,6 +1285,7 @@ async def _try_with_model(
     model_label: str,
     retry_config: RetryConfig,
     mode: ExtractionMode,
+    validator: Validator[MODEL_T] | None = None,
 ) -> _ModelAttempt[MODEL_T]:
     """Attempt structured extraction with one model, with validation retries.
 
@@ -1217,6 +1385,32 @@ async def _try_with_model(
                         f"Please correct it based on the following errors:\n\n"
                         f"{error_text}\n\n"
                         f"Return a corrected response that addresses every issue above."
+                    )
+                )
+            )
+            retries += 1
+            remaining -= 1
+            continue
+
+        assert instance is not None
+        validator_error = await _run_external_validator(validator, instance, schema.__name__)
+        if validator_error is not None:
+            logger.warning(
+                "%s: external validation failed for %s (attempt %d/%d): %s",
+                model_label,
+                schema.__name__,
+                retries + 1,
+                max_retries,
+                validator_error,
+            )
+            issues.append(_external_validator_issue(schema.__name__, validator_error, retries))
+            failure_reason = "validation_exhausted"
+            messages.append(
+                HumanMessage(
+                    content=(
+                        f"The extracted data is structurally valid but failed an additional "
+                        f"validation check:\n\n{validator_error}\n\n"
+                        f"Return a corrected response that resolves the problem above."
                     )
                 )
             )

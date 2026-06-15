@@ -33,6 +33,7 @@ Public API
         FieldIssue,
         ExtractionEvent,
         OnComplete,
+        Validator,
         RetryConfig,
         create_instance_safe,
         # Cross-run field-issue analytics
@@ -62,6 +63,7 @@ from .analytics import (
 )
 from .extractor import (
     OnComplete,
+    Validator,
     extract_data,
     extract_data_from_text,
     extract_data_list,
@@ -132,6 +134,7 @@ __all__ = [
     "FieldIssue",
     "ExtractionEvent",
     "OnComplete",
+    "Validator",
     "RetryConfig",
     # cross-run field-issue analytics
     "summarize_field_issues",

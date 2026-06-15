@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from .extractor import (
     OnComplete,
+    Validator,
     extract_data,
     extract_data_from_text,
     extract_data_list,
@@ -84,6 +85,7 @@ def extract_data_sync(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data`.
 
@@ -121,6 +123,7 @@ def extract_data_sync(
             retry_config=retry_config,
             on_complete=on_complete,
             capture_source_text=capture_source_text,
+            validator=validator,
         ),
         sync_name="extract_data_sync",
         async_name="extract_data",
@@ -141,6 +144,7 @@ def extract_data_from_text_sync(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_from_text`.
 
@@ -180,6 +184,7 @@ def extract_data_from_text_sync(
             retry_config=retry_config,
             on_complete=on_complete,
             capture_source_text=capture_source_text,
+            validator=validator,
         ),
         sync_name="extract_data_from_text_sync",
         async_name="extract_data_from_text",
@@ -199,6 +204,7 @@ def extract_data_list_sync(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list`.
 
@@ -236,6 +242,7 @@ def extract_data_list_sync(
             retry_config=retry_config,
             on_complete=on_complete,
             capture_source_text=capture_source_text,
+            validator=validator,
         ),
         sync_name="extract_data_list_sync",
         async_name="extract_data_list",
@@ -256,6 +263,7 @@ def extract_data_list_from_text_sync(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list_from_text`.
 
@@ -295,6 +303,7 @@ def extract_data_list_from_text_sync(
             retry_config=retry_config,
             on_complete=on_complete,
             capture_source_text=capture_source_text,
+            validator=validator,
         ),
         sync_name="extract_data_list_from_text_sync",
         async_name="extract_data_list_from_text",
@@ -316,6 +325,7 @@ def extract_data_with_tools_sync(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_with_tools`.
 
@@ -357,6 +367,7 @@ def extract_data_with_tools_sync(
             retry_config=retry_config,
             on_complete=on_complete,
             capture_source_text=capture_source_text,
+            validator=validator,
         ),
         sync_name="extract_data_with_tools_sync",
         async_name="extract_data_with_tools",
@@ -377,6 +388,7 @@ def run_extractor_agent_sync(
     retry_config: RetryConfig | None = None,
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.run_extractor_agent`.
 
@@ -416,6 +428,7 @@ def run_extractor_agent_sync(
             retry_config=retry_config,
             on_complete=on_complete,
             capture_source_text=capture_source_text,
+            validator=validator,
         ),
         sync_name="run_extractor_agent_sync",
         async_name="run_extractor_agent",

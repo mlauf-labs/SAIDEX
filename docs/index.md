@@ -17,6 +17,7 @@
 | **[Schema Design](schema-design.md)** | Which types to use, field descriptions, types to avoid |
 | **[Built-in Field Types & Validators](built-in-types.md)** | Reusable types the library ships (`IsoDateStr`, `IbanStr`, `IsinStr`, …) |
 | **[Pydantic Validators](validators.md)** | Pre/post/model validators, computed fields, patterns, pitfalls |
+| **[External Validators](external-validators.md)** | Pass your own `validator` callable for cross-field, stateful, or reference-data checks that re-enter the retry loop |
 | **[Image Extraction](images.md)** | Multimodal messages, OpenAI Vision, local vLLM |
 | **[Observability](observability.md)** | Callbacks, Langfuse, LangSmith, logging, async/sync |
 
@@ -38,6 +39,7 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 | [`08_agent_tools.py`](../examples/08_agent_tools.py) | Agentic tool loop: `Tool`, `extract_data_with_tools`, `run_extractor_agent` |
 | [`10_batch_extraction.py`](../examples/10_batch_extraction.py) | Batch extraction → `list[ModelT]`: `extract_data_list_from_text` |
 | [`11_quality_analytics.py`](../examples/11_quality_analytics.py) | Aggregate field issues across runs: `summarize_field_issues` |
+| [`12_external_validator.py`](../examples/12_external_validator.py) | External `validator` callable: cross-field rule that re-enters the retry loop |
 
 ---
 
@@ -55,6 +57,7 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 - …validate a date/IBAN/country code field with one annotation → [Built-in Types](built-in-types.md)
 - …clean messy LLM output (currency symbols, date formats) → [Validators — `mode='before'`](validators.md#field_validatormodebefore--clean-raw-llm-output)
 - …add cross-field rules (end > start, total = sum) → [Validators — `mode='after'`](validators.md#model_validatormodeafter--cross-field-consistency-rules)
+- …validate against a database, business rule, or running total → [External Validators](external-validators.md)
 - …extract data from images → [Image Extraction](images.md)
 - …add tracing with Langfuse or LangSmith → [Observability](observability.md)
 - …call the library from synchronous code → [Observability — Sync usage](observability.md#sync-usage)
