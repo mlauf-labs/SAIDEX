@@ -66,13 +66,23 @@ without tool-calling support.  See [Extraction Modes](extraction-modes.md).
 ```python
 result, stats = await extract_data_from_text(...)
 
+stats.success           # bool — did the run produce a validated instance?
+stats.failure_reason    # str | None — why it failed (None on success)
 stats.primary_retries   # int — retries on the primary model
 stats.fallback_retries  # int — retries on the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — did the fallback model run?
-
-int(stats)   # == stats.total_retries  (backward-compatible)
+stats.format_errors     # int — pure parse / tool-call failures
+stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
+stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
 ```
+
+Prefer `stats.success` over `result is not None` to branch on the outcome.
+`field_issues` are recorded even on a successful run when an earlier attempt was
+self-corrected, so you can see which fields the model struggled with.
+
+> **Breaking change (was `int(stats)`):** the legacy integer shims were removed.
+> Use `stats.total_retries` instead of `int(stats)`.
 
 ---
 

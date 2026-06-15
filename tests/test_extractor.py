@@ -9,7 +9,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from saidex import ExtractionMode, extract_data, extract_data_from_text
+from saidex import ExtractionMode, extract_data, extract_data_from_text, extract_data_list
 from saidex.retry import RetryConfig
 
 # ---------------------------------------------------------------------------
@@ -455,3 +455,120 @@ async def test_json_mode_extract_data_from_text() -> None:
     assert result.name == "Heidi"
     assert result.value == 21
     llm.bind_tools.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Field-level stats — success, failure_reason, field_issues
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stats_success_flag_and_schema_name() -> None:
+    llm = _make_bound_llm([_make_llm_response({"name": "Alice", "value": 42})])
+    messages = [HumanMessage(content="Extract data")]
+
+    _, stats = await extract_data(llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY)
+
+    assert stats.success is True
+    assert stats.failure_reason is None
+    assert stats.schema_name == "SimpleSchema"
+    assert stats.field_issues == ()
+    assert stats.problem_fields == ()
+
+
+@pytest.mark.asyncio
+async def test_stats_collects_self_corrected_issues_on_success() -> None:
+    bad = _make_llm_response({"name": "Alice", "value": "not_an_int"})
+    good = _make_llm_response({"name": "Alice", "value": 42})
+    llm = _make_bound_llm([bad, good])
+    messages = [HumanMessage(content="Extract data")]
+
+    _, stats = await extract_data(llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY)
+
+    # The run ultimately succeeded but the first attempt's issue is retained.
+    assert stats.success is True
+    assert stats.problem_fields == ("value",)
+    assert stats.field_issues[0].field_path == "value"
+    assert stats.field_issues[0].category == "type"
+    assert stats.field_issues[0].attempt == 0
+
+
+@pytest.mark.asyncio
+async def test_stats_failure_reason_validation_exhausted() -> None:
+    bad = _make_llm_response({"name": "Alice", "value": "bad"})
+    llm = _make_bound_llm([bad, bad, bad])
+    messages = [HumanMessage(content="Extract")]
+
+    result, stats = await extract_data(
+        llm, SimpleSchema, messages, max_primary_retries=3, retry_config=NO_NETWORK_RETRY
+    )
+
+    assert result is None
+    assert stats.success is False
+    assert stats.failure_reason == "validation_exhausted"
+    assert "value" in stats.problem_fields
+    assert {i.attempt for i in stats.field_issues} == {0, 1, 2}
+
+
+@pytest.mark.asyncio
+async def test_stats_failure_reason_parse_error() -> None:
+    invalid = _make_llm_response(invalid=True)
+    llm = _make_bound_llm([invalid, invalid, invalid])
+    messages = [HumanMessage(content="Extract")]
+
+    result, stats = await extract_data(
+        llm, SimpleSchema, messages, max_primary_retries=3, retry_config=NO_NETWORK_RETRY
+    )
+
+    assert result is None
+    assert stats.failure_reason == "parse_error"
+    assert stats.format_errors == 3
+    assert stats.field_issues == ()
+
+
+@pytest.mark.asyncio
+async def test_stats_missing_field_category() -> None:
+    bad = _make_llm_response({"name": "Alice"})  # missing required 'value'
+    llm = _make_bound_llm([bad, bad, bad])
+    messages = [HumanMessage(content="Extract")]
+
+    _, stats = await extract_data(
+        llm, SimpleSchema, messages, max_primary_retries=3, retry_config=NO_NETWORK_RETRY
+    )
+
+    assert stats.problem_fields == ("value",)
+    assert stats.field_issues[0].category == "missing"
+    assert stats.field_issues[0].received is None
+
+
+@pytest.mark.asyncio
+async def test_batch_stats_use_item_schema_name() -> None:
+    items = [{"name": "A", "value": 1}, {"name": "B", "value": 2}]
+    llm = _make_bound_llm([_make_llm_response({"items": items})])
+    messages = [HumanMessage(content="Extract all")]
+
+    result, stats = await extract_data_list(
+        llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY
+    )
+
+    assert result is not None
+    assert stats.success is True
+    assert stats.item_count == 2
+    # The container name is hidden; stats report the item schema.
+    assert stats.schema_name == "SimpleSchema"
+
+
+@pytest.mark.asyncio
+async def test_batch_stats_field_issues_relabeled_to_item_schema() -> None:
+    # First attempt has a bad item; second is clean. Issue paths stay nested.
+    bad = _make_llm_response({"items": [{"name": "A", "value": "x"}]})
+    good = _make_llm_response({"items": [{"name": "A", "value": 1}]})
+    llm = _make_bound_llm([bad, good])
+    messages = [HumanMessage(content="Extract all")]
+
+    _, stats = await extract_data_list(llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY)
+
+    assert stats.success is True
+    assert stats.field_issues
+    assert all(i.schema_name == "SimpleSchema" for i in stats.field_issues)
+    assert stats.field_issues[0].field_path == "items -> 0 -> value"
