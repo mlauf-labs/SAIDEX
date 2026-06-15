@@ -839,6 +839,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#markdown-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Markdown report
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1091,6 +1102,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#markdown-report" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Markdown report
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1213,6 +1235,23 @@ field with a high <code>recovery_rate</code> is noisier than it is dangerous.</p
 occurrence-based fields. A schema seen only through bare issues reports
 <code>total_runs == 0</code> and <code>success_rate == 0.0</code>.</p>
 </div>
+<h2 id="markdown-report">Markdown report<a class="headerlink" href="#markdown-report" title="Permanent link">&para;</a></h2>
+<p>[<code>FieldIssueSummary.to_markdown()</code>][saidex.FieldIssueSummary.to_markdown] (or the
+standalone [<code>render_field_issue_report</code>][saidex.render_field_issue_report])
+renders the summary as a Markdown document — one section per schema, fields
+sorted by descending severity. The output is <strong>deterministic</strong> for the same
+input, so it is safe to snapshot in tests or commit as a benchmark artifact.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">summary</span><span class="o">.</span><span class="n">to_markdown</span><span class="p">())</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="gh"># Field issue report</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="gu">## Invoice — 33% success (2/3 runs failed)</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>| Field | Category | Top error | Hits | In failed runs | Recovery | Samples |
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>| --- | --- | --- | ---: | ---: | ---: | --- |
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>| total | type | float_parsing | 2 | 2 | 0% | <span class="sb">`1.299,00`</span>, <span class="sb">`forty-two`</span> |
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>| currency | enum | enum | 1 | 0 | 100% | <span class="sb">`euros`</span> |
+</code></pre></div>
 <blockquote>
 <p><strong>Runnable example:</strong> <a href="https://github.com/mlauf-labs/saidex/blob/main/examples/11_quality_analytics.py"><code>examples/11_quality_analytics.py</code></a></p>
 </blockquote>
