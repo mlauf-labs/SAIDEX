@@ -48,6 +48,7 @@ nav:
   - Reliability:
       - Retry & Fallback: retry-and-fallback.md
       - Observability: observability.md
+      - Quality Analytics: quality-analytics.md
       - Langfuse Tracing: langfuse-tracing.md
   - Schema & Validation:
       - Schema Design: schema-design.md
