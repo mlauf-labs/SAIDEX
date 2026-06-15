@@ -10,13 +10,13 @@
       
       
       
-        <link rel="canonical" href="https://mlauf-labs.github.io/SAIDEX/latest/extraction-modes/">
+        <link rel="canonical" href="https://mlauf-labs.github.io/SAIDEX/latest/batch-extraction/">
       
       
-        <link rel="prev" href="../batch-extraction/">
+        <link rel="prev" href="../extraction/">
       
       
-        <link rel="next" href="../agent-loop/">
+        <link rel="next" href="../extraction-modes/">
       
       
         
@@ -27,7 +27,7 @@
     
     
       
-        <title>Extraction Modes - SAIDEX</title>
+        <title>Batch Extraction - SAIDEX</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#extraction-modes" class="md-skip">
+        <a href="#batch-extraction" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Extraction Modes
+              Batch Extraction
             
           </span>
         </div>
@@ -511,34 +511,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../batch-extraction/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Batch Extraction
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -558,7 +530,7 @@
   <span class="md-ellipsis">
     
   
-    Extraction Modes
+    Batch Extraction
   
 
     
@@ -576,7 +548,7 @@
   <span class="md-ellipsis">
     
   
-    Extraction Modes
+    Batch Extraction
   
 
     
@@ -602,44 +574,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#extractionmodetool_calling-default" class="md-nav__link">
+  <a href="#extract_data_list_from_text-plain-text-list-of-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ExtractionMode.TOOL_CALLING (default)
+        extract_data_list_from_text — plain text → list of models
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#extractionmodejson" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ExtractionMode.JSON
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="ExtractionMode.JSON">
+    <nav class="md-nav" aria-label="extract_data_list_from_text — plain text → list of models">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#what-gets-added-to-the-prompt" class="md-nav__link">
+  <a href="#full-signature" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What gets added to the prompt
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#robust-parsing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Robust parsing
+        Full signature
       
     </span>
   </a>
@@ -652,55 +602,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#when-to-use-which-mode" class="md-nav__link">
+  <a href="#extract_data_list-chat-history-list-of-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When to use which mode
+        extract_data_list — chat history → list of models
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tips-for-json-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tips for JSON mode
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Tips for JSON mode">
+    <nav class="md-nav" aria-label="extract_data_list — chat history → list of models">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#use-a-low-temperature" class="md-nav__link">
+  <a href="#full-signature_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Use a low temperature
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#keep-schemas-focused" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Keep schemas focused
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#combine-with-a-fallback-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Combine with a fallback model
+        Full signature
       
     </span>
   </a>
@@ -709,6 +626,39 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#synchronous-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synchronous usage
+      
+    </span>
+  </a>
   
 </li>
       
@@ -727,6 +677,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../extraction-modes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Extraction Modes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1108,44 +1086,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#extractionmodetool_calling-default" class="md-nav__link">
+  <a href="#extract_data_list_from_text-plain-text-list-of-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ExtractionMode.TOOL_CALLING (default)
+        extract_data_list_from_text — plain text → list of models
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#extractionmodejson" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ExtractionMode.JSON
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="ExtractionMode.JSON">
+    <nav class="md-nav" aria-label="extract_data_list_from_text — plain text → list of models">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#what-gets-added-to-the-prompt" class="md-nav__link">
+  <a href="#full-signature" class="md-nav__link">
     <span class="md-ellipsis">
       
-        What gets added to the prompt
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#robust-parsing" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Robust parsing
+        Full signature
       
     </span>
   </a>
@@ -1158,55 +1114,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#when-to-use-which-mode" class="md-nav__link">
+  <a href="#extract_data_list-chat-history-list-of-models" class="md-nav__link">
     <span class="md-ellipsis">
       
-        When to use which mode
+        extract_data_list — chat history → list of models
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#tips-for-json-mode" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tips for JSON mode
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Tips for JSON mode">
+    <nav class="md-nav" aria-label="extract_data_list — chat history → list of models">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#use-a-low-temperature" class="md-nav__link">
+  <a href="#full-signature_1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Use a low temperature
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#keep-schemas-focused" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Keep schemas focused
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#combine-with-a-fallback-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Combine with a fallback model
+        Full signature
       
     </span>
   </a>
@@ -1215,6 +1138,39 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The result
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#synchronous-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synchronous usage
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1246,7 +1202,7 @@
 
 
   
-    <a href="https://github.com/mlauf-labs/saidex/edit/main/docs/extraction-modes.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mlauf-labs/saidex/edit/main/docs/batch-extraction.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
     </a>
@@ -1254,185 +1210,128 @@
   
 
 
-<h1 id="extraction-modes">Extraction Modes<a class="headerlink" href="#extraction-modes" title="Permanent link">&para;</a></h1>
+<h1 id="batch-extraction">Batch Extraction<a class="headerlink" href="#batch-extraction" title="Permanent link">&para;</a></h1>
 <p>→ <a href="../">Documentation index</a></p>
+<p>Many documents contain <strong>repeated records</strong> — line items on an invoice, several
+people in a meeting transcript, multiple products on a page. Rather than wrapping
+your model in a container schema by hand or running one extraction per record,
+<code>extract_data_list</code> pulls them all in a <strong>single LLM call</strong> and returns a
+precisely typed <code>list[ModelT]</code>.</p>
 <blockquote>
-<p><strong>Runnable example:</strong> <a href="../examples/07_json_mode.py"><code>examples/07_json_mode.py</code></a></p>
+<p><strong>Runnable example:</strong> <a href="../examples/10_batch_extraction.py"><code>examples/10_batch_extraction.py</code></a></p>
 </blockquote>
-<p>The library supports two strategies for getting structured output out of an
-LLM.  Both are selected with the <code>mode</code> parameter on <code>extract_data_from_text</code> and
-<code>extract_data</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">ExtractionMode</span><span class="p">,</span> <span class="n">extract_data_from_text</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="c1"># Tool calling (default)</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<hr />
+<h2 id="extract_data_list_from_text-plain-text-list-of-models"><code>extract_data_list_from_text</code> — plain text → list of models<a class="headerlink" href="#extract_data_list_from_text-plain-text-list-of-models" title="Permanent link">&para;</a></h2>
+<p>Define the schema for <strong>one</strong> item; the function returns a list of them.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_list_from_text</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># Raw JSON — no tool calling required</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">JSON</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="p">)</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="k">class</span> <span class="nc">InvoiceLine</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;What was purchased&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    <span class="n">quantity</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Number of units&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">unit_price</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Price per unit&quot;</span><span class="p">,</span> <span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">lines</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_list_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">InvoiceLine</span><span class="p">,</span> <span class="n">document</span><span class="p">)</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="k">if</span> <span class="n">lines</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Extracted </span><span class="si">{</span><span class="n">stats</span><span class="o">.</span><span class="n">item_count</span><span class="si">}</span><span class="s2"> line items&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>    <span class="k">for</span> <span class="n">line</span> <span class="ow">in</span> <span class="n">lines</span><span class="p">:</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        <span class="nb">print</span><span class="p">(</span><span class="n">line</span><span class="o">.</span><span class="n">description</span><span class="p">,</span> <span class="n">line</span><span class="o">.</span><span class="n">quantity</span><span class="p">,</span> <span class="n">line</span><span class="o">.</span><span class="n">unit_price</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="full-signature">Full signature<a class="headerlink" href="#full-signature" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">extract_data_list_from_text</span><span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">llm_model</span><span class="p">:</span>           <span class="n">Any</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">schema</span><span class="p">:</span>              <span class="nb">type</span><span class="p">[</span><span class="n">ModelT</span><span class="p">],</span>   <span class="c1"># the schema for ONE item</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">text</span><span class="p">:</span>                <span class="nb">str</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">mode</span><span class="p">:</span>                <span class="n">ExtractionMode</span> <span class="o">=</span> <span class="n">ExtractionMode</span><span class="o">.</span><span class="n">TOOL_CALLING</span><span class="p">,</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="n">system_prompt</span><span class="p">:</span>       <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="n">callbacks</span><span class="p">:</span>           <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">fallback_llm_model</span><span class="p">:</span>  <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">max_primary_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">max_fallback_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">retry_config</span><span class="p">:</span>        <span class="n">RetryConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="n">ModelT</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ExtractDataStats</span><span class="p">]:</span>
 </code></pre></div>
 <hr />
-<h2 id="extractionmodetool_calling-default"><code>ExtractionMode.TOOL_CALLING</code> (default)<a class="headerlink" href="#extractionmodetool_calling-default" title="Permanent link">&para;</a></h2>
-<p>The schema is bound as an OpenAI-style tool and the model is <strong>forced</strong> to
-call it (<code>bind_tools(..., tool_choice=...)</code>).  The arguments of that tool call
-are the structured output.</p>
-<table>
-<thead>
-<tr>
-<th></th>
-<th></th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Requires</strong></td>
-<td>A model that supports tool / function calling</td>
-</tr>
-<tr>
-<td><strong>Reliability</strong></td>
-<td>Highest — the provider guarantees a JSON tool call</td>
-</tr>
-<tr>
-<td><strong>Schema visibility</strong></td>
-<td>Sent as a tool definition (not in the prompt text)</td>
-</tr>
-<tr>
-<td><strong>Best for</strong></td>
-<td>OpenAI, Anthropic, Gemini, Mistral, Azure OpenAI, …</td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">TOOL_CALLING</span><span class="p">,</span>   <span class="c1"># this is the default</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">)</span>
+<h2 id="extract_data_list-chat-history-list-of-models"><code>extract_data_list</code> — chat history → list of models<a class="headerlink" href="#extract_data_list-chat-history-list-of-models" title="Permanent link">&para;</a></h2>
+<p>Use <code>extract_data_list</code> when you already have a list of LangChain messages and
+want full control over the conversation:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span> <span class="nn">langchain_core.messages</span> <span class="kn">import</span> <span class="n">SystemMessage</span><span class="p">,</span> <span class="n">HumanMessage</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_list</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">SystemMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&quot;Extract every attendee mentioned in the transcript.&quot;</span><span class="p">),</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">HumanMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="n">transcript</span><span class="p">),</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="p">]</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">people</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_list</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">Attendee</span><span class="p">,</span> <span class="n">messages</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="full-signature_1">Full signature<a class="headerlink" href="#full-signature_1" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">extract_data_list</span><span class="p">(</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">llm_model</span><span class="p">:</span>           <span class="n">Any</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">schema</span><span class="p">:</span>              <span class="nb">type</span><span class="p">[</span><span class="n">ModelT</span><span class="p">],</span>   <span class="c1"># the schema for ONE item</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">messages</span><span class="p">:</span>            <span class="nb">list</span><span class="p">[</span><span class="n">BaseMessage</span><span class="p">],</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="o">*</span><span class="p">,</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">mode</span><span class="p">:</span>                <span class="n">ExtractionMode</span> <span class="o">=</span> <span class="n">ExtractionMode</span><span class="o">.</span><span class="n">TOOL_CALLING</span><span class="p">,</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">callbacks</span><span class="p">:</span>           <span class="nb">list</span><span class="p">[</span><span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">fallback_llm_model</span><span class="p">:</span>  <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">max_primary_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">max_fallback_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">retry_config</span><span class="p">:</span>        <span class="n">RetryConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="n">ModelT</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ExtractDataStats</span><span class="p">]:</span>
 </code></pre></div>
 <hr />
-<h2 id="extractionmodejson"><code>ExtractionMode.JSON</code><a class="headerlink" href="#extractionmodejson" title="Permanent link">&para;</a></h2>
-<p>The schema's JSON Schema is injected into the prompt and the model is asked to
-reply with a single raw JSON object.  The library parses the response
-<strong>content</strong> directly — <code>bind_tools</code> is never called.</p>
-<table>
-<thead>
-<tr>
-<th></th>
-<th></th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><strong>Requires</strong></td>
-<td>Any chat model with <code>.ainvoke()</code> — no tool calling needed</td>
-</tr>
-<tr>
-<td><strong>Reliability</strong></td>
-<td>High, but depends on the model following instructions</td>
-</tr>
-<tr>
-<td><strong>Schema visibility</strong></td>
-<td>Embedded as JSON Schema in an appended prompt message</td>
-</tr>
-<tr>
-<td><strong>Best for</strong></td>
-<td>Local models (Ollama, llama.cpp), older APIs, non-tool models</td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">JSON</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">)</span>
-</code></pre></div>
-<h3 id="what-gets-added-to-the-prompt">What gets added to the prompt<a class="headerlink" href="#what-gets-added-to-the-prompt" title="Permanent link">&para;</a></h3>
-<p>In JSON mode the library appends one <code>HumanMessage</code> before invoking the model:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Respond with a SINGLE JSON object that strictly conforms to the JSON Schema
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>below. Output ONLY the raw JSON object — no markdown code fences, no comments,
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>and no explanatory text before or after it.
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>JSON Schema for &#39;MySchema&#39;:
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>{ ... full JSON Schema ... }
-</code></pre></div>
-<h3 id="robust-parsing">Robust parsing<a class="headerlink" href="#robust-parsing" title="Permanent link">&para;</a></h3>
-<p>Real models do not always follow "raw JSON only" perfectly.  The JSON-mode
-parser is tolerant of common deviations:</p>
+<h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
+<p>Internally the per-item <em>schema</em> is wrapped in a one-field container model
+(<code>items: list[schema]</code>) and driven through the <strong>exact same pipeline</strong> as
+<a href="../extraction/"><code>extract_data</code></a>. That means everything you already rely on
+applies unchanged:</p>
 <ul>
-<li><strong>Markdown fences</strong> — <code>```json ... ```</code> blocks are stripped.</li>
-<li><strong>Surrounding text</strong> — if the content has stray text around the object, the
-  outermost <code>{ ... }</code> block is isolated and parsed.</li>
-<li><strong>Chunked / multimodal content</strong> — list-style content is concatenated from
-  its text parts before parsing.</li>
+<li><strong>Both modes</strong> — tool calling (default) and raw <a href="../extraction-modes/">JSON mode</a>.</li>
+<li><strong>Per-item validation</strong> — each element is validated independently. When item 3
+  has a bad field, the error feedback points the model straight at it with a path
+  like <code>items -&gt; 2 -&gt; quantity</code>, and only the <a href="../retry-and-fallback/">retry loop</a>
+  needed to fix it runs.</li>
+<li><strong>Fallback model</strong> — an optional <code>fallback_llm_model</code> takes over if the primary
+  exhausts its retry budget.</li>
 </ul>
-<p>If parsing still fails, or the JSON is not an object, the model receives a
-correction message and the normal <a href="../retry-and-fallback/">retry loop</a> applies —
-exactly like a validation failure.</p>
 <hr />
-<h2 id="when-to-use-which-mode">When to use which mode<a class="headerlink" href="#when-to-use-which-mode" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Situation</th>
-<th>Recommended mode</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>OpenAI / Anthropic / Gemini / Mistral</td>
-<td><code>TOOL_CALLING</code> (default)</td>
-</tr>
-<tr>
-<td>Local model via Ollama / llama.cpp</td>
-<td><code>JSON</code></td>
-</tr>
-<tr>
-<td>Model/endpoint without tool-calling support</td>
-<td><code>JSON</code></td>
-</tr>
-<tr>
-<td>Tool calling behaves inconsistently for a provider</td>
-<td><code>JSON</code> (as a workaround)</td>
-</tr>
-<tr>
-<td>Maximum structural reliability</td>
-<td><code>TOOL_CALLING</code></td>
-</tr>
-</tbody>
-</table>
-<p>Both modes share everything else: validation, the field-level error feedback
-loop, validation retries, the optional <a href="../retry-and-fallback/">fallback model</a>,
-network <a href="../retry-and-fallback/#network-retries-retryconfig"><code>RetryConfig</code></a>,
-callbacks, and statistics.  The <code>mode</code> applies to both the primary and fallback
-models.</p>
+<h2 id="the-result">The result<a class="headerlink" href="#the-result" title="Permanent link">&para;</a></h2>
+<p>The return value mirrors the single-item API: a <code>(value, stats)</code> tuple where the
+value is <code>None</code> on total failure. On success it is a <code>list</code> — <strong>possibly empty</strong>
+when the document genuinely contains no records.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">lines</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_list_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">InvoiceLine</span><span class="p">,</span> <span class="n">document</span><span class="p">)</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">if</span> <span class="n">lines</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;Extraction failed&quot;</span><span class="p">)</span>  <span class="c1"># all retries exhausted</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">stats</span><span class="o">.</span><span class="n">item_count</span><span class="si">}</span><span class="s2"> items, </span><span class="si">{</span><span class="n">stats</span><span class="o">.</span><span class="n">total_retries</span><span class="si">}</span><span class="s2"> retries&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p><code>ExtractDataStats.item_count</code> reports how many items were returned (it is <code>0</code> for
+single-item extraction). All other fields — <code>total_retries</code>, <code>fallback_used</code> —
+behave exactly as in <a href="../retry-and-fallback/">Retry &amp; Fallback</a>.</p>
 <hr />
-<h2 id="tips-for-json-mode">Tips for JSON mode<a class="headerlink" href="#tips-for-json-mode" title="Permanent link">&para;</a></h2>
-<h3 id="use-a-low-temperature">Use a low temperature<a class="headerlink" href="#use-a-low-temperature" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<h2 id="synchronous-usage">Synchronous usage<a class="headerlink" href="#synchronous-usage" title="Permanent link">&para;</a></h2>
+<p>Both entry points have thin synchronous wrappers —
+<code>extract_data_list_sync</code> and <code>extract_data_list_from_text_sync</code> — for callers
+that are not running inside an event loop:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_list_from_text_sync</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">lines</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_data_list_from_text_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">InvoiceLine</span><span class="p">,</span> <span class="n">document</span><span class="p">)</span>
 </code></pre></div>
-<p>Deterministic output makes the model far more likely to produce clean JSON.</p>
-<h3 id="keep-schemas-focused">Keep schemas focused<a class="headerlink" href="#keep-schemas-focused" title="Permanent link">&para;</a></h3>
-<p>Very large or deeply nested schemas produce a large JSON Schema in the prompt
-and are harder for weaker models to satisfy.  See <a href="../schema-design/">Schema Design</a>
-for guidance — it matters even more in JSON mode.</p>
-<h3 id="combine-with-a-fallback-model">Combine with a fallback model<a class="headerlink" href="#combine-with-a-fallback-model" title="Permanent link">&para;</a></h3>
-<p>A small local model in JSON mode with a capable cloud model as fallback gives a
-good cost/reliability balance:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">local</span>    <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;llama3.1&quot;</span><span class="p">,</span> <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;http://localhost:11434/v1&quot;</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">fallback</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">local</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">JSON</span><span class="p">,</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">fallback_llm_model</span><span class="o">=</span><span class="n">fallback</span><span class="p">,</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">max_primary_retries</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="p">)</span>
-</code></pre></div>
+<p>They accept the same arguments and must <strong>not</strong> be called from within a running
+event loop. See <a href="../observability/#async-and-sync-usage">Observability → Async and sync usage</a>.</p>
 <hr />
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="../examples/07_json_mode.py"><code>examples/07_json_mode.py</code></a> — runnable JSON-mode example</li>
-<li><a href="../extraction/">Extraction</a> — the two extraction functions</li>
-<li><a href="../retry-and-fallback/">Retry &amp; Fallback</a> — the shared retry / fallback behaviour</li>
-<li><a href="../schema-design/">Schema Design</a> — writing schemas the model can satisfy</li>
+<li><a href="../extraction/">Extraction</a> — the single-item <code>extract_data</code> / <code>extract_data_from_text</code></li>
+<li><a href="../extraction-modes/">Extraction Modes</a> — tool calling vs. raw JSON</li>
+<li><a href="../retry-and-fallback/">Retry &amp; Fallback</a> — retry budgets and fallback models</li>
+<li><a href="../schema-design/">Schema Design</a> — writing schemas the LLM can fill reliably</li>
 </ul>
 
 

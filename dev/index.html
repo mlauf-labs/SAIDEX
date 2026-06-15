@@ -587,6 +587,34 @@
   
   
     <li class="md-nav__item">
+      <a href="batch-extraction/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Batch Extraction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="extraction-modes/" class="md-nav__link">
         
   
@@ -1062,6 +1090,10 @@
 <td><code>extract_data_from_text</code> and <code>extract_data</code> in depth</td>
 </tr>
 <tr>
+<td><strong><a href="batch-extraction/">Batch Extraction</a></strong></td>
+<td><code>extract_data_list</code> / <code>extract_data_list_from_text</code> — return <code>list[ModelT]</code> from one call</td>
+</tr>
+<tr>
 <td><strong><a href="extraction-modes/">Extraction Modes</a></strong></td>
 <td>Tool calling vs. raw JSON (no tool-calling required)</td>
 </tr>
@@ -1138,6 +1170,10 @@
 <td><a href="../examples/08_agent_tools.py"><code>08_agent_tools.py</code></a></td>
 <td>Agentic tool loop: <code>Tool</code>, <code>extract_data_with_tools</code>, <code>run_extractor_agent</code></td>
 </tr>
+<tr>
+<td><a href="../examples/10_batch_extraction.py"><code>10_batch_extraction.py</code></a></td>
+<td>Batch extraction → <code>list[ModelT]</code>: <code>extract_data_list_from_text</code></td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -1147,6 +1183,7 @@
 <li>…run my first extraction → <a href="quickstart/">Quickstart</a></li>
 <li>…use a model that does not support tool calling → <a href="extraction-modes/#extractionmodejson">Extraction Modes — JSON</a></li>
 <li>…pass a chat history instead of plain text → <a href="extraction/#chat-history">Extraction</a></li>
+<li>…extract many repeated records (line items, attendees) as a list → <a href="batch-extraction/">Batch Extraction</a></li>
 <li>…let the LLM look things up with my own tools first → <a href="agent-loop/">Agent Loop</a></li>
 <li>…make extraction more reliable with retries → <a href="retry-and-fallback/">Retry &amp; Fallback</a></li>
 <li>…understand which Pydantic types to use → <a href="schema-design/">Schema Design</a></li>
