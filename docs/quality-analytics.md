@@ -96,4 +96,18 @@ print(summary.to_markdown())
 | currency | enum | enum | 1 | 0 | 100% | `euros` |
 ```
 
+## Benchmark integration
+
+The benchmark suite (`benchmarks/run_benchmarks.py`) does this for you across
+every model and scenario it runs. Each run's `field_issues` are collected and
+aggregated, then:
+
+- a **Field Issue Analysis** section is appended to the Markdown report,
+- the structured summary is written under `field_issue_summary` in the JSON
+  results file, and
+- the top problem fields per schema are printed to the console.
+
+Because every run is stored with its `model`, `schema_name`, and `field_issues`
+in the JSON, you can also re-aggregate per model offline.
+
 > **Runnable example:** [`examples/11_quality_analytics.py`](https://github.com/mlauf-labs/saidex/blob/main/examples/11_quality_analytics.py)
