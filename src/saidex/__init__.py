@@ -31,6 +31,8 @@ Public API
         ExtractionMode,
         ExtractDataStats,
         FieldIssue,
+        ExtractionEvent,
+        OnComplete,
         RetryConfig,
         create_instance_safe,
         # Cross-run field-issue analytics
@@ -59,6 +61,7 @@ from .analytics import (
     summarize_field_issues,
 )
 from .extractor import (
+    OnComplete,
     extract_data,
     extract_data_from_text,
     extract_data_list,
@@ -66,7 +69,13 @@ from .extractor import (
     extract_data_with_tools,
     run_extractor_agent,
 )
-from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats, FieldIssue
+from .models import (
+    ExtractDataStats,
+    ExtractionEvent,
+    ExtractionMode,
+    ExtractorRunStats,
+    FieldIssue,
+)
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
 from .sync import (
     extract_data_from_text_sync,
@@ -121,6 +130,8 @@ __all__ = [
     "ExtractionMode",
     "ExtractDataStats",
     "FieldIssue",
+    "ExtractionEvent",
+    "OnComplete",
     "RetryConfig",
     # cross-run field-issue analytics
     "summarize_field_issues",
