@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
-from saidex import ISODateStr
+from saidex import IsoDateStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -26,7 +26,7 @@ class InvoiceData(BaseModel):
 
     contract_number: str = Field(description="Order number or job number, e.g. ORD-88124")
     customer_number: str = Field(description="Customer number, e.g. KNR-20091")
-    invoice_date: ISODateStr = Field(description="Invoice date as yyyy-mm-dd, e.g. 2024-09-23")
+    invoice_date: IsoDateStr = Field(description="Invoice date as yyyy-mm-dd, e.g. 2024-09-23")
     address: str = Field(description="Full delivery or billing address as a single string")
     billed_company_name: str = Field(description="Company name of the invoice recipient (the customer being billed)")
     issuing_company_name: str = Field(description="Company or shop name of the sender (seller)")

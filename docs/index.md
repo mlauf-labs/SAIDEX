@@ -9,12 +9,12 @@
 | Document | What it covers |
 | --- | --- |
 | **[Quickstart](quickstart.md)** | Installation, core API, first working example |
-| **[Extraction](extraction.md)** | `extract_from_text` and `get_structured_data` in depth |
+| **[Extraction](extraction.md)** | `extract_data_from_text` and `extract_data` in depth |
 | **[Extraction Modes](extraction-modes.md)** | Tool calling vs. raw JSON (no tool-calling required) |
-| **[Agent Loop](agent-loop.md)** | `extract_with_tools` / `run_agent_loop` — let the LLM call your tools before the final answer |
+| **[Agent Loop](agent-loop.md)** | `extract_data_with_tools` / `run_extractor_agent` — let the LLM call your tools before the final answer |
 | **[Retry & Fallback](retry-and-fallback.md)** | Validation retries, network retries, fallback models, error handling |
 | **[Schema Design](schema-design.md)** | Which types to use, field descriptions, types to avoid |
-| **[Built-in Field Types & Validators](built-in-types.md)** | Reusable types the library ships (`ISODateStr`, `IbanStr`, `IsinStr`, …) |
+| **[Built-in Field Types & Validators](built-in-types.md)** | Reusable types the library ships (`IsoDateStr`, `IbanStr`, `IsinStr`, …) |
 | **[Pydantic Validators](validators.md)** | Pre/post/model validators, computed fields, patterns, pitfalls |
 | **[Image Extraction](images.md)** | Multimodal messages, OpenAI Vision, local vLLM |
 | **[Observability](observability.md)** | Callbacks, Langfuse, LangSmith, logging, async/sync |
@@ -34,7 +34,7 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 | [`05_image_analysis.py`](../examples/05_image_analysis.py) | Image URL, local file, vLLM, multiple images |
 | [`06_pydantic_validators.py`](../examples/06_pydantic_validators.py) | All four validator types + computed fields |
 | [`07_json_mode.py`](../examples/07_json_mode.py) | Extraction without tool calling (raw JSON) |
-| [`08_agent_tools.py`](../examples/08_agent_tools.py) | Agentic tool loop: `Tool`, `extract_with_tools`, `run_agent_loop` |
+| [`08_agent_tools.py`](../examples/08_agent_tools.py) | Agentic tool loop: `Tool`, `extract_data_with_tools`, `run_extractor_agent` |
 
 ---
 

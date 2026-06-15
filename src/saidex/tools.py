@@ -1,4 +1,4 @@
-"""Caller-supplied tools for the agent loop (extract_with_tools / run_agent_loop).
+"""Caller-supplied tools for the agent loop (extract_data_with_tools / run_extractor_agent).
 
 A :class:`Tool` wraps an async handler function with the Pydantic parameter schema
 that describes the tool's arguments.  The lib converts each ``Tool`` into an

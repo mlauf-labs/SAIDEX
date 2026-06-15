@@ -22,7 +22,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import ExtractionMode, ISODateStr, extract_from_text
+from saidex import ExtractionMode, IsoDateStr, extract_data_from_text
 
 from ._config import MODELS, make_llm
 
@@ -36,7 +36,7 @@ class InvoiceData(BaseModel):
 
     contract_number: str = Field(description="Contract or subscription number")
     customer_number: str = Field(description="Customer ID or account number")
-    invoice_date: ISODateStr = Field(description="Invoice issue date as yyyy-mm-dd")
+    invoice_date: IsoDateStr = Field(description="Invoice issue date as yyyy-mm-dd")
     address: str = Field(description="Full billing address of the customer")
     company_name: str = Field(description="Name of the company being billed")
 
@@ -91,7 +91,7 @@ async def run_mode(
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
     try:
-        value, stats = await extract_from_text(
+        value, stats = await extract_data_from_text(
             llm,
             InvoiceData,
             INVOICE_TEXT,

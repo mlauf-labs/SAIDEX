@@ -10,11 +10,11 @@ Example
 .. code-block:: python
 
     from pydantic import BaseModel, Field
-    from saidex import ISODateStr
+    from saidex import IsoDateStr
 
     class Event(BaseModel):
-        starts_on: ISODateStr = Field(description="Start date")
-        ends_on: ISODateStr | None = Field(None, description="End date, if any")
+        starts_on: IsoDateStr = Field(description="Start date")
+        ends_on: IsoDateStr | None = Field(None, description="End date, if any")
 
 To build your own validated type, follow the same recipe: write a function that
 returns the (optionally normalised) value or raises ``ValueError``, then wrap it
@@ -33,7 +33,7 @@ from pydantic import AfterValidator
 from ._reference_data import ISO_639_1, ISO_3166_1_ALPHA_2, ISO_4217
 
 __all__ = [
-    "ISODateStr",
+    "IsoDateStr",
     "validate_iso_date",
     "IbanStr",
     "validate_iban",
@@ -86,7 +86,7 @@ def validate_iso_date(value: str) -> str:
     return value
 
 
-ISODateStr = Annotated[str, AfterValidator(validate_iso_date)]
+IsoDateStr = Annotated[str, AfterValidator(validate_iso_date)]
 """A ``str`` field constrained to the ISO ``yyyy-mm-dd`` calendar-date format."""
 
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
-from saidex import ISODateStr
+from saidex import IsoDateStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -26,7 +26,7 @@ class ActionItem(BaseModel):
 
     owner: str = Field(description="Person responsible for completing the task")
     task: str = Field(description="Description of the task to be done")
-    due_date: ISODateStr = Field(description="Deadline as yyyy-mm-dd if mentioned, e.g. 2024-04-05")
+    due_date: IsoDateStr = Field(description="Deadline as yyyy-mm-dd if mentioned, e.g. 2024-04-05")
 
 
 class MeetingNotes(BaseModel):
@@ -39,7 +39,7 @@ class MeetingNotes(BaseModel):
     open_questions: list[str] = Field(
         description="Topics or questions that were raised but not resolved"
     )
-    next_meeting: ISODateStr = Field(description="Date of the next meeting as yyyy-mm-dd if mentioned")
+    next_meeting: IsoDateStr = Field(description="Date of the next meeting as yyyy-mm-dd if mentioned")
 
 
 # ---------------------------------------------------------------------------

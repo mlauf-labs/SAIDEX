@@ -16,7 +16,7 @@ from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel
 
-from .models import AgentRunStats, ExtractionMode, StructuredOutputStats
+from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
 from .utils import create_instance_safe
 
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 MODEL_T = TypeVar("MODEL_T", bound=BaseModel)
 
 
-async def get_structured_data(
+async def extract_data(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
@@ -39,7 +39,7 @@ async def get_structured_data(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, StructuredOutputStats]:
+) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a LangChain message list.
 
     Depending on *mode*, the function either drives the LLM via tool-calling
@@ -90,17 +90,17 @@ async def get_structured_data(
 
         - *model_instance* is the validated :class:`~pydantic.BaseModel` instance,
           or ``None`` when all attempts failed.
-        - *stats* is a :class:`~saidex.models.StructuredOutputStats`
+        - *stats* is a :class:`~saidex.models.ExtractDataStats`
           object.  Use ``int(stats)`` for the total retry count (backward compatible).
 
     Example::
 
-        result, stats = await get_structured_data(llm, MySchema, messages)
+        result, stats = await extract_data(llm, MySchema, messages)
         if result is None:
             print(f"Extraction failed after {stats.total_retries} retries")
 
         # Without tool calling:
-        result, stats = await get_structured_data(
+        result, stats = await extract_data(
             llm, MySchema, messages, mode=ExtractionMode.JSON
         )
     """
@@ -126,7 +126,7 @@ async def get_structured_data(
     )
 
     if result is not None:
-        return result, StructuredOutputStats(primary_retries=primary_retries)
+        return result, ExtractDataStats(primary_retries=primary_retries)
 
     if fallback_llm_model is not None:
         logger.info(
@@ -159,7 +159,7 @@ async def get_structured_data(
 
         if result is not None:
             logger.info("Fallback model succeeded for %s.", schema.__name__)
-            return result, StructuredOutputStats(
+            return result, ExtractDataStats(
                 primary_retries=primary_retries,
                 fallback_retries=fallback_retries,
                 fallback_used=True,
@@ -172,7 +172,7 @@ async def get_structured_data(
             fallback_retries,
             primary_retries + fallback_retries,
         )
-        return None, StructuredOutputStats(
+        return None, ExtractDataStats(
             primary_retries=primary_retries,
             fallback_retries=fallback_retries,
             fallback_used=True,
@@ -183,10 +183,10 @@ async def get_structured_data(
         schema.__name__,
         primary_retries,
     )
-    return None, StructuredOutputStats(primary_retries=primary_retries)
+    return None, ExtractDataStats(primary_retries=primary_retries)
 
 
-async def extract_from_text(
+async def extract_data_from_text(
     llm_model: Any,
     schema: type[MODEL_T],
     text: str,
@@ -198,10 +198,10 @@ async def extract_from_text(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, StructuredOutputStats]:
+) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a plain text string.
 
-    Convenience wrapper around :func:`get_structured_data` that converts
+    Convenience wrapper around :func:`extract_data` that converts
     *text* into a single :class:`~langchain_core.messages.HumanMessage` (with
     an optional :class:`~langchain_core.messages.SystemMessage` prepended).
 
@@ -220,11 +220,11 @@ async def extract_from_text(
         retry_config: Network-level retry configuration.
 
     Returns:
-        Same as :func:`get_structured_data`.
+        Same as :func:`extract_data`.
 
     Example::
 
-        result, stats = await extract_from_text(
+        result, stats = await extract_data_from_text(
             llm,
             PersonSchema,
             "Alice is 30 years old and works as an engineer.",
@@ -242,7 +242,7 @@ async def extract_from_text(
         HumanMessage(content=text),
     ]
 
-    return await get_structured_data(
+    return await extract_data(
         llm_model=llm_model,
         schema=schema,
         messages=messages,
@@ -255,7 +255,7 @@ async def extract_from_text(
     )
 
 
-async def extract_with_tools(
+async def extract_data_with_tools(
     llm_model: Any,
     schema: type[MODEL_T],
     text: str,
@@ -268,7 +268,7 @@ async def extract_with_tools(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, AgentRunStats]:
+) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Run an agentic tool-loop to produce a validated Pydantic model.
 
     The LLM may call any of the caller-supplied *tools* freely in a loop (e.g. to
@@ -301,12 +301,12 @@ async def extract_with_tools(
         retry_config: Network-level retry configuration.
 
     Returns:
-        ``(model_instance, AgentRunStats)`` — *model_instance* is ``None`` on
+        ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
         failure.
 
     Example::
 
-        result, stats = await extract_with_tools(
+        result, stats = await extract_data_with_tools(
             llm,
             FolderDecision,
             document_summary,
@@ -324,7 +324,7 @@ async def extract_with_tools(
         SystemMessage(content=effective_system),
         HumanMessage(content=text),
     ]
-    return await run_agent_loop(
+    return await run_extractor_agent(
         llm_model=llm_model,
         schema=schema,
         messages=messages,
@@ -338,7 +338,7 @@ async def extract_with_tools(
     )
 
 
-async def run_agent_loop(
+async def run_extractor_agent(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
@@ -350,10 +350,10 @@ async def run_agent_loop(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, AgentRunStats]:
+) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Low-level agent loop that accepts a full message list.
 
-    Identical to :func:`extract_with_tools` but receives an already-built
+    Identical to :func:`extract_data_with_tools` but receives an already-built
     ``messages`` list instead of building ``[SystemMessage, HumanMessage]``
     internally.  Use this when you need precise control over the conversation
     history (e.g. multi-turn scenarios or injecting previous context).
@@ -364,13 +364,13 @@ async def run_agent_loop(
     messages with a brief hint.
 
     Returns:
-        ``(model_instance, AgentRunStats)`` — *model_instance* is ``None`` on
+        ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
         failure.
     """
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
     original_messages = list(messages)
 
-    result, primary_stats = await _run_agent_loop_with_model(
+    result, primary_stats = await _run_extractor_agent_with_model(
         llm_model=llm_model,
         schema=schema,
         messages=list(original_messages),
@@ -401,7 +401,7 @@ async def run_agent_loop(
                 )
             )
         )
-        result, fallback_stats = await _run_agent_loop_with_model(
+        result, fallback_stats = await _run_extractor_agent_with_model(
             llm_model=fallback_llm_model,
             schema=schema,
             messages=fallback_messages,
@@ -413,7 +413,7 @@ async def run_agent_loop(
             model_label="fallback",
             retry_config=effective_retry_config,
         )
-        combined = AgentRunStats(
+        combined = ExtractorRunStats(
             iterations=primary_stats.iterations + fallback_stats.iterations,
             tool_calls=primary_stats.tool_calls + fallback_stats.tool_calls,
             validation_retries=primary_stats.validation_retries + fallback_stats.validation_retries,
@@ -442,7 +442,7 @@ async def run_agent_loop(
 # ---------------------------------------------------------------------------
 
 
-async def _run_agent_loop_with_model(
+async def _run_extractor_agent_with_model(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
@@ -453,7 +453,7 @@ async def _run_agent_loop_with_model(
     max_validation_retries: int,
     model_label: str,
     retry_config: RetryConfig,
-) -> tuple[MODEL_T | None, AgentRunStats]:
+) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Execute the agent loop with one model; return (instance, stats)."""
     from .tools import Tool as ToolType  # noqa: F401 – used for type clarity only
 
@@ -549,7 +549,7 @@ async def _run_agent_loop_with_model(
                     validation_retries += 1
                     continue
                 logger.debug("%s: agent loop JSON final answer validated.", model_label)
-                return instance, AgentRunStats(
+                return instance, ExtractorRunStats(
                     iterations=iterations,
                     tool_calls=total_tool_calls,
                     validation_retries=validation_retries,
@@ -681,7 +681,7 @@ async def _run_agent_loop_with_model(
                 model_label,
                 schema.__name__,
             )
-            return found_final_answer, AgentRunStats(
+            return found_final_answer, ExtractorRunStats(
                 iterations=iterations,
                 tool_calls=total_tool_calls,
                 validation_retries=validation_retries,
@@ -702,7 +702,7 @@ async def _run_agent_loop_with_model(
         total_tool_calls,
         validation_retries,
     )
-    return None, AgentRunStats(
+    return None, ExtractorRunStats(
         iterations=iterations,
         tool_calls=total_tool_calls,
         validation_retries=validation_retries,

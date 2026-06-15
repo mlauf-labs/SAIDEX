@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
-from saidex import ISODateStr
+from saidex import IsoDateStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -45,7 +45,7 @@ class NamedEntities(BaseModel):
     isin_codes: list[str] = Field(
         description="All ISIN securities identifiers mentioned, e.g. 'DE000A2YNH52'"
     )
-    announcement_date: ISODateStr = Field(
+    announcement_date: IsoDateStr = Field(
         description="The date the press release was issued, as yyyy-mm-dd"
     )
 
@@ -129,7 +129,7 @@ SCENARIO = BenchmarkScenario(
         # int scalar: numeric comparison (tolerant of int/float), the purchase
         # price normalised to millions of EUR — '€ 450 million' -> 450.
         "purchase_price_eur_millions": 450,
-        # ISODateStr: validated as a real yyyy-mm-dd calendar date.
+        # IsoDateStr: validated as a real yyyy-mm-dd calendar date.
         "announcement_date": "2024-03-08",
     },
 )

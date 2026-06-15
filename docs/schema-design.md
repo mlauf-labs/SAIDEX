@@ -184,7 +184,7 @@ class Event(BaseModel):
 ```
 
 For a ready-made type that enforces this format in one annotation, use
-[`ISODateStr`](built-in-types.md#isodatestr) (`from saidex import ISODateStr`).
+[`IsoDateStr`](built-in-types.md#isodatestr) (`from saidex import IsoDateStr`).
 To instead *auto-convert* other notations, see
 [Validators — normalising date formats](validators.md#example--normalising-date-formats),
 which turns `DD.MM.YYYY` → `YYYY-MM-DD`.
@@ -355,7 +355,7 @@ For a complete treatment of `model_config` options, see
 
 ## Further reading
 
-- [Built-in Field Types & Validators](built-in-types.md) — reusable types the library ships (`ISODateStr`, `IbanStr`, …)
+- [Built-in Field Types & Validators](built-in-types.md) — reusable types the library ships (`IsoDateStr`, `IbanStr`, …)
 - [Validators](validators.md) — clean messy LLM output inside the schema
 - [Extraction](extraction.md) — how to pass messages and schemas to the library
 - [Retry & Fallback](retry-and-fallback.md) — what happens when validation fails

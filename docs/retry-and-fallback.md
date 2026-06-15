@@ -39,7 +39,7 @@ The LLM receives this message and gets another attempt.  This loop continues
 up to `max_primary_retries` times.
 
 ```python
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm,
     MySchema,
     messages,
@@ -63,12 +63,12 @@ noise from the primary model does not confuse it.
 
 ```python
 from langchain_openai import ChatOpenAI
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 primary  = ChatOpenAI(model="gpt-4o-mini", temperature=0)  # fast + cheap
 fallback = ChatOpenAI(model="gpt-4o",      temperature=0)  # more capable
 
-result, stats = await extract_from_text(
+result, stats = await extract_data_from_text(
     primary,
     FinancialReport,
     report_text,
@@ -141,7 +141,7 @@ RetryConfig(
 ### Custom configuration
 
 ```python
-from saidex import RetryConfig, extract_from_text
+from saidex import RetryConfig, extract_data_from_text
 
 config = RetryConfig(
     max_retries=2,
@@ -150,7 +150,7 @@ config = RetryConfig(
     rate_limit_max_duration_seconds=300.0,   # give up after 5 minutes
 )
 
-result, stats = await extract_from_text(
+result, stats = await extract_data_from_text(
     llm, MySchema, text, retry_config=config
 )
 ```
@@ -169,7 +169,7 @@ NO_RETRY = RetryConfig(
     rate_limit_exceptions=(),
 )
 
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm, MySchema, messages, retry_config=NO_RETRY
 )
 ```
@@ -207,7 +207,7 @@ config = RetryConfig(
 ## Full retry flow
 
 ```
-get_structured_data(primary_llm, schema, messages)
+extract_data(primary_llm, schema, messages)
 │
 │  Phase 1 — Primary model
 │  ┌────────────────────────────────────────────────┐
@@ -240,7 +240,7 @@ get_structured_data(primary_llm, schema, messages)
 Always check whether the result is `None` before using it:
 
 ```python
-result, stats = await extract_from_text(llm, MySchema, text)
+result, stats = await extract_data_from_text(llm, MySchema, text)
 
 if result is None:
     logger.error(
@@ -260,12 +260,12 @@ process(result)
 
 ### Tracking retry costs
 
-`StructuredOutputStats` lets you track quality metrics over time:
+`ExtractDataStats` lets you track quality metrics over time:
 
 ```python
 results = []
 for text in documents:
-    result, stats = await extract_from_text(llm, MySchema, text)
+    result, stats = await extract_data_from_text(llm, MySchema, text)
     results.append({
         "result": result,
         "retries": stats.total_retries,

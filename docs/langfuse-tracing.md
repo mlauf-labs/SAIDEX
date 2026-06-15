@@ -70,8 +70,8 @@ Langfuse(
 ## 1. A single extraction
 
 Attach the handler via the `callbacks` parameter — accepted by **all four**
-public functions (`get_structured_data`, `extract_from_text`,
-`extract_with_tools`, `run_agent_loop`). Every LLM call SAIDEX makes is then
+public functions (`extract_data`, `extract_data_from_text`,
+`extract_data_with_tools`, `run_extractor_agent`). Every LLM call SAIDEX makes is then
 recorded automatically.
 
 ```python
@@ -82,7 +82,7 @@ from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel, Field
 
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 
 class PersonInfo(BaseModel):
@@ -99,7 +99,7 @@ async def main() -> None:
 
     text = "Alice Müller, 34, is a software engineer based in Munich."
 
-    person, stats = await extract_from_text(
+    person, stats = await extract_data_from_text(
         llm,
         PersonInfo,
         text,
@@ -154,7 +154,7 @@ async def main() -> None:
 
     text = "Account holder: ACME GmbH. IBAN: DE89 3704 0044 0532 0130 00."
 
-    result, stats = await extract_from_text(
+    result, stats = await extract_data_from_text(
         llm,
         BankDetails,
         text,
@@ -176,7 +176,7 @@ extra generations in the trace.
 
 ## 3. The agent loop
 
-`extract_with_tools` / `run_agent_loop` let the model call your tools any number
+`extract_data_with_tools` / `run_extractor_agent` let the model call your tools any number
 of times before producing a validated final answer (see
 [Agent Loop](agent-loop.md)). Pass the same `callbacks` list and every iteration
 — each tool-deciding LLM call — is captured as its own generation under one
@@ -190,7 +190,7 @@ from langfuse import get_client
 from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel, Field
 
-from saidex import Tool, extract_with_tools
+from saidex import Tool, extract_data_with_tools
 
 ORDERS = {"ORD-1042": {"status": "shipped", "eta": "2026-06-15", "carrier": "DHL"}}
 
@@ -223,7 +223,7 @@ async def main() -> None:
 
     ticket = "Where is my order ORD-1042? It's been two weeks!"
 
-    resolution, stats = await extract_with_tools(
+    resolution, stats = await extract_data_with_tools(
         llm,
         TicketResolution,
         ticket,
@@ -269,7 +269,7 @@ with langfuse.start_as_current_observation(
         tags=["production", "v2"],
     ):
         handler = CallbackHandler()
-        invoice, stats = await extract_from_text(
+        invoice, stats = await extract_data_from_text(
             llm, Invoice, text, callbacks=[handler]
         )
         span.update_trace(input={"text": text}, output=invoice)
