@@ -784,6 +784,23 @@ class Payment(BaseModel):
 > Full list and a guide to building your own:
 > [`docs/built-in-types.md`](docs/built-in-types.md)
 
+For checks that span fields, hit a database, or apply a business rule, pass an
+**external `validator`** callable (sync or async) to any extraction function. It
+runs after Pydantic validation; raising — or returning an error string — feeds the
+message back into the same retry loop so the model can self-correct:
+
+```python
+def validate_invoice(inv: Invoice) -> None:
+    if inv.total != sum(line.amount for line in inv.lines):
+        raise ValueError("Line items do not sum to the stated total")
+
+invoice, stats = await extract_data_from_text(llm, Invoice, text, validator=validate_invoice)
+```
+
+> Cross-field example and full guide:
+> [`examples/12_external_validator.py`](examples/12_external_validator.py)
+> — [detailed docs](docs/external-validators.md)
+
 ---
 
 ## API reference
@@ -801,6 +818,7 @@ class Payment(BaseModel):
 | `max_primary_retries` | `int` | `3` | Validation retries for primary model |
 | `max_fallback_retries` | `int` | `3` | Validation retries for fallback model |
 | `retry_config` | `RetryConfig \| None` | `DEFAULT_RETRY_CONFIG` | Network retry settings |
+| `validator` | `Validator[ModelT] \| None` | `None` | External sync/async check run after Pydantic validation; rejecting re-enters the retry loop ([docs](docs/external-validators.md)) |
 
 **Returns:** `tuple[ModelT | None, ExtractDataStats]`
 
@@ -840,6 +858,7 @@ All parameters of `extract_data` plus:
 | `max_iterations` | `int` | `12` | Max LLM invocations per model |
 | `max_validation_retries` | `int` | `3` | Max final answers that may fail validation |
 | `retry_config` | `RetryConfig \| None` | `DEFAULT_RETRY_CONFIG` | Network retry settings |
+| `validator` | `Validator[ModelT] \| None` | `None` | External sync/async check run on the final answer; rejecting keeps the agent loop running ([docs](docs/external-validators.md)) |
 
 **Returns:** `tuple[ModelT | None, ExtractorRunStats]`
 

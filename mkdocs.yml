@@ -54,6 +54,7 @@ nav:
       - Schema Design: schema-design.md
       - Built-in Types: built-in-types.md
       - Validators: validators.md
+      - External Validators: external-validators.md
 
 markdown_extensions:
   - pymdownx.highlight:
