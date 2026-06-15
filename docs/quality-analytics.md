@@ -73,4 +73,27 @@ field with a high `recovery_rate` is noisier than it is dangerous.
     occurrence-based fields. A schema seen only through bare issues reports
     `total_runs == 0` and `success_rate == 0.0`.
 
+## Markdown report
+
+[`FieldIssueSummary.to_markdown()`][saidex.FieldIssueSummary.to_markdown] (or the
+standalone [`render_field_issue_report`][saidex.render_field_issue_report])
+renders the summary as a Markdown document — one section per schema, fields
+sorted by descending severity. The output is **deterministic** for the same
+input, so it is safe to snapshot in tests or commit as a benchmark artifact.
+
+```python
+print(summary.to_markdown())
+```
+
+```markdown
+# Field issue report
+
+## Invoice — 33% success (2/3 runs failed)
+
+| Field | Category | Top error | Hits | In failed runs | Recovery | Samples |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| total | type | float_parsing | 2 | 2 | 0% | `1.299,00`, `forty-two` |
+| currency | enum | enum | 1 | 0 | 100% | `euros` |
+```
+
 > **Runnable example:** [`examples/11_quality_analytics.py`](https://github.com/mlauf-labs/saidex/blob/main/examples/11_quality_analytics.py)

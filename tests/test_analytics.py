@@ -6,6 +6,7 @@ from saidex import (
     ExtractDataStats,
     ExtractorRunStats,
     FieldIssue,
+    render_field_issue_report,
     summarize_field_issues,
 )
 
@@ -161,3 +162,61 @@ def test_sample_received_capped_and_deduped() -> None:
     fp = summary.schemas[0].field_problems[0]
     assert len(fp.sample_received) == 5
     assert fp.sample_received == ("1", "2", "3", "4", "5")
+
+
+# ---------------------------------------------------------------------------
+# Markdown report
+# ---------------------------------------------------------------------------
+
+
+def test_report_empty_summary() -> None:
+    report = summarize_field_issues([]).to_markdown()
+    assert report == "# Field issue report\n\n_No field issues recorded._"
+
+
+def test_report_is_deterministic() -> None:
+    runs = [
+        _run(_issue("price"), success=False),
+        _run(_issue("price"), success=False),
+        _run(_issue("name", category="missing", error_type="missing"), success=True),
+    ]
+    summary = summarize_field_issues(runs)
+    first = summary.to_markdown()
+    second = render_field_issue_report(summary)
+    assert first == second
+
+
+def test_report_snapshot() -> None:
+    runs = [
+        _run(_issue("total", error_type="float_parsing", received="1.299,00"), success=False),
+        _run(_issue("total", error_type="float_parsing", received="forty-two"), success=False),
+        _run(
+            _issue("currency", category="enum", error_type="enum", received="euros"),
+            success=True,
+        ),
+    ]
+    report = summarize_field_issues(runs).to_markdown()
+    expected = (
+        "# Field issue report\n"
+        "\n"
+        "## Invoice — 33% success (2/3 runs failed)\n"
+        "\n"
+        "| Field | Category | Top error | Hits | In failed runs | Recovery | Samples |\n"
+        "| --- | --- | --- | ---: | ---: | ---: | --- |\n"
+        "| total | type | float_parsing | 2 | 2 | 0% | `1.299,00`, `forty-two` |\n"
+        "| currency | enum | enum | 1 | 0 | 100% | `euros` |\n"
+    )
+    assert report == expected
+
+
+def test_report_schema_without_issues() -> None:
+    summary = summarize_field_issues([_run(schema="Clean", success=True)])
+    report = summary.to_markdown()
+    assert "## Clean — 100% success (0/1 runs failed)" in report
+    assert "_No field issues recorded._" in report
+
+
+def test_report_escapes_pipe_in_sample() -> None:
+    summary = summarize_field_issues([_run(_issue("raw", received="a|b"), success=False)])
+    report = summary.to_markdown()
+    assert r"`a\|b`" in report
