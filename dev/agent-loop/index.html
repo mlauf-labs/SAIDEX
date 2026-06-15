@@ -690,6 +690,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#synchronous-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synchronous usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1145,6 +1156,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#synchronous-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synchronous usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1516,6 +1538,19 @@ failed. The returned <code>AgentRunStats</code> are the <strong>sum of both atte
 </table>
 <p><code>AgentRunStats</code> instances support <code>+</code> to merge (used internally to combine
 primary and fallback attempts).</p>
+<hr />
+<h2 id="synchronous-usage">Synchronous usage<a class="headerlink" href="#synchronous-usage" title="Permanent link">&para;</a></h2>
+<p>Both functions are async, but each has a synchronous wrapper —
+<code>extract_with_tools_sync</code> and <code>run_agent_loop_sync</code> — for callers outside an
+event loop:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_with_tools_sync</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_with_tools_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">my_tool</span><span class="p">])</span>
+</code></pre></div>
+<p>The wrappers take the same arguments and return the same <code>(model, stats)</code> tuple
+as the async versions, delegating via <code>asyncio.run</code>. They must <strong>not</strong> be called
+from within a running event loop — if one is detected they raise a clear
+<code>RuntimeError</code>. See <a href="../observability/#async-and-sync-usage">Observability → Async and sync usage</a>.</p>
 <hr />
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>

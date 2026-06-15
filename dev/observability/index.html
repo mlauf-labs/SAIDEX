@@ -1574,23 +1574,53 @@ your validator error messages are clear and actionable.</p>
 <a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
 </code></pre></div>
 <h3 id="calling-from-synchronous-code">Calling from synchronous code<a class="headerlink" href="#calling-from-synchronous-code" title="Permanent link">&para;</a></h3>
-<p>If you need to call the library from synchronous code (e.g. a Django view, a
-CLI script, or a background job):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
-<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text</span>
-<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>
-<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="c1"># Option 1 — create a new event loop (simplest, always works)</span>
-<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">extract_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">))</span>
-<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
-<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="c1"># Option 2 — reuse an existing loop (e.g. inside a synchronous pytest test)</span>
-<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="kn">import</span> <span class="nn">asyncio</span>
-<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>
-<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="n">loop</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">new_event_loop</span><span class="p">()</span>
-<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">loop</span><span class="o">.</span><span class="n">run_until_complete</span><span class="p">(</span><span class="n">extract_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">))</span>
-<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="n">loop</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+<p>If you are in a purely synchronous context (a CLI script, a Django view, a
+background job), use the <strong>synchronous wrappers</strong> instead of managing the event
+loop yourself.  Every async entry point has a <code>*_sync</code> counterpart that mirrors
+its signature exactly and runs the coroutine to completion internally:</p>
+<table>
+<thead>
+<tr>
+<th>Async</th>
+<th>Synchronous wrapper</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>extract_from_text</code></td>
+<td><code>extract_from_text_sync</code></td>
+</tr>
+<tr>
+<td><code>get_structured_data</code></td>
+<td><code>get_structured_data_sync</code></td>
+</tr>
+<tr>
+<td><code>extract_with_tools</code></td>
+<td><code>extract_with_tools_sync</code></td>
+</tr>
+<tr>
+<td><code>run_agent_loop</code></td>
+<td><code>run_agent_loop_sync</code></td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text_sync</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="c1"># No async/await, no asyncio.run — just call it.</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_from_text_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="c1"># The agent loop has a sync wrapper too:</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_with_tools_sync</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_with_tools_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">my_tool</span><span class="p">])</span>
 </code></pre></div>
+<p>The wrappers delegate to <code>asyncio.run</code>, so call them only from code that is
+<strong>not</strong> already inside an event loop.  If a running loop is detected they raise
+a clear <code>RuntimeError</code> (rather than deadlocking) telling you to <code>await</code> the
+async function directly.</p>
 <h3 id="jupyter-ipython">Jupyter / IPython<a class="headerlink" href="#jupyter-ipython" title="Permanent link">&para;</a></h3>
-<p>Jupyter notebooks already run an event loop.  Use <code>await</code> directly in a cell:</p>
+<p>Jupyter notebooks already run an event loop, so the sync wrappers would raise.
+Use <code>await</code> directly in a cell instead:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="fastapi-integration">FastAPI integration<a class="headerlink" href="#fastapi-integration" title="Permanent link">&para;</a></h3>

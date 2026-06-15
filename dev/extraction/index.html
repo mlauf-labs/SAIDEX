@@ -696,6 +696,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#synchronous-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synchronous usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1269,6 +1280,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#synchronous-usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Synchronous usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1486,6 +1508,20 @@ unusual or highly domain-specific schemas:</p>
 </code></pre></div>
 <p>For a complete discussion of retry budgets and fallback models see
 <a href="../retry-and-fallback/">Retry &amp; Fallback</a>.</p>
+<hr />
+<h2 id="synchronous-usage">Synchronous usage<a class="headerlink" href="#synchronous-usage" title="Permanent link">&para;</a></h2>
+<p>Both entry points are async, but each has a thin synchronous wrapper —
+<code>extract_from_text_sync</code> and <code>get_structured_data_sync</code> — for callers that are
+not running inside an event loop (CLI scripts, sync web views, background jobs):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text_sync</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_from_text_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+</code></pre></div>
+<p>The wrappers accept exactly the same arguments and return the same
+<code>(model, stats)</code> tuple as the async versions. They run the coroutine via
+<code>asyncio.run</code>, so they must <strong>not</strong> be called from within an already-running
+event loop — if one is detected they raise a clear <code>RuntimeError</code> pointing you
+to the async function. See <a href="../observability/#async-and-sync-usage">Observability → Async and sync usage</a>.</p>
 <hr />
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
