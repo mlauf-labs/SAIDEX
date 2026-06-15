@@ -252,6 +252,7 @@ to the async function. See [Observability → Async and sync usage](observabilit
 
 ## Related
 
+- [Batch Extraction](batch-extraction.md) — return a `list[ModelT]` of repeated records from one call
 - [Retry & Fallback](retry-and-fallback.md) — controlling retries and adding a fallback model
 - [Schema Design](schema-design.md) — writing schemas the LLM can fill reliably
 - [Image Extraction](images.md) — passing images in messages

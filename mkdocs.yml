@@ -41,6 +41,7 @@ nav:
   - Quickstart: quickstart.md
   - Extraction:
       - Core Extraction: extraction.md
+      - Batch Extraction: batch-extraction.md
       - Extraction Modes: extraction-modes.md
       - Agent Loop: agent-loop.md
       - Image Extraction: images.md

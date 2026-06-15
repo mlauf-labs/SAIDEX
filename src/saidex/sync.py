@@ -23,6 +23,8 @@ from pydantic import BaseModel
 from .extractor import (
     extract_data,
     extract_data_from_text,
+    extract_data_list,
+    extract_data_list_from_text,
     extract_data_with_tools,
     run_extractor_agent,
 )
@@ -172,6 +174,113 @@ def extract_data_from_text_sync(
         ),
         sync_name="extract_data_from_text_sync",
         async_name="extract_data_from_text",
+    )
+
+
+def extract_data_list_sync(
+    llm_model: Any,
+    schema: type[MODEL_T],
+    messages: list[BaseMessage],
+    *,
+    mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    callbacks: list[Any] | None = None,
+    fallback_llm_model: Any = None,
+    max_primary_retries: int = 3,
+    max_fallback_retries: int = 3,
+    retry_config: RetryConfig | None = None,
+) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
+    """Synchronous wrapper around :func:`~saidex.extract_data_list`.
+
+    Identical behaviour and return value; runs the coroutine to completion on a
+    fresh event loop.  See :func:`~saidex.extract_data_list` for the full
+    parameter documentation.
+
+    Args:
+        llm_model: Any LangChain-compatible chat model.
+        schema: The Pydantic ``BaseModel`` subclass describing one item.
+        messages: Conversation history passed to the model.
+        mode: Which extraction strategy to use.
+        callbacks: Optional LangChain callback handlers.
+        fallback_llm_model: Optional fallback model.
+        max_primary_retries: Validation retries for the primary model.
+        max_fallback_retries: Validation retries for the fallback model.
+        retry_config: Network-level retry configuration.
+
+    Returns:
+        ``(items, stats)`` — see :func:`~saidex.extract_data_list`.
+
+    Raises:
+        RuntimeError: If called from within a running event loop.
+    """
+    return _run_sync(
+        extract_data_list(
+            llm_model,
+            schema,
+            messages,
+            mode=mode,
+            callbacks=callbacks,
+            fallback_llm_model=fallback_llm_model,
+            max_primary_retries=max_primary_retries,
+            max_fallback_retries=max_fallback_retries,
+            retry_config=retry_config,
+        ),
+        sync_name="extract_data_list_sync",
+        async_name="extract_data_list",
+    )
+
+
+def extract_data_list_from_text_sync(
+    llm_model: Any,
+    schema: type[MODEL_T],
+    text: str,
+    *,
+    mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    system_prompt: str | None = None,
+    callbacks: list[Any] | None = None,
+    fallback_llm_model: Any = None,
+    max_primary_retries: int = 3,
+    max_fallback_retries: int = 3,
+    retry_config: RetryConfig | None = None,
+) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
+    """Synchronous wrapper around :func:`~saidex.extract_data_list_from_text`.
+
+    Identical behaviour and return value; runs the coroutine to completion on a
+    fresh event loop.  See :func:`~saidex.extract_data_list_from_text` for the
+    full parameter documentation.
+
+    Args:
+        llm_model: Any LangChain-compatible chat model.
+        schema: The Pydantic ``BaseModel`` subclass describing one item.
+        text: The text to analyse.
+        mode: Which extraction strategy to use.
+        system_prompt: Optional system instruction prepended to the messages.
+        callbacks: Optional LangChain callback handlers.
+        fallback_llm_model: Optional fallback model.
+        max_primary_retries: Validation retries for the primary model.
+        max_fallback_retries: Validation retries for the fallback model.
+        retry_config: Network-level retry configuration.
+
+    Returns:
+        ``(items, stats)`` — see :func:`~saidex.extract_data_list_from_text`.
+
+    Raises:
+        RuntimeError: If called from within a running event loop.
+    """
+    return _run_sync(
+        extract_data_list_from_text(
+            llm_model,
+            schema,
+            text,
+            mode=mode,
+            system_prompt=system_prompt,
+            callbacks=callbacks,
+            fallback_llm_model=fallback_llm_model,
+            max_primary_retries=max_primary_retries,
+            max_fallback_retries=max_fallback_retries,
+            retry_config=retry_config,
+        ),
+        sync_name="extract_data_list_from_text_sync",
+        async_name="extract_data_list_from_text",
     )
 
 
