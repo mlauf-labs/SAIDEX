@@ -1006,6 +1006,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="external-validators/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    External Validators
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1146,6 +1174,10 @@
 <td>Pre/post/model validators, computed fields, patterns, pitfalls</td>
 </tr>
 <tr>
+<td><strong><a href="external-validators/">External Validators</a></strong></td>
+<td>Pass your own <code>validator</code> callable for cross-field, stateful, or reference-data checks that re-enter the retry loop</td>
+</tr>
+<tr>
 <td><strong><a href="images/">Image Extraction</a></strong></td>
 <td>Multimodal messages, OpenAI Vision, local vLLM</td>
 </tr>
@@ -1206,6 +1238,10 @@
 <td><a href="../examples/11_quality_analytics.py"><code>11_quality_analytics.py</code></a></td>
 <td>Aggregate field issues across runs: <code>summarize_field_issues</code></td>
 </tr>
+<tr>
+<td><a href="../examples/12_external_validator.py"><code>12_external_validator.py</code></a></td>
+<td>External <code>validator</code> callable: cross-field rule that re-enters the retry loop</td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -1222,6 +1258,7 @@
 <li>…validate a date/IBAN/country code field with one annotation → <a href="built-in-types/">Built-in Types</a></li>
 <li>…clean messy LLM output (currency symbols, date formats) → <a href="validators/#field_validatormodebefore--clean-raw-llm-output">Validators — <code>mode='before'</code></a></li>
 <li>…add cross-field rules (end &gt; start, total = sum) → <a href="validators/#model_validatormodeafter--cross-field-consistency-rules">Validators — <code>mode='after'</code></a></li>
+<li>…validate against a database, business rule, or running total → <a href="external-validators/">External Validators</a></li>
 <li>…extract data from images → <a href="images/">Image Extraction</a></li>
 <li>…add tracing with Langfuse or LangSmith → <a href="observability/">Observability</a></li>
 <li>…call the library from synchronous code → <a href="observability/#sync-usage">Observability — Sync usage</a></li>
