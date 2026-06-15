@@ -83,7 +83,9 @@ Follow this for **every** feature/fix/docs/refactor/chore task, without exceptio
 2. **Create a new branch from the freshly updated `develop`** (`feature/…`, `fix/…`, etc.) — one branch per logical change.
 3. **Work and commit on that branch** using Conventional Commits.
 4. **Run all tests and CI checks** (see [Development commands](#development-commands)) and make them pass.
-5. **Open a PR targeting `develop`** only once the work is complete and the tests are green.
+5. **Check documentation consistency before opening the PR.** Verify that the docs under `docs/`, the runnable scripts under `examples/`, and the `README` files still match the change, and update them wherever they have drifted.
+6. **Update the changelog for end-user-relevant changes.** Anything an end user should know about (new feature, behaviour change, fix, breaking change) must end up in `CHANGELOG.md`. This repo generates the changelog with Commitizen from the commit history, so the practical rule is: make sure such changes are captured by a correctly typed commit (`feat`/`fix`/…, with a `BREAKING CHANGE:` footer where relevant) so they appear in the generated changelog. Do not hand-edit `CHANGELOG.md`.
+7. **Open a PR targeting `develop`** only once the work is complete, the tests are green, and docs/changelog are in sync.
 
 > ⚠️ **Never delete a user's changes on your own initiative.** Preserving uncommitted work always takes priority over any git operation.
 
@@ -247,7 +249,8 @@ Before opening or marking a PR as ready:
 - [ ] `uv run mypy src/` passes
 - [ ] `uv run pytest --cov` passes
 - [ ] New behaviour is covered by tests
-- [ ] Docs and examples updated if the public API changed
+- [ ] Documentation is consistent — `docs/`, `examples/`, and the `README` files were reviewed and updated wherever the change affects them
+- [ ] Changelog reflects every end-user-relevant change (captured via correctly typed `feat`/`fix`/… commits so Commitizen generates the `CHANGELOG.md` entry; never hand-edited)
 - [ ] PR targets `develop` (not `main`)
 - [ ] PR title follows Conventional Commit format (`feat: …`, `fix: …`, etc.)
 - [ ] PR description explains *what* and *why*; references a GitHub issue if one exists
