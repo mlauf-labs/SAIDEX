@@ -1,4 +1,4 @@
-"""Tests for run_agent_loop / extract_with_tools (using mocks)."""
+"""Tests for run_extractor_agent / extract_data_with_tools (using mocks)."""
 
 from __future__ import annotations
 
@@ -11,11 +11,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from saidex import (
-    AgentRunStats,
     ExtractionMode,
+    ExtractorRunStats,
     Tool,
-    extract_with_tools,
-    run_agent_loop,
+    extract_data_with_tools,
+    run_extractor_agent,
 )
 from saidex.retry import RetryConfig
 
@@ -124,7 +124,7 @@ async def test_tool_execute_handler_exception() -> None:
 
 
 # ---------------------------------------------------------------------------
-# extract_with_tools — TOOL_CALLING mode
+# extract_data_with_tools — TOOL_CALLING mode
 # ---------------------------------------------------------------------------
 
 
@@ -134,7 +134,7 @@ async def test_direct_final_answer_no_helper_calls() -> None:
     final_call = _tc("FinalAnswer", {"result": "done", "confidence": 0.9})
     llm = _make_llm([_make_response(tool_calls=[final_call])])
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm,
         FinalAnswer,
         "test input",
@@ -170,7 +170,7 @@ async def test_helper_tool_call_then_final_answer() -> None:
 
     tool = Tool(name="do_thing", description="d", parameters=ToolArgs, handler=_handler)
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm,
         FinalAnswer,
         "input",
@@ -199,7 +199,7 @@ async def test_multiple_helper_calls_before_final() -> None:
     ]
     llm = _make_llm(responses)
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm, FinalAnswer, "text", tools=[_make_tool()], retry_config=_NO_RETRY
     )
 
@@ -221,7 +221,7 @@ async def test_final_answer_validation_retry() -> None:
         ]
     )
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm, FinalAnswer, "text", tools=[], retry_config=_NO_RETRY
     )
     assert result is not None
@@ -236,7 +236,7 @@ async def test_max_iterations_exhausted_returns_none() -> None:
     # Always return a helper tool call — never a final answer.
     llm = _make_llm([_make_response(tool_calls=[tool_call])] * 20)
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm, FinalAnswer, "text", tools=[_make_tool()], max_iterations=3, retry_config=_NO_RETRY
     )
     assert result is None
@@ -254,7 +254,7 @@ async def test_invalid_tool_call_triggers_feedback() -> None:
         ]
     )
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm, FinalAnswer, "text", tools=[], retry_config=_NO_RETRY
     )
     assert result is not None
@@ -273,7 +273,7 @@ async def test_unknown_tool_call_returns_error_message() -> None:
         ]
     )
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm, FinalAnswer, "text", tools=[], retry_config=_NO_RETRY
     )
     # The LLM gets an "Unknown tool" message but can still recover
@@ -283,7 +283,7 @@ async def test_unknown_tool_call_returns_error_message() -> None:
 
 
 # ---------------------------------------------------------------------------
-# extract_with_tools — JSON mode
+# extract_data_with_tools — JSON mode
 # ---------------------------------------------------------------------------
 
 
@@ -293,7 +293,7 @@ async def test_json_mode_no_tool_calls_parses_content() -> None:
     payload = json.dumps({"result": "json_answer", "confidence": 0.8})
     llm = _make_llm([_make_response(content=payload)])
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm,
         FinalAnswer,
         "input",
@@ -319,7 +319,7 @@ async def test_json_mode_helper_tool_then_text() -> None:
         ]
     )
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         llm,
         FinalAnswer,
         "input",
@@ -345,7 +345,7 @@ async def test_fallback_model_used_when_primary_exhausted() -> None:
     primary_llm = _make_llm([_make_response(tool_calls=[])] * 3)  # no tool calls, no final
     fallback_llm = _make_llm([_make_response(tool_calls=[final_call])])
 
-    result, stats = await extract_with_tools(
+    result, stats = await extract_data_with_tools(
         primary_llm,
         FinalAnswer,
         "text",
@@ -362,13 +362,13 @@ async def test_fallback_model_used_when_primary_exhausted() -> None:
 
 
 # ---------------------------------------------------------------------------
-# run_agent_loop — message list API
+# run_extractor_agent — message list API
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_run_agent_loop_with_custom_messages() -> None:
-    """run_agent_loop accepts a pre-built message list."""
+async def test_run_extractor_agent_with_custom_messages() -> None:
+    """run_extractor_agent accepts a pre-built message list."""
     final_call = _tc("FinalAnswer", {"result": "from_loop"}, "c1")
     llm = _make_llm([_make_response(tool_calls=[final_call])])
 
@@ -377,7 +377,7 @@ async def test_run_agent_loop_with_custom_messages() -> None:
         HumanMessage(content="Do the thing."),
     ]
 
-    result, stats = await run_agent_loop(
+    result, stats = await run_extractor_agent(
         llm,
         FinalAnswer,
         messages,
@@ -390,13 +390,13 @@ async def test_run_agent_loop_with_custom_messages() -> None:
 
 
 # ---------------------------------------------------------------------------
-# AgentRunStats
+# ExtractorRunStats
 # ---------------------------------------------------------------------------
 
 
 def test_agent_run_stats_add() -> None:
-    a = AgentRunStats(iterations=3, tool_calls=2, validation_retries=1, fallback_used=False)
-    b = AgentRunStats(iterations=2, tool_calls=1, validation_retries=0, fallback_used=True)
+    a = ExtractorRunStats(iterations=3, tool_calls=2, validation_retries=1, fallback_used=False)
+    b = ExtractorRunStats(iterations=2, tool_calls=1, validation_retries=0, fallback_used=True)
     c = a + b
     assert c.iterations == 5
     assert c.tool_calls == 3

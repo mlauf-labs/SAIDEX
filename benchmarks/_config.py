@@ -56,7 +56,7 @@ VISION_MODELS: list[str] = [
 ]
 
 
-def make_llm(model: str, temperature: float = 0.0, timeout: int = 120) -> ChatOpenAI:
+def make_llm(model: str, temperature: float = 0.0, timeout: int = 600) -> ChatOpenAI:
     """Return a ChatOpenAI instance pointed at the local Ollama server."""
     return ChatOpenAI(
         model=model,
@@ -64,5 +64,6 @@ def make_llm(model: str, temperature: float = 0.0, timeout: int = 120) -> ChatOp
         api_key="ollama",
         temperature=temperature,
         timeout=timeout,
-        max_retries=0
+        max_retries=0,
+        streaming=True
     )

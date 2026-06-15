@@ -2,24 +2,24 @@
 
 → [Documentation index](index.md)
 
-This document covers both extraction entry points: `extract_from_text` for
-simple text strings and `get_structured_data` for full LangChain message lists.
+This document covers both extraction entry points: `extract_data_from_text` for
+simple text strings and `extract_data` for full LangChain message lists.
 
 ---
 
-## `extract_from_text` — plain text → model
+## `extract_data_from_text` — plain text → model
 
 > **Runnable example:** [`examples/01_extract_from_text.py`](../examples/01_extract_from_text.py)
 
-`extract_from_text` is the simplest entry point.  It takes a plain string,
+`extract_data_from_text` is the simplest entry point.  It takes a plain string,
 wraps it in a `[SystemMessage, HumanMessage]` pair, and calls
-`get_structured_data` internally.
+`extract_data` internally.
 
 ```python
 from langchain_openai import ChatOpenAI
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
-result, stats = await extract_from_text(
+result, stats = await extract_data_from_text(
     llm_model,           # any LangChain chat model
     MySchema,            # Pydantic BaseModel subclass
     "your text here",    # the text to analyse
@@ -29,7 +29,7 @@ result, stats = await extract_from_text(
 ### Full signature
 
 ```python
-async def extract_from_text(
+async def extract_data_from_text(
     llm_model:           Any,
     schema:              type[ModelT],
     text:                str,
@@ -41,7 +41,7 @@ async def extract_from_text(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config:        RetryConfig | None = None,
-) -> tuple[ModelT | None, StructuredOutputStats]:
+) -> tuple[ModelT | None, ExtractDataStats]:
 ```
 
 > `mode` selects tool calling (default) or raw JSON output — see
@@ -58,7 +58,7 @@ By default the function generates a generic instruction like:
 Override it when the domain requires specific instructions:
 
 ```python
-result, stats = await extract_from_text(
+result, stats = await extract_data_from_text(
     llm,
     Address,
     "Bitte liefern an: Maria Schmidt, Hauptstraße 42, 80331 München",
@@ -76,17 +76,17 @@ demonstrates how `stats` is used to detect whether retries were needed.
 
 ---
 
-## `get_structured_data` — chat history → model
+## `extract_data` — chat history → model
 
 > **Runnable example:** [`examples/02_chat_history.py`](../examples/02_chat_history.py)
 
-Use `get_structured_data` when you already have a list of LangChain messages —
+Use `extract_data` when you already have a list of LangChain messages —
 either because your application builds conversations naturally, or because you
 want fine-grained control over the system instruction, context, and prompt.
 
 ```python
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from saidex import get_structured_data
+from saidex import extract_data
 
 messages = [
     SystemMessage(content="You are a support analyst. Analyse the conversation."),
@@ -95,13 +95,13 @@ messages = [
     HumanMessage(content="Please provide the structured summary now."),
 ]
 
-result, stats = await get_structured_data(llm, SupportTicketSummary, messages)
+result, stats = await extract_data(llm, SupportTicketSummary, messages)
 ```
 
 ### Full signature
 
 ```python
-async def get_structured_data(
+async def extract_data(
     llm_model:           Any,
     schema:              type[ModelT],
     messages:            list[BaseMessage],
@@ -112,7 +112,7 @@ async def get_structured_data(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config:        RetryConfig | None = None,
-) -> tuple[ModelT | None, StructuredOutputStats]:
+) -> tuple[ModelT | None, ExtractDataStats]:
 ```
 
 > `mode` selects tool calling (default) or raw JSON output — see
@@ -127,8 +127,8 @@ always safe to reuse:
 ```python
 base_messages = [SystemMessage(content="Analyse this."), HumanMessage(content=doc)]
 
-result_a, _ = await get_structured_data(llm, SchemaA, base_messages)
-result_b, _ = await get_structured_data(llm, SchemaB, base_messages)
+result_a, _ = await extract_data(llm, SchemaA, base_messages)
+result_b, _ = await extract_data(llm, SchemaB, base_messages)
 # base_messages is unchanged after both calls
 ```
 
@@ -200,7 +200,7 @@ extraction_messages = history + [
     )
 ]
 
-order, stats = await get_structured_data(llm, OrderSummary, extraction_messages)
+order, stats = await extract_data(llm, OrderSummary, extraction_messages)
 ```
 
 ---
@@ -210,7 +210,7 @@ order, stats = await get_structured_data(llm, OrderSummary, extraction_messages)
 Always check for `None` before using the result:
 
 ```python
-result, stats = await extract_from_text(llm, MySchema, text)
+result, stats = await extract_data_from_text(llm, MySchema, text)
 
 if result is None:
     # All retries exhausted — log and handle gracefully
@@ -230,8 +230,29 @@ For a complete discussion of retry budgets and fallback models see
 
 ---
 
+## Synchronous usage
+
+Both entry points are async, but each has a thin synchronous wrapper —
+`extract_data_from_text_sync` and `extract_data_sync` — for callers that are
+not running inside an event loop (CLI scripts, sync web views, background jobs):
+
+```python
+from saidex import extract_data_from_text_sync
+
+result, stats = extract_data_from_text_sync(llm, MySchema, text)
+```
+
+The wrappers accept exactly the same arguments and return the same
+`(model, stats)` tuple as the async versions. They run the coroutine via
+`asyncio.run`, so they must **not** be called from within an already-running
+event loop — if one is detected they raise a clear `RuntimeError` pointing you
+to the async function. See [Observability → Async and sync usage](observability.md#async-and-sync-usage).
+
+---
+
 ## Related
 
+- [Batch Extraction](batch-extraction.md) — return a `list[ModelT]` of repeated records from one call
 - [Retry & Fallback](retry-and-fallback.md) — controlling retries and adding a fallback model
 - [Schema Design](schema-design.md) — writing schemas the LLM can fill reliably
 - [Image Extraction](images.md) — passing images in messages

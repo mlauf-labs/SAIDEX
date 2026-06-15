@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
+from saidex import IsoDateStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -25,7 +26,7 @@ class ActionItem(BaseModel):
 
     owner: str = Field(description="Person responsible for completing the task")
     task: str = Field(description="Description of the task to be done")
-    due_date: str | None = Field(None, description="Deadline in ISO format if mentioned, e.g. 2024-04-05")
+    due_date: IsoDateStr = Field(description="Deadline as yyyy-mm-dd if mentioned, e.g. 2024-04-05")
 
 
 class MeetingNotes(BaseModel):
@@ -36,10 +37,9 @@ class MeetingNotes(BaseModel):
     decisions: list[str] = Field(description="List of explicit decisions made during the meeting")
     action_items: list[ActionItem] = Field(description="List of action items assigned to specific people")
     open_questions: list[str] = Field(
-        default_factory=list,
         description="Topics or questions that were raised but not resolved"
     )
-    next_meeting: str | None = Field(None, description="Date of the next meeting if mentioned")
+    next_meeting: IsoDateStr = Field(description="Date of the next meeting as yyyy-mm-dd if mentioned")
 
 
 # ---------------------------------------------------------------------------
@@ -153,13 +153,25 @@ Ende der Sitzung: 16:15 Uhr
 
 SCENARIO = BenchmarkScenario(
     name="Extras — Meeting Notes Extraction (DE)",
-    description="Unstrukturiertes Besprechungsprotokoll: Teilnehmer, Entscheidungen, Aufgaben mit Verantwortlichen und Deadlines.",
+    description="Unstructured meeting minutes: participants, decisions, action items with owners and deadlines.",
     schema=MeetingNotes,
     text=MEETING_TEXT,
     system_prompt="Du bist ein Assistent, der Besprechungsprotokolle strukturiert auswertet. Extrahiere alle relevanten Informationen präzise.",
     expected={
+        # Scalar: lenient string comparison.
         "next_meeting": "2024-04-18",
-        "participants_count": 6,
+        # int: number of elements expected in the list field.
+        "participants": 6,
+        "decisions": 5,
+        "open_questions": 1,
+        # list of dicts: element count + owner/due_date per item.
+        "action_items": [
+            {"owner": "Sandra", "due_date": "2024-04-10"},
+            {"owner": "Jana", "due_date": "2024-04-12"},
+            {"owner": "Markus", "due_date": "2024-04-12"},
+            {"owner": "Tom", "due_date": "2024-04-15"},
+            {"owner": "Priya", "due_date": "2024-04-08"},
+        ],
     },
 )
 

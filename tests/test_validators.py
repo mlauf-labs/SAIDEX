@@ -308,3 +308,215 @@ class TestOrderModelValidators:
         )
         assert instance is None
         assert error is not None
+
+
+# ===========================================================================
+# IsoDateStr — reusable yyyy-mm-dd date type exported by the library
+# ===========================================================================
+
+from pydantic import BaseModel  # noqa: E402
+
+from saidex import IsoDateStr, validate_iso_date  # noqa: E402
+
+
+class _Event(BaseModel):
+    starts_on: IsoDateStr
+    ends_on: IsoDateStr | None = None
+
+
+class TestIsoDateStr:
+    @pytest.mark.parametrize("value", ["2024-04-05", "1992-12-31", "2000-01-01"])
+    def test_valid_dates_pass_through_unchanged(self, value: str) -> None:
+        # Returned as a plain str, not coerced to datetime.date.
+        assert validate_iso_date(value) == value
+        event = _Event(starts_on=value)
+        assert event.starts_on == value
+        assert isinstance(event.starts_on, str)
+
+    def test_optional_none_allowed(self) -> None:
+        event = _Event(starts_on="2024-04-05", ends_on=None)
+        assert event.ends_on is None
+
+    @pytest.mark.parametrize(
+        "value",
+        ["2024-4-5", "April 5th", "05.04.2024", "31/12/2026", "2024-04-05T00:00:00", ""],
+    )
+    def test_wrong_format_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="format yyyy-mm-dd"):
+            validate_iso_date(value)
+
+    @pytest.mark.parametrize("value", ["2024-13-40", "2024-00-10", "2024-02-30"])
+    def test_impossible_calendar_date_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="not a real calendar date"):
+            validate_iso_date(value)
+
+    def test_create_instance_safe_emits_guidance(self) -> None:
+        instance, error = create_instance_safe(_Event, starts_on="2024-13-40")
+        assert instance is None
+        assert error is not None
+        assert "starts_on" in error
+        assert "calendar date" in error
+
+
+# ===========================================================================
+# IbanStr / VatIdStr / CountryCodeStr / CurrencyCodeStr — library field types
+# ===========================================================================
+
+from saidex import (  # noqa: E402
+    CountryCodeStr,
+    CurrencyCodeStr,
+    IbanStr,
+    VatIdStr,
+    validate_country_code,
+    validate_currency_code,
+    validate_iban,
+    validate_isin,
+    validate_language_code,
+    validate_phone,
+    validate_vat_id,
+)
+
+
+class _BankAccount(BaseModel):
+    iban: IbanStr
+    vat_id: VatIdStr | None = None
+    country: CountryCodeStr | None = None
+    currency: CurrencyCodeStr | None = None
+
+
+class TestIbanStr:
+    @pytest.mark.parametrize(
+        "raw,normalised",
+        [
+            ("DE89 3704 0044 0532 0130 00", "DE89370400440532013000"),
+            ("de89370400440532013000", "DE89370400440532013000"),
+            ("GB82 WEST 1234 5698 7654 32", "GB82WEST12345698765432"),
+        ],
+    )
+    def test_valid_iban_normalised(self, raw: str, normalised: str) -> None:
+        assert validate_iban(raw) == normalised
+        assert _BankAccount(iban=raw).iban == normalised
+
+    def test_bad_checksum_rejected(self) -> None:
+        # Structurally fine, but the mod-97 check digits are wrong (fabricated).
+        with pytest.raises(ValueError, match="checksum"):
+            validate_iban("DE42 1004 0000 0287 8000 04")
+
+    @pytest.mark.parametrize("value", ["not-an-iban", "1234", "D8 89 ABC", ""])
+    def test_malformed_iban_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="structurally valid IBAN"):
+            validate_iban(value)
+
+
+class TestVatIdStr:
+    @pytest.mark.parametrize(
+        "raw,normalised",
+        [
+            ("DE298471023", "DE298471023"),
+            ("DE 301 847 192", "DE301847192"),
+            ("atu12345678", "ATU12345678"),
+        ],
+    )
+    def test_valid_vat_normalised(self, raw: str, normalised: str) -> None:
+        assert validate_vat_id(raw) == normalised
+
+    @pytest.mark.parametrize("value", ["XX", "12345", "D1", ""])
+    def test_invalid_vat_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="VAT identification number"):
+            validate_vat_id(value)
+
+
+class TestCountryCodeStr:
+    @pytest.mark.parametrize("raw,normalised", [("de", "DE"), ("US", "US"), (" gb ", "GB")])
+    def test_valid_country_normalised(self, raw: str, normalised: str) -> None:
+        assert validate_country_code(raw) == normalised
+
+    @pytest.mark.parametrize("value", ["UK", "XX", "Germany", "D"])
+    def test_invalid_country_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="ISO 3166-1 alpha-2"):
+            validate_country_code(value)
+
+
+class TestCurrencyCodeStr:
+    @pytest.mark.parametrize("raw,normalised", [("eur", "EUR"), ("USD", "USD"), (" gbp ", "GBP")])
+    def test_valid_currency_normalised(self, raw: str, normalised: str) -> None:
+        assert validate_currency_code(raw) == normalised
+
+    @pytest.mark.parametrize("value", ["XYZ", "EURO", "€", ""])
+    def test_invalid_currency_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="ISO 4217"):
+            validate_currency_code(value)
+
+
+class TestIsinStr:
+    @pytest.mark.parametrize(
+        "raw,normalised",
+        [
+            ("US0378331005", "US0378331005"),  # Apple
+            ("us 5949181045", "US5949181045"),  # Microsoft, lower + spaces
+            ("DE0005140008", "DE0005140008"),  # Deutsche Bank
+        ],
+    )
+    def test_valid_isin_normalised(self, raw: str, normalised: str) -> None:
+        assert validate_isin(raw) == normalised
+
+    def test_bad_check_digit_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Luhn checksum"):
+            validate_isin("US0378331006")  # last digit wrong
+
+    @pytest.mark.parametrize("value", ["12345", "USABC", "0378331005", ""])
+    def test_malformed_isin_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="structurally valid ISIN"):
+            validate_isin(value)
+
+
+class TestPhoneStr:
+    @pytest.mark.parametrize(
+        "raw,normalised",
+        [
+            ("+49 69 7140 2200", "+496971402200"),
+            ("+1 (415) 555-0132", "+14155550132"),
+            ("0049 30 1234567", "+49301234567"),  # 00 -> +
+        ],
+    )
+    def test_valid_phone_normalised(self, raw: str, normalised: str) -> None:
+        assert validate_phone(raw) == normalised
+
+    @pytest.mark.parametrize("value", ["069 7140 2200", "abc", "+0123", ""])
+    def test_invalid_phone_rejected(self, value: str) -> None:
+        # National numbers without a country code are rejected (E.164 needs one).
+        with pytest.raises(ValueError, match="E.164"):
+            validate_phone(value)
+
+
+class TestLanguageCodeStr:
+    @pytest.mark.parametrize("raw,normalised", [("en", "en"), ("DE", "de"), (" fr ", "fr")])
+    def test_valid_language_normalised(self, raw: str, normalised: str) -> None:
+        assert validate_language_code(raw) == normalised
+
+    @pytest.mark.parametrize("value", ["english", "gb", "xx", "e"])
+    def test_invalid_language_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="ISO 639-1"):
+            validate_language_code(value)
+
+
+class TestFieldTypesInModel:
+    def test_full_valid_model_normalises_all_fields(self) -> None:
+        acc = _BankAccount(
+            iban="de89 3704 0044 0532 0130 00",
+            vat_id="DE 298 471 023",
+            country="de",
+            currency="eur",
+        )
+        assert acc.iban == "DE89370400440532013000"
+        assert acc.vat_id == "DE298471023"
+        assert acc.country == "DE"
+        assert acc.currency == "EUR"
+
+    def test_create_instance_safe_reports_field_path(self) -> None:
+        instance, error = create_instance_safe(
+            _BankAccount, iban="DE89370400440532013000", country="UK"
+        )
+        assert instance is None
+        assert error is not None
+        assert "country" in error

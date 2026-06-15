@@ -5,17 +5,17 @@
 > **Runnable example:** [`examples/07_json_mode.py`](../examples/07_json_mode.py)
 
 The library supports two strategies for getting structured output out of an
-LLM.  Both are selected with the `mode` parameter on `extract_from_text` and
-`get_structured_data`.
+LLM.  Both are selected with the `mode` parameter on `extract_data_from_text` and
+`extract_data`.
 
 ```python
-from saidex import ExtractionMode, extract_from_text
+from saidex import ExtractionMode, extract_data_from_text
 
 # Tool calling (default)
-result, stats = await extract_from_text(llm, MySchema, text)
+result, stats = await extract_data_from_text(llm, MySchema, text)
 
 # Raw JSON — no tool calling required
-result, stats = await extract_from_text(
+result, stats = await extract_data_from_text(
     llm, MySchema, text, mode=ExtractionMode.JSON
 )
 ```
@@ -36,7 +36,7 @@ are the structured output.
 | **Best for** | OpenAI, Anthropic, Gemini, Mistral, Azure OpenAI, … |
 
 ```python
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm, MySchema, messages,
     mode=ExtractionMode.TOOL_CALLING,   # this is the default
 )
@@ -58,7 +58,7 @@ reply with a single raw JSON object.  The library parses the response
 | **Best for** | Local models (Ollama, llama.cpp), older APIs, non-tool models |
 
 ```python
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm, MySchema, messages,
     mode=ExtractionMode.JSON,
 )
@@ -137,7 +137,7 @@ good cost/reliability balance:
 local    = ChatOpenAI(model="llama3.1", base_url="http://localhost:11434/v1", api_key="x", temperature=0)
 fallback = ChatOpenAI(model="gpt-4o", temperature=0)
 
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     local, MySchema, messages,
     mode=ExtractionMode.JSON,
     fallback_llm_model=fallback,

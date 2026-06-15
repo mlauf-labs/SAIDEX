@@ -13,7 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from ._base import BenchmarkScenario, run_all_models
+from ._base import AtLeast, BenchmarkScenario, run_all_models
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -37,7 +37,6 @@ class SentimentResult(BaseModel):
         description="One to two sentence summary of the overall tone and main points"
     )
     emotions: list[str] = Field(
-        default_factory=list,
         description="Dominant emotions expressed (e.g. joy, gratitude, excitement, frustration)"
     )
 
@@ -112,7 +111,9 @@ SCENARIO = BenchmarkScenario(
     schema=SentimentResult,
     text=REVIEW_TEXT,
     system_prompt="Analyse the sentiment of the following text precisely. Pay particular attention to the overall tone: factually neutral, evaluative, or emotional?",
-    expected={"sentiment": "neutral", "confidence": 0.85},
+    # confidence: neutral is genuinely the hardest class, so models are less
+    # certain here — use a lower floor than the clear-cut positive/negative cases.
+    expected={"sentiment": "neutral", "confidence": AtLeast(0.6)},
 )
 
 

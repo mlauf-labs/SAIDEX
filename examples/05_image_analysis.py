@@ -28,7 +28,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import get_structured_data
+from saidex import extract_data
 
 # ---------------------------------------------------------------------------
 # Helper functions — build LangChain multimodal messages from images
@@ -210,7 +210,7 @@ async def scenario_a_url_openai() -> None:
         image_message_from_url(receipt_url, prompt="Extract the receipt data from this image."),
     ]
 
-    receipt, stats = await get_structured_data(llm, Receipt, messages)
+    receipt, stats = await extract_data(llm, Receipt, messages)
 
     if receipt is None:
         print(f"  Failed after {stats.total_retries} retries.\n")
@@ -254,7 +254,7 @@ async def scenario_b_file_openai(image_path: str) -> None:
         ),
     ]
 
-    card, stats = await get_structured_data(llm, BusinessCard, messages)
+    card, stats = await extract_data(llm, BusinessCard, messages)
 
     if card is None:
         print(f"  Failed after {stats.total_retries} retries.\n")
@@ -317,7 +317,7 @@ async def scenario_c_vllm() -> None:
         ),
     ]
 
-    chart, stats = await get_structured_data(vllm, ChartData, messages)
+    chart, stats = await extract_data(vllm, ChartData, messages)
 
     if chart is None:
         print(
@@ -364,7 +364,7 @@ async def scenario_d_multi_image() -> None:
         ),
     ]
 
-    receipt, stats = await get_structured_data(
+    receipt, stats = await extract_data(
         primary,
         Receipt,
         messages,

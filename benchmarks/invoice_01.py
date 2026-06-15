@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
+from saidex import CurrencyCodeStr, IbanStr, IsoDateStr, VatIdStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -20,11 +21,17 @@ from ._base import BenchmarkScenario, run_all_models
 class InvoiceData(BaseModel):
     """Key fields extracted from an invoice document."""
 
-    contract_number: str | None = Field(None, description="Contract or subscription number, e.g. CTR-2024-00891")
-    customer_number: str | None = Field(None, description="Customer ID or account number, e.g. CUST-4471")
-    invoice_date: str | None = Field(None, description="Invoice issue date in ISO format if possible, e.g. 2024-03-15")
-    address: str | None = Field(None, description="Full billing address of the customer as a single string")
-    company_name: str | None = Field(None, description="Name of the company being billed")
+    invoice_number: str = Field(description="The invoice's own number/ID, e.g. INV-2024-03-0182")
+    contract_number: str = Field(description="Contract or subscription number, e.g. CTR-2024-00891")
+    customer_number: str = Field(description="Customer ID or account number, e.g. CUST-4471")
+    invoice_date: IsoDateStr = Field(description="Invoice issue date as yyyy-mm-dd, e.g. 2024-03-15")
+    address: str = Field(description="Full billing address of the customer as a single string")
+    billed_company_name: str = Field(description="Name of the company being billed (the recipient)")
+    issuing_company_name: str = Field(description="Name of the company that issued the invoice (the seller)")
+    total_amount: float = Field(description="Total amount due as a plain number, without currency symbol or thousands separators, e.g. 24961.44")
+    currency: CurrencyCodeStr = Field(description="ISO 4217 currency code of the amounts, e.g. EUR")
+    vat_id: VatIdStr = Field(description="The seller's VAT identification number, e.g. DE298471023")
+    iban: IbanStr = Field(description="The payment IBAN stated in the invoice")
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +94,16 @@ SCENARIO = BenchmarkScenario(
     text=INVOICE_TEXT,
     system_prompt="You are an invoice data extraction assistant. Extract the requested fields exactly as they appear in the document.",
     expected={
+        "invoice_number": "INV-2024-03-0182",
         "contract_number": "CTR-2024-00891",
         "customer_number": "CUST-4471",
         "invoice_date": "2024-03-15",
-        "company_name": "Nexora Digital AG",
+        "billed_company_name": "Nexora Digital AG",
+        "issuing_company_name": "TechFlow Solutions GmbH",
+        "total_amount": 24961.44,
+        "currency": "EUR",
+        "vat_id": "DE298471023",
+        "iban": "DE89370400440532013000",  # normalised by IbanStr (spaces removed)
     },
 )
 

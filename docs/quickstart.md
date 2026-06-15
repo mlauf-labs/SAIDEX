@@ -48,31 +48,41 @@ uv sync          # creates .venv and installs all dependencies
 The library exposes two async functions:
 
 ```python
-from saidex import extract_from_text, get_structured_data
+from saidex import extract_data_from_text, extract_data
 ```
 
 | Function | Input | Best for |
 | --- | --- | --- |
-| `extract_from_text(llm, schema, text, ...)` | Plain string | Single-shot text → model |
-| `get_structured_data(llm, schema, messages, ...)` | `list[BaseMessage]` | Multi-turn chat → model |
+| `extract_data_from_text(llm, schema, text, ...)` | Plain string | Single-shot text → model |
+| `extract_data(llm, schema, messages, ...)` | `list[BaseMessage]` | Multi-turn chat → model |
 
-Both return `tuple[ModelT | None, StructuredOutputStats]`.
+Both return `tuple[ModelT | None, ExtractDataStats]`.
 
 Both accept a `mode` parameter — tool calling (default) or raw JSON for models
 without tool-calling support.  See [Extraction Modes](extraction-modes.md).
 
-### `StructuredOutputStats`
+### `ExtractDataStats`
 
 ```python
-result, stats = await extract_from_text(...)
+result, stats = await extract_data_from_text(...)
 
+stats.success           # bool — did the run produce a validated instance?
+stats.failure_reason    # str | None — why it failed (None on success)
 stats.primary_retries   # int — retries on the primary model
 stats.fallback_retries  # int — retries on the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — did the fallback model run?
-
-int(stats)   # == stats.total_retries  (backward-compatible)
+stats.format_errors     # int — pure parse / tool-call failures
+stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
+stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
 ```
+
+Prefer `stats.success` over `result is not None` to branch on the outcome.
+`field_issues` are recorded even on a successful run when an earlier attempt was
+self-corrected, so you can see which fields the model struggled with.
+
+> **Breaking change (was `int(stats)`):** the legacy integer shims were removed.
+> Use `stats.total_retries` instead of `int(stats)`.
 
 ---
 
@@ -84,7 +94,7 @@ int(stats)   # == stats.total_retries  (backward-compatible)
 import asyncio
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 class PersonInfo(BaseModel):
     name:       str
@@ -95,7 +105,7 @@ class PersonInfo(BaseModel):
 async def main() -> None:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-    person, stats = await extract_from_text(
+    person, stats = await extract_data_from_text(
         llm,
         PersonInfo,
         "Alice Müller, 34, works as a software engineer in Munich.",
@@ -154,7 +164,7 @@ Your text / messages
 ```
 
 The retry loop means a single API function call can make multiple LLM
-requests internally.  `StructuredOutputStats` tells you exactly how many.
+requests internally.  `ExtractDataStats` tells you exactly how many.
 
 ---
 

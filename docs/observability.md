@@ -9,12 +9,12 @@ This document covers tracing, callbacks, logging, the standalone
 
 ## Callbacks
 
-Both `extract_from_text` and `get_structured_data` accept a `callbacks`
+Both `extract_data_from_text` and `extract_data` accept a `callbacks`
 parameter.  Pass any list of LangChain `BaseCallbackHandler` instances to
 get automatic tracing of every LLM call — including retry attempts.
 
 ```python
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm,
     MySchema,
     messages,
@@ -27,22 +27,19 @@ result, stats = await get_structured_data(
 ## Langfuse
 
 [Langfuse](https://langfuse.com) provides open-source LLM observability with
-traces, spans, costs, and prompt management.
+traces, spans, costs, and prompt management. Configure the keys via environment
+variables (or the `Langfuse(...)` client) and attach the LangChain handler:
 
 ```bash
-pip install langfuse
+uv pip install "langfuse>=3"
 ```
 
 ```python
-from langfuse.callback import CallbackHandler
+from langfuse.langchain import CallbackHandler
 
-handler = CallbackHandler(
-    public_key="lf-pub-...",
-    secret_key="lf-sk-...",
-    host="https://cloud.langfuse.com",
-)
+handler = CallbackHandler()  # reads LANGFUSE_* env vars
 
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm,
     MySchema,
     messages,
@@ -54,18 +51,10 @@ Each retry is recorded as a separate LLM span nested within the parent trace.
 The validation error messages that trigger retries appear as the input to each
 retry span — this makes it easy to see exactly what the LLM was correcting.
 
-### Session and user tracking
-
-```python
-from langfuse.callback import CallbackHandler
-
-handler = CallbackHandler(
-    session_id="session-abc123",
-    user_id="user-xyz",
-    trace_name="invoice-extraction",
-    tags=["production", "v2"],
-)
-```
+!!! tip "Full walkthrough"
+    See [Langfuse Tracing](langfuse-tracing.md) for an end-to-end, runnable
+    guide covering single extractions, retries, the agent loop, and session /
+    user / tag tracking.
 
 ---
 
@@ -87,7 +76,7 @@ from langsmith.run_helpers import traceable
 
 @traceable(name="extract-invoice")
 async def extract_invoice(text: str) -> Invoice | None:
-    result, _ = await extract_from_text(llm, Invoice, text)
+    result, _ = await extract_data_from_text(llm, Invoice, text)
     return result
 ```
 
@@ -212,17 +201,17 @@ your validator error messages are clear and actionable.
 
 ## Async and sync usage
 
-The library is **async-first**.  Both `extract_from_text` and
-`get_structured_data` are coroutines that must be `await`ed.
+The library is **async-first**.  Both `extract_data_from_text` and
+`extract_data` are coroutines that must be `await`ed.
 
 ### Standard async usage
 
 ```python
 import asyncio
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 async def main() -> None:
-    result, stats = await extract_from_text(llm, MySchema, text)
+    result, stats = await extract_data_from_text(llm, MySchema, text)
     ...
 
 asyncio.run(main())
@@ -230,30 +219,42 @@ asyncio.run(main())
 
 ### Calling from synchronous code
 
-If you need to call the library from synchronous code (e.g. a Django view, a
-CLI script, or a background job):
+If you are in a purely synchronous context (a CLI script, a Django view, a
+background job), use the **synchronous wrappers** instead of managing the event
+loop yourself.  Every async entry point has a `*_sync` counterpart that mirrors
+its signature exactly and runs the coroutine to completion internally:
+
+| Async | Synchronous wrapper |
+| --- | --- |
+| `extract_data_from_text` | `extract_data_from_text_sync` |
+| `extract_data` | `extract_data_sync` |
+| `extract_data_with_tools` | `extract_data_with_tools_sync` |
+| `run_extractor_agent` | `run_extractor_agent_sync` |
 
 ```python
-import asyncio
-from saidex import extract_from_text
+from saidex import extract_data_from_text_sync
 
-# Option 1 — create a new event loop (simplest, always works)
-result, stats = asyncio.run(extract_from_text(llm, MySchema, text))
+# No async/await, no asyncio.run — just call it.
+result, stats = extract_data_from_text_sync(llm, MySchema, text)
 
-# Option 2 — reuse an existing loop (e.g. inside a synchronous pytest test)
-import asyncio
+# The agent loop has a sync wrapper too:
+from saidex import extract_data_with_tools_sync
 
-loop = asyncio.new_event_loop()
-result, stats = loop.run_until_complete(extract_from_text(llm, MySchema, text))
-loop.close()
+result, stats = extract_data_with_tools_sync(llm, MySchema, text, tools=[my_tool])
 ```
+
+The wrappers delegate to `asyncio.run`, so call them only from code that is
+**not** already inside an event loop.  If a running loop is detected they raise
+a clear `RuntimeError` (rather than deadlocking) telling you to `await` the
+async function directly.
 
 ### Jupyter / IPython
 
-Jupyter notebooks already run an event loop.  Use `await` directly in a cell:
+Jupyter notebooks already run an event loop, so the sync wrappers would raise.
+Use `await` directly in a cell instead:
 
 ```python
-result, stats = await extract_from_text(llm, MySchema, text)
+result, stats = await extract_data_from_text(llm, MySchema, text)
 ```
 
 ### FastAPI integration
@@ -262,13 +263,13 @@ FastAPI routes are async by default — use `await` as normal:
 
 ```python
 from fastapi import FastAPI
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 app = FastAPI()
 
 @app.post("/extract")
 async def extract_endpoint(text: str) -> dict:
-    result, stats = await extract_from_text(llm, MySchema, text)
+    result, stats = await extract_data_from_text(llm, MySchema, text)
     if result is None:
         return {"error": "extraction failed", "retries": stats.total_retries}
     return result.model_dump()
@@ -296,7 +297,7 @@ metrics = ExtractionMetrics()
 
 async def extract_tracked(text: str) -> MySchema | None:
     t0 = time.monotonic()
-    result, stats = await extract_from_text(llm, MySchema, text)
+    result, stats = await extract_data_from_text(llm, MySchema, text)
     elapsed = time.monotonic() - t0
 
     metrics.total += 1

@@ -27,7 +27,7 @@ pip install "saidex[openai]"
 import asyncio
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 class PersonInfo(BaseModel):
     name: str
@@ -37,7 +37,7 @@ class PersonInfo(BaseModel):
 async def main():
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-    person, stats = await extract_from_text(
+    person, stats = await extract_data_from_text(
         llm,
         PersonInfo,
         "Alice Müller, 34, works as a software engineer in Munich.",

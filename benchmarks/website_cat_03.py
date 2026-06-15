@@ -10,8 +10,9 @@ import asyncio
 from typing import Literal
 
 from pydantic import BaseModel, Field
+from saidex import LanguageCodeStr
 
-from ._base import BenchmarkScenario, run_all_models
+from ._base import AtLeast, BenchmarkScenario, run_all_models
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -24,11 +25,10 @@ class WebsiteCategory(BaseModel):
     category: Literal["e-commerce", "news", "documentation", "blog", "social-media", "corporate", "other"] = Field(
         description="Primary category of the website"
     )
-    subcategory: str | None = Field(
-        None,
+    subcategory: str = Field(
         description="More specific subcategory, e.g. 'api reference', 'tutorial', 'developer docs', 'user manual'"
     )
-    language: str = Field(description="Primary language of the page, e.g. 'de', 'en', 'fr'")
+    language: LanguageCodeStr = Field(description="Primary language of the page as an ISO 639-1 code, e.g. 'de', 'en', 'fr'")
     target_audience: str = Field(
         description="Brief description of the intended audience"
     )
@@ -219,11 +219,16 @@ print(response.json())</code></pre>
 
 SCENARIO = BenchmarkScenario(
     name="Website Cat 03 — API Documentation (EN)",
-    description="HTML einer englischen Developer-Dokumentationsseite mit API-Referenz, Codebeispielen und Sidebar-Navigation.",
+    description="HTML of an English developer documentation page with API reference, code examples, and sidebar navigation.",
     schema=WebsiteCategory,
     text=HTML_CONTENT,
     system_prompt="Analyze the following HTML page content and classify the website. Focus on the structure, navigation, and content clues.",
-    expected={"category": "documentation", "language": "en", "has_shopping_cart": False},
+    expected={
+        "category": "documentation",
+        "language": "en",
+        "has_shopping_cart": False,
+        "confidence": AtLeast(0.7),
+    },
 )
 
 

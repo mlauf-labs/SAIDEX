@@ -671,6 +671,11 @@ Instead of defining a validator inside every model that uses a type, you can
 attach validators directly to a type annotation using `Annotated`.  This makes
 them reusable across multiple models without duplication.
 
+> SAIDEX already ships a few of these ready-made — e.g.
+> [`IsoDateStr`](built-in-types.md#isodatestr), [`IbanStr`](built-in-types.md#ibanstr),
+> and [`CountryCodeStr`](built-in-types.md#countrycodestr). See
+> [Built-in Field Types & Validators](built-in-types.md) before writing your own.
+
 ```python
 from typing import Annotated, Any
 from pydantic import BaseModel, BeforeValidator, AfterValidator
@@ -855,6 +860,7 @@ raise ValueError(
 
 ## Related
 
+- [Built-in Field Types & Validators](built-in-types.md) — reusable types the library ships (`IsoDateStr`, `IbanStr`, …)
 - [Schema Design](schema-design.md) — designing schemas the LLM can fill reliably
 - [Retry & Fallback](retry-and-fallback.md) — how the validation loop works end-to-end
 - [`examples/06_pydantic_validators.py`](../examples/06_pydantic_validators.py) — all patterns in one runnable file

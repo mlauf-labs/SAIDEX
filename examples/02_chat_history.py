@@ -16,7 +16,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import get_structured_data
+from saidex import extract_data
 
 # ---------------------------------------------------------------------------
 # Schema
@@ -80,7 +80,7 @@ MESSAGES = [
 async def main() -> None:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-    summary, stats = await get_structured_data(llm, SupportTicketSummary, MESSAGES)
+    summary, stats = await extract_data(llm, SupportTicketSummary, MESSAGES)
 
     if summary is None:
         print(f"Extraction failed after {stats.total_retries} retries.")

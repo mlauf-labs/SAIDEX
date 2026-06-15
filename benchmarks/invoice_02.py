@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
+from saidex import CountryCodeStr, IsoDateStr, VatIdStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -20,11 +21,16 @@ from ._base import BenchmarkScenario, run_all_models
 class InvoiceData(BaseModel):
     """Key fields extracted from an invoice document."""
 
-    contract_number: str | None = Field(None, description="Contract or project number, e.g. VTR-2024-0055")
-    customer_number: str | None = Field(None, description="Customer number or client ID, e.g. KD-10234")
-    invoice_date: str | None = Field(None, description="Invoice date in ISO format if possible, e.g. 2024-06-01")
-    address: str | None = Field(None, description="Full billing address of the customer as a single string")
-    company_name: str | None = Field(None, description="Company name of the invoice recipient")
+    invoice_number: str = Field(description="The invoice's own number/ID, e.g. RE-2024-0619")
+    contract_number: str = Field(description="Contract or project number, e.g. VTR-2024-0055")
+    customer_number: str = Field(description="Customer number or client ID, e.g. KD-10234")
+    invoice_date: IsoDateStr = Field(description="Invoice date as yyyy-mm-dd, e.g. 2024-06-01")
+    address: str = Field(description="Full billing address of the customer as a single string")
+    billed_company_name: str = Field(description="Company name of the invoice recipient (the customer being billed)")
+    issuing_company_name: str = Field(description="Company name of the seller who issued the invoice")
+    total_amount: float = Field(description="Total amount due as a plain number, without currency symbol or thousands separators, e.g. 20432.30")
+    country: CountryCodeStr = Field(description="ISO 3166-1 alpha-2 country code of the recipient's billing address, e.g. DE")
+    vat_id: VatIdStr = Field(description="The seller's VAT identification number, e.g. DE301847192")
 
 
 # ---------------------------------------------------------------------------
@@ -97,10 +103,15 @@ SCENARIO = BenchmarkScenario(
     text=INVOICE_TEXT,
     system_prompt="You are an invoice data extraction assistant. Extract the requested fields exactly as they appear in the document.",
     expected={
+        "invoice_number": "RE-2024-0619",
         "contract_number": "VTR-2024-0055",
         "customer_number": "KD-10234",
         "invoice_date": "2024-06-01",
-        "company_name": "MediCare Verwaltungs GmbH",
+        "billed_company_name": "MediCare Verwaltungs GmbH",
+        "issuing_company_name": "Berger & Partner Management Consulting GmbH",
+        "total_amount": 20432.30,
+        "country": "DE",
+        "vat_id": "DE301847192",
     },
 )
 

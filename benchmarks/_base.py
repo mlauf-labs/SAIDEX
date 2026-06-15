@@ -7,12 +7,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Generic, Type, TypeVar
 
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from saidex import (
     ExtractionMode,
-    StructuredOutputStats,
-    extract_from_text,
-    get_structured_data,
+    ExtractDataStats,
+    FieldIssue,
+    extract_data_from_text,
+    extract_data,
 )
 from pydantic import BaseModel
 
@@ -22,6 +24,26 @@ ModelT = TypeVar("ModelT", bound=BaseModel)
 
 # Directory where rendered vision images are cached.
 IMAGE_CACHE_DIR = Path(__file__).parent / "results" / "images"
+
+
+@dataclass(frozen=True)
+class AtLeast:
+    """Expected-value spec: the extracted number must be ``>= value``.
+
+    Use for inherently fuzzy numeric fields — e.g. a model ``confidence`` — where
+    an exact match is meaningless and would cause false negatives. Interpreted by
+    the benchmark runner's field-accuracy logic (see ``run_benchmarks._check_field``).
+    """
+
+    value: float
+
+
+@dataclass(frozen=True)
+class Between:
+    """Expected-value spec: the extracted number must lie within ``[low, high]``."""
+
+    low: float
+    high: float
 
 
 @dataclass
@@ -46,7 +68,13 @@ class BenchmarkScenario(Generic[ModelT]):
 
 @dataclass
 class BenchmarkResult:
-    """Result of running one scenario against one model."""
+    """Result of running one scenario against one model.
+
+    ``input_tokens`` and ``output_tokens`` are the prompt / completion token
+    counts reported by Ollama, summed across *all* LLM invocations of the run
+    (including every validation retry). They are ``0`` when the server did not
+    report usage metadata.
+    """
 
     scenario_name: str
     model: str
@@ -55,6 +83,16 @@ class BenchmarkResult:
     retries: int
     value: BaseModel | None
     error: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    schema_name: str = ""
+    failure_reason: str | None = None
+    field_issues: tuple[FieldIssue, ...] = ()
+
+    @property
+    def total_tokens(self) -> int:
+        """Sum of prompt and completion tokens for this run."""
+        return self.input_tokens + self.output_tokens
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -63,12 +101,27 @@ class BenchmarkResult:
             "success": self.success,
             "duration_s": round(self.duration_s, 2),
             "retries": self.retries,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "total_tokens": self.total_tokens,
             "value": self.value.model_dump() if self.value else None,
             "error": self.error,
+            "schema_name": self.schema_name,
+            "failure_reason": self.failure_reason,
+            "field_issues": [
+                {
+                    "field_path": fi.field_path,
+                    "category": fi.category,
+                    "error_type": fi.error_type,
+                    "attempt": fi.attempt,
+                    "received": fi.received,
+                }
+                for fi in self.field_issues
+            ],
         }
 
 
-async def warmup_model(model_name: str, *, timeout: int = 300) -> tuple[bool, float, str | None]:
+async def warmup_model(model_name: str, *, timeout: int = 600) -> tuple[bool, float, str | None]:
     """Send a tiny prompt so Ollama loads the model into memory.
 
     This is called once before a model's benchmark scenarios run, so the first
@@ -119,28 +172,45 @@ def _build_vision_messages(scenario: BenchmarkScenario[Any]) -> list[BaseMessage
     ]
 
 
+def _usage_totals(handler: UsageMetadataCallbackHandler) -> tuple[int, int]:
+    """Sum (input_tokens, output_tokens) the handler collected across all calls.
+
+    The handler keys usage by model name and aggregates every LLM invocation it
+    saw (including validation retries). We collapse all models into a single
+    (in, out) pair since each scenario run uses exactly one model.
+    """
+    total_in = 0
+    total_out = 0
+    for usage in handler.usage_metadata.values():
+        total_in += usage.get("input_tokens", 0) or 0
+        total_out += usage.get("output_tokens", 0) or 0
+    return total_in, total_out
+
+
 async def run_scenario(
     scenario: BenchmarkScenario[ModelT],
     model_name: str,
 ) -> BenchmarkResult:
     """Run *scenario* with *model_name* and return a BenchmarkResult."""
     llm = make_llm(model_name)
+    usage_cb = UsageMetadataCallbackHandler()
 
     t0 = time.perf_counter()
     try:
         if scenario.vision:
             messages = _build_vision_messages(scenario)
-            value, stats = await get_structured_data(
-                llm, scenario.schema, messages, mode=scenario.mode
+            value, stats = await extract_data(
+                llm, scenario.schema, messages, mode=scenario.mode, callbacks=[usage_cb]
             )
         else:
-            kwargs: dict[str, Any] = {"mode": scenario.mode}
+            kwargs: dict[str, Any] = {"mode": scenario.mode, "callbacks": [usage_cb]}
             if scenario.system_prompt:
                 kwargs["system_prompt"] = scenario.system_prompt
-            value, stats = await extract_from_text(
+            value, stats = await extract_data_from_text(
                 llm, scenario.schema, scenario.text, **kwargs
             )
         duration = time.perf_counter() - t0
+        in_tok, out_tok = _usage_totals(usage_cb)
         return BenchmarkResult(
             scenario_name=scenario.name,
             model=model_name,
@@ -148,9 +218,16 @@ async def run_scenario(
             duration_s=duration,
             retries=stats.total_retries,
             value=value,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            schema_name=stats.schema_name or scenario.schema.__name__,
+            failure_reason=stats.failure_reason,
+            field_issues=stats.field_issues,
         )
     except Exception as exc:  # noqa: BLE001
         duration = time.perf_counter() - t0
+        # The handler may still hold token usage from calls made before the error.
+        in_tok, out_tok = _usage_totals(usage_cb)
         return BenchmarkResult(
             scenario_name=scenario.name,
             model=model_name,
@@ -159,6 +236,10 @@ async def run_scenario(
             retries=0,
             value=None,
             error=str(exc),
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            schema_name=scenario.schema.__name__,
+            failure_reason="exception",
         )
 
 

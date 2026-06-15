@@ -5,39 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-## [0.2.0] - 2026-06-12
-
-First public release on PyPI.
-
-### Changed
-
-- **Project renamed to `saidex`** (Structured AI Data EXtraction) — formerly
-  `llm-structured-output`. Install with `pip install saidex`, import with
-  `from saidex import ...`.
-- License simplified to plain Apache 2.0 — the additional attribution
-  requirement in `NOTICE` has been removed.
-
-### Added
-
-- **Agentic tool loop**: `extract_with_tools()` and `run_agent_loop()` let the
-  LLM call caller-supplied `Tool`s (lookups, side effects, …) in a loop before
-  producing a validated final answer. Returns `AgentRunStats` with
-  `iterations`, `tool_calls`, `validation_retries`, and `fallback_used`.
-- `Tool` dataclass: wrap an async handler + Pydantic parameter schema; argument
-  validation and error reporting back to the LLM are handled automatically.
-- `ExtractionMode` enum with `TOOL_CALLING` (default) and `JSON` modes
-- `mode` parameter on `get_structured_data()` and `extract_from_text()` to run
-  extraction without tool calling — the schema's JSON Schema is injected into
-  the prompt and the model's raw JSON reply is parsed and validated. Works with
-  any chat model, including local models without tool-calling support.
-- Tolerant JSON-mode parsing: strips markdown code fences, chain-of-thought
-  `<think>` blocks (Qwen3, DeepSeek-R1, …), and stray text around the JSON
-  object; repairs truncated/malformed JSON via `json-repair`.
-- `examples/07_json_mode.py` and `docs/extraction-modes.md`
-
-## [0.1.0] - 2026-06-03
 
 ### Added
 
@@ -56,3 +23,46 @@ First public release on PyPI.
 [Unreleased]: https://github.com/mlauf-labs/saidex/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.1.0
+
+## v0.3.0 (2026-06-15)
+
+### BREAKING CHANGE
+
+- the int/str/comparison shims on ExtractDataStats were
+removed. Use stats.total_retries instead of int(stats), and stats.success
+instead of comparing stats against an int.
+- The public functions get_structured_data, extract_from_text,
+run_agent_loop, extract_with_tools, their *_sync wrappers, the types
+StructuredOutputStats and AgentRunStats, and the validator alias ISODateStr
+have been renamed. The old names are removed with no compatibility aliases;
+callers must update imports and call sites to the new names.
+
+### Feat
+
+- **extractor**: add external validator callable to all extraction methods
+- **benchmarks**: collect and report field-level extraction stats across the sweep
+- add on_complete hook with optional source-text capture
+- render a markdown report from a FieldIssueSummary
+- aggregate field issues across runs into a per-schema summary
+- enrich extraction stats with success, failure reason, and field issues
+- **extractor**: add batch extraction returning list[ModelT]
+- unify public API names to extract_data*/run_extractor_agent scheme
+- **api**: add sync wrappers for the agent loop
+- **api**: add synchronous extraction wrappers
+- **benchmarks**: add validators, make schema fields required, rename company fields
+
+### Fix
+
+- **docs**: replace uv pip install --system with pip install
+
+## v0.2.0 (2026-06-13)
+
+### Feat
+
+- switch release target to production PyPI, reset version to 0.2.0
+- initial public release of saidex 0.2.0
+
+### Fix
+
+- correct owner typo mlauff-labs -> mlauf-labs across all files
+- restore canonical Apache-2.0 LICENSE and target TestPyPI

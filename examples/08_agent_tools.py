@@ -1,8 +1,8 @@
-"""Example 8 — Agentic tool loop (extract_with_tools / run_agent_loop).
+"""Example 8 — Agentic tool loop (extract_data_with_tools / run_extractor_agent).
 
 Sometimes an extraction needs more than the text in the prompt: a database
 lookup, an API call, or a resource that must be created first.
-``extract_with_tools`` runs an agent loop in which the LLM may call your
+``extract_data_with_tools`` runs an agent loop in which the LLM may call your
 :class:`saidex.Tool`s any number of times and then delivers a final answer
 validated against your Pydantic schema.
 
@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import Tool, extract_with_tools, run_agent_loop
+from saidex import Tool, extract_data_with_tools, run_extractor_agent
 
 # ---------------------------------------------------------------------------
 # Fake backend the tools will query
@@ -97,7 +97,7 @@ class TicketResolution(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# A) extract_with_tools — task as plain text
+# A) extract_data_with_tools — task as plain text
 # ---------------------------------------------------------------------------
 
 
@@ -111,14 +111,14 @@ async def resolve_ticket_from_text() -> None:
         "Can you tell me what's going on?"
     )
 
-    resolution, stats = await extract_with_tools(
+    resolution, stats = await extract_data_with_tools(
         llm,
         TicketResolution,
         ticket,
         tools=[order_status_tool, customer_tool],
     )
 
-    print("A) extract_with_tools:")
+    print("A) extract_data_with_tools:")
     if resolution is None:
         print(f"   Failed after {stats.iterations} iterations.")
     else:
@@ -131,12 +131,12 @@ async def resolve_ticket_from_text() -> None:
 
 
 # ---------------------------------------------------------------------------
-# B) run_agent_loop — full control over the message list
+# B) run_extractor_agent — full control over the message list
 # ---------------------------------------------------------------------------
 
 
 async def resolve_ticket_with_history() -> None:
-    """Use run_agent_loop when you need to shape the conversation yourself."""
+    """Use run_extractor_agent when you need to shape the conversation yourself."""
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
     messages = [
@@ -150,14 +150,14 @@ async def resolve_ticket_with_history() -> None:
         HumanMessage(content="Customer alice@example.com asks about order ORD-1042."),
     ]
 
-    resolution, stats = await run_agent_loop(
+    resolution, stats = await run_extractor_agent(
         llm,
         TicketResolution,
         messages,
         tools=[order_status_tool, customer_tool],
     )
 
-    print("\nB) run_agent_loop with custom history:")
+    print("\nB) run_extractor_agent with custom history:")
     if resolution is None:
         print(f"   Failed after {stats.iterations} iterations.")
     else:

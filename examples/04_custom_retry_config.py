@@ -16,7 +16,7 @@ import asyncio
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import RetryConfig, create_instance_safe, extract_from_text
+from saidex import RetryConfig, create_instance_safe, extract_data_from_text
 
 # ---------------------------------------------------------------------------
 # Custom retry config: more patient with rate limits, fewer transient retries
@@ -107,7 +107,7 @@ async def main() -> None:
     # callbacks = [CallbackHandler()]
     callbacks = None
 
-    review, stats = await extract_from_text(
+    review, stats = await extract_data_from_text(
         llm,
         ProductReview,
         review_text,

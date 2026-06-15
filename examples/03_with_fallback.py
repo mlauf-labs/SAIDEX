@@ -15,7 +15,7 @@ from typing import Annotated
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 # ---------------------------------------------------------------------------
 # Complex schema (more likely to trip up smaller models)
@@ -70,7 +70,7 @@ async def main() -> None:
     # Fallback: more capable model used only when primary fails
     fallback = ChatOpenAI(model="gpt-4o", temperature=0)
 
-    report, stats = await extract_from_text(
+    report, stats = await extract_data_from_text(
         primary,
         FinancialReport,
         REPORT_TEXT,

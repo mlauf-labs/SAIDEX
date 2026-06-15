@@ -45,7 +45,7 @@ benchmarks = ["langchain-openai>=0.1.0", "Pillow>=10.0"]
 
 [project.urls]
 Homepage = "https://github.com/mlauf-labs/saidex"
-Documentation = "https://mlauf-labs.github.io/saidex/"
+Documentation = "https://mlauf-labs.github.io/SAIDEX/"
 Repository = "https://github.com/mlauf-labs/saidex"
 "Bug Tracker" = "https://github.com/mlauf-labs/saidex/issues"
 Changelog = "https://github.com/mlauf-labs/saidex/blob/main/CHANGELOG.md"
@@ -81,7 +81,7 @@ ignore_missing_imports = true
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.2.0"
+version = "0.3.0"
 version_provider = "commitizen"
 tag_format = "v$version"
 update_changelog_on_bump = true

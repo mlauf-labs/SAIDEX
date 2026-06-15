@@ -2,7 +2,7 @@
 
 → [Documentation index](index.md)
 
-`extract_with_tools` and `run_agent_loop` extend structured extraction with an
+`extract_data_with_tools` and `run_extractor_agent` extend structured extraction with an
 **agentic tool loop**: the LLM may call caller-supplied tools any number of
 times — look up data, create resources, trigger side effects — and then
 delivers a final answer that is validated against your Pydantic schema.
@@ -16,7 +16,7 @@ Use it when the answer cannot be produced from the prompt text alone:
 - the extraction requires a decision based on intermediate lookups.
 
 If the model only needs to read the text you already have, use
-[`extract_from_text` / `get_structured_data`](extraction.md) instead — they
+[`extract_data_from_text` / `extract_data`](extraction.md) instead — they
 are simpler and cheaper.
 
 ---
@@ -27,7 +27,7 @@ are simpler and cheaper.
 import asyncio
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
-from saidex import Tool, extract_with_tools
+from saidex import Tool, extract_data_with_tools
 
 # 1. Describe the tool's arguments with a Pydantic model
 class OrderStatusArgs(BaseModel):
@@ -54,7 +54,7 @@ class TicketResolution(BaseModel):
 async def main() -> None:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-    resolution, stats = await extract_with_tools(
+    resolution, stats = await extract_data_with_tools(
         llm,
         TicketResolution,
         "Customer asks: where is my order ORD-1042?",
@@ -155,7 +155,7 @@ search = Tool(
 
 ---
 
-## `extract_with_tools` parameters
+## `extract_data_with_tools` parameters
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -171,20 +171,20 @@ search = Tool(
 | `max_validation_retries` | `int` | `3` | Max final answers that may fail validation |
 | `retry_config` | `RetryConfig \| None` | `DEFAULT_RETRY_CONFIG` | Network retry settings |
 
-**Returns:** `tuple[ModelT | None, AgentRunStats]`
+**Returns:** `tuple[ModelT | None, ExtractorRunStats]`
 
 ---
 
-## `run_agent_loop` — full message control
+## `run_extractor_agent` — full message control
 
-`extract_with_tools` builds `[SystemMessage, HumanMessage]` for you.
+`extract_data_with_tools` builds `[SystemMessage, HumanMessage]` for you.
 When you need precise control over the conversation — multi-turn history,
-few-shot examples, previously gathered context — use `run_agent_loop` with the
+few-shot examples, previously gathered context — use `run_extractor_agent` with the
 same parameters but a ready-built message list:
 
 ```python
 from langchain_core.messages import HumanMessage, SystemMessage
-from saidex import run_agent_loop
+from saidex import run_extractor_agent
 
 messages = [
     SystemMessage(content="You are the filing assistant for project X."),
@@ -192,7 +192,7 @@ messages = [
     HumanMessage(content="File this document: 'Service agreement with ACME...'"),
 ]
 
-decision, stats = await run_agent_loop(
+decision, stats = await run_extractor_agent(
     llm, FilingDecision, messages, tools=[create_folder, list_folders]
 )
 ```
@@ -214,15 +214,15 @@ see [Extraction Modes](extraction-modes.md).
 
 ## Fallback model
 
-Like `get_structured_data`, the loop accepts a `fallback_llm_model`. When the
+Like `extract_data`, the loop accepts a `fallback_llm_model`. When the
 primary model exhausts `max_iterations` (or `max_validation_retries`) without
 a valid final answer, the fallback model starts over with a fresh conversation
 built from the original messages plus a brief hint that a previous attempt
-failed. The returned `AgentRunStats` are the **sum of both attempts** with
+failed. The returned `ExtractorRunStats` are the **sum of both attempts** with
 `fallback_used=True`.
 
 ```python
-resolution, stats = await extract_with_tools(
+resolution, stats = await extract_data_with_tools(
     cheap_llm,
     TicketResolution,
     task_text,
@@ -233,7 +233,7 @@ resolution, stats = await extract_with_tools(
 
 ---
 
-## `AgentRunStats`
+## `ExtractorRunStats`
 
 | Field | Type | Meaning |
 | --- | --- | --- |
@@ -242,8 +242,27 @@ resolution, stats = await extract_with_tools(
 | `validation_retries` | `int` | Final answers that failed schema validation |
 | `fallback_used` | `bool` | Whether the fallback model was invoked |
 
-`AgentRunStats` instances support `+` to merge (used internally to combine
+`ExtractorRunStats` instances support `+` to merge (used internally to combine
 primary and fallback attempts).
+
+---
+
+## Synchronous usage
+
+Both functions are async, but each has a synchronous wrapper —
+`extract_data_with_tools_sync` and `run_extractor_agent_sync` — for callers outside an
+event loop:
+
+```python
+from saidex import extract_data_with_tools_sync
+
+result, stats = extract_data_with_tools_sync(llm, MySchema, text, tools=[my_tool])
+```
+
+The wrappers take the same arguments and return the same `(model, stats)` tuple
+as the async versions, delegating via `asyncio.run`. They must **not** be called
+from within a running event loop — if one is detected they raise a clear
+`RuntimeError`. See [Observability → Async and sync usage](observability.md#async-and-sync-usage).
 
 ---
 

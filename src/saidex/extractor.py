@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any, TypeVar
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from json_repair import repair_json
 from langchain_core.messages.base import BaseMessage
@@ -14,11 +17,17 @@ from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.system import SystemMessage
 from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 
-from .models import AgentRunStats, ExtractionMode, StructuredOutputStats
+from .models import (
+    ExtractDataStats,
+    ExtractionEvent,
+    ExtractionMode,
+    ExtractorRunStats,
+    FieldIssue,
+)
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
-from .utils import create_instance_safe
+from .utils import create_instance_with_issues
 
 if TYPE_CHECKING:
     from .tools import Tool
@@ -27,8 +36,104 @@ logger = logging.getLogger(__name__)
 
 MODEL_T = TypeVar("MODEL_T", bound=BaseModel)
 
+#: Signature of an ``on_complete`` hook: an async callable receiving a single
+#: :class:`~saidex.models.ExtractionEvent`.
+OnComplete = Callable[[ExtractionEvent], Awaitable[None]]
 
-async def get_structured_data(
+#: Signature of an external ``validator``: a sync **or** async callable that
+#: receives the freshly validated model instance and either accepts it (returns
+#: ``None`` / an empty string) or rejects it (returns a non-empty error message
+#: or raises an exception).  A rejection re-enters the existing field-level retry
+#: loop with the message surfaced to the model, exactly like a Pydantic failure.
+Validator = Callable[[MODEL_T], "str | None | Awaitable[str | None]"]
+
+
+def _external_validator_issue(schema_name: str, message: str, attempt: int) -> FieldIssue:
+    """Build a :class:`~saidex.models.FieldIssue` for an external-validator rejection."""
+    return FieldIssue(
+        schema_name=schema_name,
+        field_path="<external validator>",
+        category="value",
+        error_type="external_validator",
+        message=message,
+        attempt=attempt,
+        received=None,
+    )
+
+
+async def _run_external_validator(
+    validator: Validator[MODEL_T] | None,
+    instance: MODEL_T,
+    schema_name: str,
+) -> str | None:
+    """Run an optional external *validator* against a validated *instance*.
+
+    The validator may be sync or async.  It signals rejection either by raising
+    any exception or by returning a non-empty string; both are turned into a
+    human-readable message suitable for feeding back to the model.
+
+    Args:
+        validator: The caller-supplied validation callable, or ``None``.
+        instance: The instance that already passed Pydantic validation.
+        schema_name: Used to build a fallback message when an exception carries
+            no text of its own.
+
+    Returns:
+        ``None`` when the instance is accepted, otherwise the rejection message.
+    """
+    if validator is None:
+        return None
+    try:
+        outcome = validator(instance)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+    except Exception as exc:  # noqa: BLE001 — any raise is a deliberate rejection
+        return (
+            str(exc) or f"{exc.__class__.__name__} raised by external validator for {schema_name}"
+        )
+    if outcome:
+        return str(outcome)
+    return None
+
+
+def _source_text_from_messages(messages: list[BaseMessage]) -> str:
+    """Concatenate the human-turn text content of *messages*.
+
+    Used to populate :attr:`ExtractionEvent.source_text` when the caller opts in
+    via ``capture_source_text``.  Multimodal (list) content keeps only its text
+    parts; non-text parts (e.g. images) are skipped.
+    """
+    parts: list[str] = []
+    for message in messages:
+        if message.__class__.__name__ != "HumanMessage":
+            continue
+        content = message.content
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for part in content:
+                if isinstance(part, str):
+                    parts.append(part)
+                elif isinstance(part, dict) and part.get("type") == "text":
+                    parts.append(str(part.get("text", "")))
+    return "\n".join(p for p in parts if p)
+
+
+async def _emit_completion(on_complete: OnComplete | None, event: ExtractionEvent) -> None:
+    """Invoke an ``on_complete`` hook, isolating any error it raises.
+
+    A failing hook must never break the extraction it is observing, so its
+    exceptions are logged and swallowed.
+    """
+    if on_complete is None:
+        return
+    try:
+        await on_complete(event)
+    except Exception as exc:  # noqa: BLE001 — observers must not break the run
+        logger.error("on_complete hook raised and was suppressed: %s", exc)
+
+
+async def extract_data(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
@@ -39,7 +144,10 @@ async def get_structured_data(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, StructuredOutputStats]:
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
+) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a LangChain message list.
 
     Depending on *mode*, the function either drives the LLM via tool-calling
@@ -84,23 +192,39 @@ async def get_structured_data(
             model (default 3).
         retry_config: Network-level retry config (rate limits, timeouts).
             Defaults to :data:`~saidex.retry.DEFAULT_RETRY_CONFIG`.
+        on_complete: Optional async hook invoked exactly once when the run ends
+            (success or failure), receiving an
+            :class:`~saidex.models.ExtractionEvent`.  Exceptions it raises are
+            logged and suppressed so they cannot break the extraction.
+        capture_source_text: When ``True``, the human-turn text of *messages* is
+            stored on ``stats.source_text`` and passed to *on_complete*.  Off by
+            default to avoid retaining potentially sensitive input.
+        validator: Optional external validation callable (sync or async).  After
+            the model passes Pydantic validation it is handed to *validator*,
+            which accepts it by returning ``None`` or rejects it by returning a
+            non-empty error string or raising.  A rejection re-enters the same
+            field-level retry loop with the message surfaced to the model, so it
+            can correct cross-field, stateful, or reference-data problems that
+            Pydantic alone cannot express.
 
     Returns:
         A tuple of ``(model_instance, stats)``:
 
         - *model_instance* is the validated :class:`~pydantic.BaseModel` instance,
           or ``None`` when all attempts failed.
-        - *stats* is a :class:`~saidex.models.StructuredOutputStats`
-          object.  Use ``int(stats)`` for the total retry count (backward compatible).
+        - *stats* is a :class:`~saidex.models.ExtractDataStats`
+          object.  Check ``stats.success`` for the outcome and
+          ``stats.total_retries`` for the retry count.
 
     Example::
 
-        result, stats = await get_structured_data(llm, MySchema, messages)
-        if result is None:
-            print(f"Extraction failed after {stats.total_retries} retries")
+        result, stats = await extract_data(llm, MySchema, messages)
+        if not stats.success:
+            print(f"Extraction failed ({stats.failure_reason}) after "
+                  f"{stats.total_retries} retries; problem fields: {stats.problem_fields}")
 
         # Without tool calling:
-        result, stats = await get_structured_data(
+        result, stats = await extract_data(
             llm, MySchema, messages, mode=ExtractionMode.JSON
         )
     """
@@ -114,7 +238,25 @@ async def get_structured_data(
         mode.value,
     )
 
-    result, primary_retries, _ = await _try_with_model(
+    async def _finish(
+        result: MODEL_T | None, stats: ExtractDataStats
+    ) -> tuple[MODEL_T | None, ExtractDataStats]:
+        source_text = _source_text_from_messages(original_messages) if capture_source_text else None
+        if source_text is not None:
+            stats = replace(stats, source_text=source_text)
+        await _emit_completion(
+            on_complete,
+            ExtractionEvent(
+                schema_name=schema.__name__,
+                result=result,
+                stats=stats,
+                messages=original_messages,
+                source_text=source_text,
+            ),
+        )
+        return result, stats
+
+    primary = await _try_with_model(
         llm_model=llm_model,
         schema=schema,
         messages=list(original_messages),
@@ -123,15 +265,25 @@ async def get_structured_data(
         model_label="primary",
         retry_config=effective_retry_config,
         mode=mode,
+        validator=validator,
     )
 
-    if result is not None:
-        return result, StructuredOutputStats(primary_retries=primary_retries)
+    if primary.instance is not None:
+        return await _finish(
+            primary.instance,
+            ExtractDataStats(
+                primary_retries=primary.retries,
+                success=True,
+                schema_name=schema.__name__,
+                format_errors=primary.format_errors,
+                field_issues=tuple(primary.field_issues),
+            ),
+        )
 
     if fallback_llm_model is not None:
         logger.info(
             "Primary model exhausted %d retries for %s — switching to fallback.",
-            primary_retries,
+            primary.retries,
             schema.__name__,
         )
         fallback_messages = list(original_messages)
@@ -139,14 +291,14 @@ async def get_structured_data(
             HumanMessage(
                 content=(
                     f"A previous attempt to produce structured output for "
-                    f"'{schema.__name__}' failed after {primary_retries} retries. "
+                    f"'{schema.__name__}' failed after {primary.retries} retries. "
                     f"Please try again carefully, ensuring your response strictly "
                     f"follows the required JSON schema."
                 )
             )
         )
 
-        result, fallback_retries, _ = await _try_with_model(
+        fallback = await _try_with_model(
             llm_model=fallback_llm_model,
             schema=schema,
             messages=fallback_messages,
@@ -155,38 +307,65 @@ async def get_structured_data(
             model_label="fallback",
             retry_config=effective_retry_config,
             mode=mode,
+            validator=validator,
         )
 
-        if result is not None:
+        combined_issues = (*primary.field_issues, *fallback.field_issues)
+        combined_format_errors = primary.format_errors + fallback.format_errors
+
+        if fallback.instance is not None:
             logger.info("Fallback model succeeded for %s.", schema.__name__)
-            return result, StructuredOutputStats(
-                primary_retries=primary_retries,
-                fallback_retries=fallback_retries,
-                fallback_used=True,
+            return await _finish(
+                fallback.instance,
+                ExtractDataStats(
+                    primary_retries=primary.retries,
+                    fallback_retries=fallback.retries,
+                    fallback_used=True,
+                    success=True,
+                    schema_name=schema.__name__,
+                    format_errors=combined_format_errors,
+                    field_issues=combined_issues,
+                ),
             )
 
         logger.error(
             "Both primary and fallback models failed for %s (%d + %d = %d total retries).",
             schema.__name__,
-            primary_retries,
-            fallback_retries,
-            primary_retries + fallback_retries,
+            primary.retries,
+            fallback.retries,
+            primary.retries + fallback.retries,
         )
-        return None, StructuredOutputStats(
-            primary_retries=primary_retries,
-            fallback_retries=fallback_retries,
-            fallback_used=True,
+        return await _finish(
+            None,
+            ExtractDataStats(
+                primary_retries=primary.retries,
+                fallback_retries=fallback.retries,
+                fallback_used=True,
+                schema_name=schema.__name__,
+                failure_reason=fallback.failure_reason or primary.failure_reason,
+                format_errors=combined_format_errors,
+                field_issues=combined_issues,
+            ),
         )
 
     logger.error(
         "Structured output failed for %s after %d retries (no fallback configured).",
         schema.__name__,
-        primary_retries,
+        primary.retries,
     )
-    return None, StructuredOutputStats(primary_retries=primary_retries)
+    return await _finish(
+        None,
+        ExtractDataStats(
+            primary_retries=primary.retries,
+            schema_name=schema.__name__,
+            failure_reason=primary.failure_reason,
+            format_errors=primary.format_errors,
+            field_issues=tuple(primary.field_issues),
+        ),
+    )
 
 
-async def extract_from_text(
+async def extract_data_from_text(
     llm_model: Any,
     schema: type[MODEL_T],
     text: str,
@@ -198,10 +377,13 @@ async def extract_from_text(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, StructuredOutputStats]:
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
+) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a plain text string.
 
-    Convenience wrapper around :func:`get_structured_data` that converts
+    Convenience wrapper around :func:`extract_data` that converts
     *text* into a single :class:`~langchain_core.messages.HumanMessage` (with
     an optional :class:`~langchain_core.messages.SystemMessage` prepended).
 
@@ -218,13 +400,17 @@ async def extract_from_text(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+        capture_source_text: When ``True``, *text* is stored on
+            ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable — see :func:`extract_data`.
 
     Returns:
-        Same as :func:`get_structured_data`.
+        Same as :func:`extract_data`.
 
     Example::
 
-        result, stats = await extract_from_text(
+        result, stats = await extract_data_from_text(
             llm,
             PersonSchema,
             "Alice is 30 years old and works as an engineer.",
@@ -242,7 +428,7 @@ async def extract_from_text(
         HumanMessage(content=text),
     ]
 
-    return await get_structured_data(
+    return await extract_data(
         llm_model=llm_model,
         schema=schema,
         messages=messages,
@@ -252,10 +438,242 @@ async def extract_from_text(
         max_primary_retries=max_primary_retries,
         max_fallback_retries=max_fallback_retries,
         retry_config=retry_config,
+        on_complete=on_complete,
+        capture_source_text=capture_source_text,
+        validator=validator,
     )
 
 
-async def extract_with_tools(
+def _build_list_container(schema: type[MODEL_T]) -> type[BaseModel]:
+    """Build a single-field wrapper model holding ``items: list[schema]``.
+
+    Batch extraction reuses the entire single-item machinery (tool calling /
+    JSON mode, validation, field-level error feedback, retries, fallback) by
+    asking the model to fill one container schema whose only field is a list of
+    the target items.  Per-item validation errors surface with paths like
+    ``items -> 0 -> price`` so the existing error formatter guides the model
+    straight to the offending record.
+
+    Args:
+        schema: The Pydantic ``BaseModel`` subclass describing a single item.
+
+    Returns:
+        A dynamically created ``BaseModel`` subclass with one required field
+        ``items`` of type ``list[schema]``.
+    """
+    container: type[BaseModel] = create_model(
+        f"{schema.__name__}List",
+        items=(
+            list[schema],  # type: ignore[valid-type]
+            Field(description=f"All '{schema.__name__}' items found in the input, in order."),
+        ),
+    )
+    container.__doc__ = f"A list of '{schema.__name__}' items extracted from the input."
+    return container
+
+
+async def extract_data_list(
+    llm_model: Any,
+    schema: type[MODEL_T],
+    messages: list[BaseMessage],
+    *,
+    mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    callbacks: list[Any] | None = None,
+    fallback_llm_model: Any = None,
+    max_primary_retries: int = 3,
+    max_fallback_retries: int = 3,
+    retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
+) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
+    """Extract a list of validated Pydantic models from a message list.
+
+    The batch counterpart of :func:`extract_data`.  Use it when a single
+    document contains several repeated records — invoice line items, multiple
+    people in a transcript, several products on a page — and you want them all
+    in one LLM call, precisely typed as ``list[ModelT]``.
+
+    Internally the *schema* is wrapped in a one-field container model
+    (``items: list[schema]``) and driven through the exact same extraction
+    pipeline as :func:`extract_data`, so tool-calling and
+    :attr:`~saidex.ExtractionMode.JSON` modes, per-item Pydantic validation,
+    field-level error feedback, validation retries and the optional fallback
+    model all apply unchanged.
+
+    Args:
+        llm_model: Any LangChain-compatible chat model.
+        schema: The Pydantic ``BaseModel`` subclass describing **one** item.
+        messages: Conversation history passed to the model.  Must contain at
+            least one message describing what to extract.
+        mode: Which extraction strategy to use.  Defaults to
+            :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
+        callbacks: Optional LangChain callback handlers.
+        fallback_llm_model: Optional fallback model.
+        max_primary_retries: Validation retries for the primary model.
+        max_fallback_retries: Validation retries for the fallback model.
+        retry_config: Network-level retry configuration.
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+            Fires once with the list result and the item schema name.
+        capture_source_text: When ``True``, the human-turn text is stored on
+            ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable run on **each** extracted
+            item (sync or async).  Any item it rejects re-enters the shared retry
+            loop with a per-item message (e.g. ``items -> 2: …``) surfaced to the
+            model.  See :func:`extract_data`.
+
+    Returns:
+        A tuple of ``(items, stats)``:
+
+        - *items* is a ``list`` of validated *schema* instances (possibly
+          empty when the document contains no records), or ``None`` when all
+          attempts failed.
+        - *stats* is a :class:`~saidex.models.ExtractDataStats` whose
+          ``item_count`` reflects how many items were returned.
+
+    Example::
+
+        lines, stats = await extract_data_list(llm, InvoiceLine, messages)
+        if lines is not None:
+            print(f"Extracted {stats.item_count} line items")
+    """
+    container = _build_list_container(schema)
+
+    container_validator: Validator[BaseModel] | None = None
+    if validator is not None:
+        item_validator = validator
+
+        async def _validate_each_item(container_instance: BaseModel) -> str | None:
+            """Run the item *validator* over every container item, joining failures."""
+            errors: list[str] = []
+            for index, item in enumerate(cast(Any, container_instance).items):
+                item_error = await _run_external_validator(item_validator, item, schema.__name__)
+                if item_error is not None:
+                    errors.append(f"items -> {index}: {item_error}")
+            return "\n".join(errors) if errors else None
+
+        container_validator = _validate_each_item
+
+    # The inner call must not fire the hook: it would report the internal
+    # ``…List`` container and the wrapper instance instead of the list result.
+    result, stats = await extract_data(
+        llm_model=llm_model,
+        schema=container,
+        messages=messages,
+        mode=mode,
+        callbacks=callbacks,
+        fallback_llm_model=fallback_llm_model,
+        max_primary_retries=max_primary_retries,
+        max_fallback_retries=max_fallback_retries,
+        retry_config=retry_config,
+        capture_source_text=capture_source_text,
+        validator=container_validator,
+    )
+    # Report the item schema name (not the internal ``…List`` container) so the
+    # stats group under the schema the caller actually passed.
+    item_issues = tuple(replace(i, schema_name=schema.__name__) for i in stats.field_issues)
+    stats = replace(stats, schema_name=schema.__name__, field_issues=item_issues)
+    items: list[MODEL_T] | None = None if result is None else cast(Any, result).items
+    if items is not None:
+        stats = replace(stats, item_count=len(items))
+
+    await _emit_completion(
+        on_complete,
+        ExtractionEvent(
+            schema_name=schema.__name__,
+            result=cast("BaseModel | list[BaseModel] | None", items),
+            stats=stats,
+            messages=list(messages),
+            source_text=stats.source_text,
+        ),
+    )
+    return items, stats
+
+
+async def extract_data_list_from_text(
+    llm_model: Any,
+    schema: type[MODEL_T],
+    text: str,
+    *,
+    mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    system_prompt: str | None = None,
+    callbacks: list[Any] | None = None,
+    fallback_llm_model: Any = None,
+    max_primary_retries: int = 3,
+    max_fallback_retries: int = 3,
+    retry_config: RetryConfig | None = None,
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
+) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
+    """Extract a list of validated Pydantic models from a plain text string.
+
+    Convenience wrapper around :func:`extract_data_list` that converts *text*
+    into a single :class:`~langchain_core.messages.HumanMessage` (with an
+    optional :class:`~langchain_core.messages.SystemMessage` prepended).  The
+    default system prompt instructs the model to return **every** matching
+    record rather than a single one.
+
+    Args:
+        llm_model: Any LangChain-compatible chat model.
+        schema: The Pydantic ``BaseModel`` subclass describing **one** item.
+        text: The text to analyse.
+        mode: Which extraction strategy to use (tool calling or raw JSON).
+            Defaults to :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
+        system_prompt: Optional system instruction prepended to the message
+            list.  When omitted a generic list-extraction prompt is used.
+        callbacks: Optional LangChain callback handlers.
+        fallback_llm_model: Optional fallback model.
+        max_primary_retries: Validation retries for the primary model.
+        max_fallback_retries: Validation retries for the fallback model.
+        retry_config: Network-level retry configuration.
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+        capture_source_text: When ``True``, *text* is stored on
+            ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable run on each item — see
+            :func:`extract_data_list`.
+
+    Returns:
+        Same as :func:`extract_data_list`.
+
+    Example::
+
+        items, stats = await extract_data_list_from_text(
+            llm,
+            InvoiceLine,
+            "2x Widget @ 9.99, 1x Gadget @ 19.99",
+        )
+    """
+    effective_system = system_prompt or (
+        f"You are a precise data-extraction assistant. "
+        f"Extract every '{schema.__name__}' record present in the user's text and "
+        f"return them all as a list — one entry per record, in the order they appear. "
+        f"Do not merge, deduplicate, or omit records. "
+        f"Return only the structured data — no explanations."
+    )
+
+    messages: list[BaseMessage] = [
+        SystemMessage(content=effective_system),
+        HumanMessage(content=text),
+    ]
+
+    return await extract_data_list(
+        llm_model=llm_model,
+        schema=schema,
+        messages=messages,
+        mode=mode,
+        callbacks=callbacks,
+        fallback_llm_model=fallback_llm_model,
+        max_primary_retries=max_primary_retries,
+        max_fallback_retries=max_fallback_retries,
+        retry_config=retry_config,
+        on_complete=on_complete,
+        capture_source_text=capture_source_text,
+        validator=validator,
+    )
+
+
+async def extract_data_with_tools(
     llm_model: Any,
     schema: type[MODEL_T],
     text: str,
@@ -268,7 +686,10 @@ async def extract_with_tools(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, AgentRunStats]:
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
+) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Run an agentic tool-loop to produce a validated Pydantic model.
 
     The LLM may call any of the caller-supplied *tools* freely in a loop (e.g. to
@@ -299,14 +720,20 @@ async def extract_with_tools(
         max_validation_retries: Max times the final-answer schema may fail
             validation before giving up (default 3).
         retry_config: Network-level retry configuration.
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+        capture_source_text: When ``True``, *text* is stored on
+            ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable applied to the final
+            answer (sync or async).  A rejection keeps the agent loop running
+            with the message surfaced to the model — see :func:`extract_data`.
 
     Returns:
-        ``(model_instance, AgentRunStats)`` — *model_instance* is ``None`` on
+        ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
         failure.
 
     Example::
 
-        result, stats = await extract_with_tools(
+        result, stats = await extract_data_with_tools(
             llm,
             FolderDecision,
             document_summary,
@@ -324,7 +751,7 @@ async def extract_with_tools(
         SystemMessage(content=effective_system),
         HumanMessage(content=text),
     ]
-    return await run_agent_loop(
+    return await run_extractor_agent(
         llm_model=llm_model,
         schema=schema,
         messages=messages,
@@ -335,10 +762,13 @@ async def extract_with_tools(
         max_iterations=max_iterations,
         max_validation_retries=max_validation_retries,
         retry_config=retry_config,
+        on_complete=on_complete,
+        capture_source_text=capture_source_text,
+        validator=validator,
     )
 
 
-async def run_agent_loop(
+async def run_extractor_agent(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
@@ -350,10 +780,13 @@ async def run_agent_loop(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, AgentRunStats]:
+    on_complete: OnComplete | None = None,
+    capture_source_text: bool = False,
+    validator: Validator[MODEL_T] | None = None,
+) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Low-level agent loop that accepts a full message list.
 
-    Identical to :func:`extract_with_tools` but receives an already-built
+    Identical to :func:`extract_data_with_tools` but receives an already-built
     ``messages`` list instead of building ``[SystemMessage, HumanMessage]``
     internally.  Use this when you need precise control over the conversation
     history (e.g. multi-turn scenarios or injecting previous context).
@@ -363,14 +796,39 @@ async def run_agent_loop(
     fallback model receives a fresh conversation starting from the original
     messages with a brief hint.
 
+    Args:
+        on_complete: Optional async completion hook — see :func:`extract_data`.
+        capture_source_text: When ``True``, the human-turn text of *messages* is
+            stored on ``stats.source_text`` and passed to *on_complete*.
+        validator: Optional external validation callable applied to the final
+            answer — see :func:`extract_data_with_tools`.
+
     Returns:
-        ``(model_instance, AgentRunStats)`` — *model_instance* is ``None`` on
+        ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
         failure.
     """
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
     original_messages = list(messages)
 
-    result, primary_stats = await _run_agent_loop_with_model(
+    async def _finish(
+        result: MODEL_T | None, stats: ExtractorRunStats
+    ) -> tuple[MODEL_T | None, ExtractorRunStats]:
+        source_text = _source_text_from_messages(original_messages) if capture_source_text else None
+        if source_text is not None:
+            stats = replace(stats, source_text=source_text)
+        await _emit_completion(
+            on_complete,
+            ExtractionEvent(
+                schema_name=schema.__name__,
+                result=result,
+                stats=stats,
+                messages=original_messages,
+                source_text=source_text,
+            ),
+        )
+        return result, stats
+
+    result, primary_stats = await _run_extractor_agent_with_model(
         llm_model=llm_model,
         schema=schema,
         messages=list(original_messages),
@@ -381,10 +839,11 @@ async def run_agent_loop(
         max_validation_retries=max_validation_retries,
         model_label="primary",
         retry_config=effective_retry_config,
+        validator=validator,
     )
 
     if result is not None:
-        return result, primary_stats
+        return await _finish(result, primary_stats)
 
     if fallback_llm_model is not None:
         logger.info(
@@ -401,7 +860,7 @@ async def run_agent_loop(
                 )
             )
         )
-        result, fallback_stats = await _run_agent_loop_with_model(
+        result, fallback_stats = await _run_extractor_agent_with_model(
             llm_model=fallback_llm_model,
             schema=schema,
             messages=fallback_messages,
@@ -412,14 +871,21 @@ async def run_agent_loop(
             max_validation_retries=max_validation_retries,
             model_label="fallback",
             retry_config=effective_retry_config,
+            validator=validator,
         )
-        combined = AgentRunStats(
+        succeeded = result is not None
+        combined = ExtractorRunStats(
             iterations=primary_stats.iterations + fallback_stats.iterations,
             tool_calls=primary_stats.tool_calls + fallback_stats.tool_calls,
             validation_retries=primary_stats.validation_retries + fallback_stats.validation_retries,
             fallback_used=True,
+            success=succeeded,
+            schema_name=schema.__name__,
+            failure_reason=None if succeeded else fallback_stats.failure_reason,
+            format_errors=primary_stats.format_errors + fallback_stats.format_errors,
+            field_issues=(*primary_stats.field_issues, *fallback_stats.field_issues),
         )
-        if result is not None:
+        if succeeded:
             logger.info("Fallback model succeeded for agent loop (%s).", schema.__name__)
         else:
             logger.error(
@@ -427,14 +893,14 @@ async def run_agent_loop(
                 schema.__name__,
                 combined.iterations,
             )
-        return result, combined
+        return await _finish(result, combined)
 
     logger.error(
         "Agent loop failed for %s after %d iterations (no fallback configured).",
         schema.__name__,
         primary_stats.iterations,
     )
-    return None, primary_stats
+    return await _finish(None, primary_stats)
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +908,7 @@ async def run_agent_loop(
 # ---------------------------------------------------------------------------
 
 
-async def _run_agent_loop_with_model(
+async def _run_extractor_agent_with_model(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
@@ -453,7 +919,8 @@ async def _run_agent_loop_with_model(
     max_validation_retries: int,
     model_label: str,
     retry_config: RetryConfig,
-) -> tuple[MODEL_T | None, AgentRunStats]:
+    validator: Validator[MODEL_T] | None = None,
+) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Execute the agent loop with one model; return (instance, stats)."""
     from .tools import Tool as ToolType  # noqa: F401 – used for type clarity only
 
@@ -480,6 +947,21 @@ async def _run_agent_loop_with_model(
     iterations = 0
     total_tool_calls = 0
     validation_retries = 0
+    agent_issues: list[FieldIssue] = []
+    format_errors = 0
+    failure_reason: str | None = None
+
+    def _stats(success: bool, reason: str | None) -> ExtractorRunStats:
+        return ExtractorRunStats(
+            iterations=iterations,
+            tool_calls=total_tool_calls,
+            validation_retries=validation_retries,
+            success=success,
+            schema_name=schema.__name__,
+            failure_reason=None if success else reason,
+            format_errors=format_errors,
+            field_issues=tuple(agent_issues),
+        )
 
     while iterations < max_iterations:
         # ── LLM invocation with network-level retries ─────────────────────
@@ -504,6 +986,7 @@ async def _run_agent_loop_with_model(
                 )
         except Exception as exc:
             logger.error("%s: agent loop LLM invocation error: %s", model_label, exc)
+            failure_reason = "llm_error"
             break
 
         iterations += 1
@@ -522,14 +1005,20 @@ async def _run_agent_loop_with_model(
                 # LLM is done calling tools — parse the response text as JSON.
                 args, format_error = _parse_json_response(response, schema.__name__, model_label)
                 if format_error is not None:
+                    format_errors += 1
+                    failure_reason = "parse_error"
                     if validation_retries >= max_validation_retries:
                         break
                     messages.append(HumanMessage(content=format_error))
                     validation_retries += 1
                     continue
                 assert args is not None
-                instance, error_text = create_instance_safe(schema, **args)
+                instance, attempt_issues, error_text = create_instance_with_issues(schema, **args)
                 if error_text:
+                    agent_issues.extend(
+                        replace(i, attempt=validation_retries) for i in attempt_issues
+                    )
+                    failure_reason = "validation_exhausted"
                     if validation_retries >= max_validation_retries:
                         break
                     logger.warning(
@@ -548,14 +1037,40 @@ async def _run_agent_loop_with_model(
                     )
                     validation_retries += 1
                     continue
-                logger.debug("%s: agent loop JSON final answer validated.", model_label)
-                return instance, AgentRunStats(
-                    iterations=iterations,
-                    tool_calls=total_tool_calls,
-                    validation_retries=validation_retries,
+                assert instance is not None
+                validator_error = await _run_external_validator(
+                    validator, instance, schema.__name__
                 )
+                if validator_error is not None:
+                    agent_issues.append(
+                        _external_validator_issue(
+                            schema.__name__, validator_error, validation_retries
+                        )
+                    )
+                    failure_reason = "validation_exhausted"
+                    if validation_retries >= max_validation_retries:
+                        break
+                    logger.warning(
+                        "%s: agent loop JSON final answer failed external validation: %s",
+                        model_label,
+                        validator_error,
+                    )
+                    messages.append(
+                        HumanMessage(
+                            content=(
+                                f"The JSON output is structurally valid but failed an "
+                                f"additional validation check:\n\n{validator_error}\n\n"
+                                f"Please correct it and return only the fixed JSON object."
+                            )
+                        )
+                    )
+                    validation_retries += 1
+                    continue
+                logger.debug("%s: agent loop JSON final answer validated.", model_label)
+                return instance, _stats(success=True, reason=None)
             else:
                 # TOOL_CALLING mode but no tool calls — ask the LLM to use a tool.
+                failure_reason = "no_tool_call"
                 if validation_retries >= max_validation_retries:
                     break
                 tool_names = ", ".join([t.name for t in tools] + [final_tool_name])
@@ -574,6 +1089,8 @@ async def _run_agent_loop_with_model(
 
         # ── Invalid tool calls without any valid ones ─────────────────────
         if invalid_tool_calls and not tool_calls:
+            format_errors += 1
+            failure_reason = "parse_error"
             if validation_retries >= max_validation_retries:
                 break
             bad = invalid_tool_calls[0]
@@ -621,8 +1138,14 @@ async def _run_agent_loop_with_model(
                     with contextlib.suppress(ValueError, json.JSONDecodeError):
                         tc_args = json.loads(clean)
 
-                instance, error_text = create_instance_safe(schema, **tc_args)
+                instance, attempt_issues, error_text = create_instance_with_issues(
+                    schema, **tc_args
+                )
                 if error_text:
+                    agent_issues.extend(
+                        replace(i, attempt=validation_retries) for i in attempt_issues
+                    )
+                    failure_reason = "validation_exhausted"
                     if validation_retries >= max_validation_retries:
                         tool_result_messages.append(
                             ToolMessage(
@@ -643,11 +1166,43 @@ async def _run_agent_loop_with_model(
                         )
                         validation_retries += 1
                 else:
-                    tool_result_messages.append(
-                        ToolMessage(content="Final answer accepted.", tool_call_id=tc_id)
+                    assert instance is not None
+                    validator_error = await _run_external_validator(
+                        validator, instance, schema.__name__
                     )
-                    found_final_answer = instance
-                    final_answer_valid = True
+                    if validator_error is not None:
+                        agent_issues.append(
+                            _external_validator_issue(
+                                schema.__name__, validator_error, validation_retries
+                            )
+                        )
+                        failure_reason = "validation_exhausted"
+                        if validation_retries >= max_validation_retries:
+                            tool_result_messages.append(
+                                ToolMessage(
+                                    content=f"External validation failed: {validator_error}",
+                                    tool_call_id=tc_id,
+                                )
+                            )
+                        else:
+                            tool_result_messages.append(
+                                ToolMessage(
+                                    content=(
+                                        f"The final answer is structurally valid but failed an "
+                                        f"additional validation check:\n\n{validator_error}\n\n"
+                                        f"Please call '{final_tool_name}' again with corrected "
+                                        f"values."
+                                    ),
+                                    tool_call_id=tc_id,
+                                )
+                            )
+                            validation_retries += 1
+                    else:
+                        tool_result_messages.append(
+                            ToolMessage(content="Final answer accepted.", tool_call_id=tc_id)
+                        )
+                        found_final_answer = instance
+                        final_answer_valid = True
 
             # ── Helper tool ───────────────────────────────────────────────
             else:
@@ -681,11 +1236,7 @@ async def _run_agent_loop_with_model(
                 model_label,
                 schema.__name__,
             )
-            return found_final_answer, AgentRunStats(
-                iterations=iterations,
-                tool_calls=total_tool_calls,
-                validation_retries=validation_retries,
-            )
+            return found_final_answer, _stats(success=True, reason=None)
 
         # Check if we already hit the validation limit for a bad final answer.
         if validation_retries >= max_validation_retries and not final_answer_valid:
@@ -702,11 +1253,27 @@ async def _run_agent_loop_with_model(
         total_tool_calls,
         validation_retries,
     )
-    return None, AgentRunStats(
-        iterations=iterations,
-        tool_calls=total_tool_calls,
-        validation_retries=validation_retries,
-    )
+    return None, _stats(success=False, reason=failure_reason or "validation_exhausted")
+
+
+@dataclass(frozen=True)
+class _ModelAttempt(Generic[MODEL_T]):
+    """Outcome of one single-model extraction attempt loop.
+
+    Attributes:
+        instance: The validated instance, or ``None`` if every attempt failed.
+        retries: Number of validation/format retries consumed.
+        field_issues: Structured field problems seen across all attempts, each
+            tagged with the attempt index in which it occurred.
+        format_errors: Count of pure parse/tool-call (format) failures.
+        failure_reason: Why the loop ended without success, or ``None`` on success.
+    """
+
+    instance: MODEL_T | None
+    retries: int
+    field_issues: list[FieldIssue]
+    format_errors: int
+    failure_reason: str | None
 
 
 async def _try_with_model(
@@ -718,12 +1285,14 @@ async def _try_with_model(
     model_label: str,
     retry_config: RetryConfig,
     mode: ExtractionMode,
-) -> tuple[MODEL_T | None, int, list[BaseMessage]]:
+    validator: Validator[MODEL_T] | None = None,
+) -> _ModelAttempt[MODEL_T]:
     """Attempt structured extraction with one model, with validation retries.
 
     Works in either :attr:`ExtractionMode.TOOL_CALLING` or
-    :attr:`ExtractionMode.JSON` mode.  Returns
-    ``(instance_or_None, retry_count, final_messages)``.
+    :attr:`ExtractionMode.JSON` mode.  Returns a :class:`_ModelAttempt` capturing
+    the instance (or ``None``), the retry count, the structured field issues seen
+    across attempts, the pure parse/format-error count, and a failure reason.
     """
     if mode is ExtractionMode.TOOL_CALLING:
         tool = convert_to_openai_tool(schema)
@@ -742,6 +1311,9 @@ async def _try_with_model(
 
     retries = 0
     remaining = max_retries
+    issues: list[FieldIssue] = []
+    format_errors = 0
+    failure_reason: str | None = None
 
     while remaining > 0:
         # --- LLM invocation with network-level retries ---
@@ -771,7 +1343,7 @@ async def _try_with_model(
                 schema.__name__,
                 exc,
             )
-            return None, retries, messages
+            return _ModelAttempt(None, retries, issues, format_errors, "llm_error")
 
         # --- Extract candidate arguments (mode-specific) ---
         if mode is ExtractionMode.TOOL_CALLING:
@@ -781,6 +1353,8 @@ async def _try_with_model(
 
         if format_error is not None:
             messages.append(HumanMessage(content=format_error))
+            format_errors += 1
+            failure_reason = "parse_error"
             retries += 1
             remaining -= 1
             continue
@@ -788,10 +1362,10 @@ async def _try_with_model(
         # --- Pydantic validation (shared) ---
         assert args is not None
         try:
-            instance, error_text = create_instance_safe(schema, **args)
+            instance, attempt_issues, error_text = create_instance_with_issues(schema, **args)
         except Exception as exc:
             logger.error("%s: unexpected parse error for %s: %s", model_label, schema.__name__, exc)
-            return None, retries, messages
+            return _ModelAttempt(None, retries, issues, format_errors, "parse_error")
 
         if error_text:
             logger.warning(
@@ -802,6 +1376,8 @@ async def _try_with_model(
                 max_retries,
                 error_text,
             )
+            issues.extend(replace(i, attempt=retries) for i in attempt_issues)
+            failure_reason = "validation_exhausted"
             messages.append(
                 HumanMessage(
                     content=(
@@ -816,10 +1392,36 @@ async def _try_with_model(
             remaining -= 1
             continue
 
-        logger.debug("%s: successfully extracted %s.", model_label, schema.__name__)
-        return instance, retries, messages
+        assert instance is not None
+        validator_error = await _run_external_validator(validator, instance, schema.__name__)
+        if validator_error is not None:
+            logger.warning(
+                "%s: external validation failed for %s (attempt %d/%d): %s",
+                model_label,
+                schema.__name__,
+                retries + 1,
+                max_retries,
+                validator_error,
+            )
+            issues.append(_external_validator_issue(schema.__name__, validator_error, retries))
+            failure_reason = "validation_exhausted"
+            messages.append(
+                HumanMessage(
+                    content=(
+                        f"The extracted data is structurally valid but failed an additional "
+                        f"validation check:\n\n{validator_error}\n\n"
+                        f"Return a corrected response that resolves the problem above."
+                    )
+                )
+            )
+            retries += 1
+            remaining -= 1
+            continue
 
-    return None, retries, messages
+        logger.debug("%s: successfully extracted %s.", model_label, schema.__name__)
+        return _ModelAttempt(instance, retries, issues, format_errors, None)
+
+    return _ModelAttempt(None, retries, issues, format_errors, failure_reason)
 
 
 # ---------------------------------------------------------------------------
