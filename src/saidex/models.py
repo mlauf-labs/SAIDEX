@@ -36,11 +36,14 @@ class ExtractDataStats:
         primary_retries: Number of retries against the primary model.
         fallback_retries: Number of retries against the fallback model.
         fallback_used: Whether the fallback model was invoked at all.
+        item_count: Number of items returned by a batch (``extract_data_list``)
+            call.  Always ``0`` for single-item extraction.
     """
 
     primary_retries: int = 0
     fallback_retries: int = 0
     fallback_used: bool = False
+    item_count: int = 0
 
     @property
     def total_retries(self) -> int:

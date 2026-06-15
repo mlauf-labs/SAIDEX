@@ -6,7 +6,8 @@ import contextlib
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, Any, TypeVar
+from dataclasses import replace
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from json_repair import repair_json
 from langchain_core.messages.base import BaseMessage
@@ -14,7 +15,7 @@ from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.system import SystemMessage
 from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, create_model
 
 from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
@@ -243,6 +244,178 @@ async def extract_data_from_text(
     ]
 
     return await extract_data(
+        llm_model=llm_model,
+        schema=schema,
+        messages=messages,
+        mode=mode,
+        callbacks=callbacks,
+        fallback_llm_model=fallback_llm_model,
+        max_primary_retries=max_primary_retries,
+        max_fallback_retries=max_fallback_retries,
+        retry_config=retry_config,
+    )
+
+
+def _build_list_container(schema: type[MODEL_T]) -> type[BaseModel]:
+    """Build a single-field wrapper model holding ``items: list[schema]``.
+
+    Batch extraction reuses the entire single-item machinery (tool calling /
+    JSON mode, validation, field-level error feedback, retries, fallback) by
+    asking the model to fill one container schema whose only field is a list of
+    the target items.  Per-item validation errors surface with paths like
+    ``items -> 0 -> price`` so the existing error formatter guides the model
+    straight to the offending record.
+
+    Args:
+        schema: The Pydantic ``BaseModel`` subclass describing a single item.
+
+    Returns:
+        A dynamically created ``BaseModel`` subclass with one required field
+        ``items`` of type ``list[schema]``.
+    """
+    container: type[BaseModel] = create_model(
+        f"{schema.__name__}List",
+        items=(
+            list[schema],  # type: ignore[valid-type]
+            Field(description=f"All '{schema.__name__}' items found in the input, in order."),
+        ),
+    )
+    container.__doc__ = f"A list of '{schema.__name__}' items extracted from the input."
+    return container
+
+
+async def extract_data_list(
+    llm_model: Any,
+    schema: type[MODEL_T],
+    messages: list[BaseMessage],
+    *,
+    mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    callbacks: list[Any] | None = None,
+    fallback_llm_model: Any = None,
+    max_primary_retries: int = 3,
+    max_fallback_retries: int = 3,
+    retry_config: RetryConfig | None = None,
+) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
+    """Extract a list of validated Pydantic models from a message list.
+
+    The batch counterpart of :func:`extract_data`.  Use it when a single
+    document contains several repeated records — invoice line items, multiple
+    people in a transcript, several products on a page — and you want them all
+    in one LLM call, precisely typed as ``list[ModelT]``.
+
+    Internally the *schema* is wrapped in a one-field container model
+    (``items: list[schema]``) and driven through the exact same extraction
+    pipeline as :func:`extract_data`, so tool-calling and
+    :attr:`~saidex.ExtractionMode.JSON` modes, per-item Pydantic validation,
+    field-level error feedback, validation retries and the optional fallback
+    model all apply unchanged.
+
+    Args:
+        llm_model: Any LangChain-compatible chat model.
+        schema: The Pydantic ``BaseModel`` subclass describing **one** item.
+        messages: Conversation history passed to the model.  Must contain at
+            least one message describing what to extract.
+        mode: Which extraction strategy to use.  Defaults to
+            :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
+        callbacks: Optional LangChain callback handlers.
+        fallback_llm_model: Optional fallback model.
+        max_primary_retries: Validation retries for the primary model.
+        max_fallback_retries: Validation retries for the fallback model.
+        retry_config: Network-level retry configuration.
+
+    Returns:
+        A tuple of ``(items, stats)``:
+
+        - *items* is a ``list`` of validated *schema* instances (possibly
+          empty when the document contains no records), or ``None`` when all
+          attempts failed.
+        - *stats* is a :class:`~saidex.models.ExtractDataStats` whose
+          ``item_count`` reflects how many items were returned.
+
+    Example::
+
+        lines, stats = await extract_data_list(llm, InvoiceLine, messages)
+        if lines is not None:
+            print(f"Extracted {stats.item_count} line items")
+    """
+    container = _build_list_container(schema)
+    result, stats = await extract_data(
+        llm_model=llm_model,
+        schema=container,
+        messages=messages,
+        mode=mode,
+        callbacks=callbacks,
+        fallback_llm_model=fallback_llm_model,
+        max_primary_retries=max_primary_retries,
+        max_fallback_retries=max_fallback_retries,
+        retry_config=retry_config,
+    )
+    if result is None:
+        return None, stats
+    items: list[MODEL_T] = cast(Any, result).items
+    return items, replace(stats, item_count=len(items))
+
+
+async def extract_data_list_from_text(
+    llm_model: Any,
+    schema: type[MODEL_T],
+    text: str,
+    *,
+    mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    system_prompt: str | None = None,
+    callbacks: list[Any] | None = None,
+    fallback_llm_model: Any = None,
+    max_primary_retries: int = 3,
+    max_fallback_retries: int = 3,
+    retry_config: RetryConfig | None = None,
+) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
+    """Extract a list of validated Pydantic models from a plain text string.
+
+    Convenience wrapper around :func:`extract_data_list` that converts *text*
+    into a single :class:`~langchain_core.messages.HumanMessage` (with an
+    optional :class:`~langchain_core.messages.SystemMessage` prepended).  The
+    default system prompt instructs the model to return **every** matching
+    record rather than a single one.
+
+    Args:
+        llm_model: Any LangChain-compatible chat model.
+        schema: The Pydantic ``BaseModel`` subclass describing **one** item.
+        text: The text to analyse.
+        mode: Which extraction strategy to use (tool calling or raw JSON).
+            Defaults to :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
+        system_prompt: Optional system instruction prepended to the message
+            list.  When omitted a generic list-extraction prompt is used.
+        callbacks: Optional LangChain callback handlers.
+        fallback_llm_model: Optional fallback model.
+        max_primary_retries: Validation retries for the primary model.
+        max_fallback_retries: Validation retries for the fallback model.
+        retry_config: Network-level retry configuration.
+
+    Returns:
+        Same as :func:`extract_data_list`.
+
+    Example::
+
+        items, stats = await extract_data_list_from_text(
+            llm,
+            InvoiceLine,
+            "2x Widget @ 9.99, 1x Gadget @ 19.99",
+        )
+    """
+    effective_system = system_prompt or (
+        f"You are a precise data-extraction assistant. "
+        f"Extract every '{schema.__name__}' record present in the user's text and "
+        f"return them all as a list — one entry per record, in the order they appear. "
+        f"Do not merge, deduplicate, or omit records. "
+        f"Return only the structured data — no explanations."
+    )
+
+    messages: list[BaseMessage] = [
+        SystemMessage(content=effective_system),
+        HumanMessage(content=text),
+    ]
+
+    return await extract_data_list(
         llm_model=llm_model,
         schema=schema,
         messages=messages,

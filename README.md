@@ -143,6 +143,31 @@ async def extract_data_from_text(
 
 Converts a plain string into `[SystemMessage, HumanMessage]` and calls `extract_data`. You can supply a custom `system_prompt`; a sensible default is used otherwise.
 
+### `extract_data_list` — batch extraction → `list[ModelT]`
+
+When one document contains several repeated records (invoice line items, multiple
+people in a transcript, products on a page), `extract_data_list` and
+`extract_data_list_from_text` return a precisely typed `list[ModelT]` from a
+**single** LLM call. Define the schema for *one* item:
+
+```python
+from saidex import extract_data_list_from_text
+
+class InvoiceLine(BaseModel):
+    description: str
+    quantity: int
+    unit_price: float
+
+lines, stats = await extract_data_list_from_text(llm, InvoiceLine, document)
+# lines: list[InvoiceLine] | None
+print(f"Extracted {stats.item_count} items")
+```
+
+The per-item schema is wrapped in a one-field container internally, so both
+extraction modes, per-item validation (errors point at `items -> 2 -> quantity`),
+retries, and fallback all work unchanged. See
+**[Batch Extraction](docs/batch-extraction.md)**.
+
 ### Extraction modes — with or without tool calling
 
 By default the library forces the model to call a bound tool. If your model
@@ -195,6 +220,7 @@ stats.primary_retries   # int — retries against the primary model
 stats.fallback_retries  # int — retries against the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — was the fallback model invoked?
+stats.item_count        # int — items returned by extract_data_list (else 0)
 
 int(stats)  # == stats.total_retries  (backward compatible)
 ```

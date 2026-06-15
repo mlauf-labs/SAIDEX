@@ -11,9 +11,14 @@ Public API
         # Single-shot extraction (no caller tools)
         extract_data,
         extract_data_from_text,
+        # Batch extraction returning list[ModelT]
+        extract_data_list,
+        extract_data_list_from_text,
         # Synchronous wrappers (for non-async callers)
         extract_data_sync,
         extract_data_from_text_sync,
+        extract_data_list_sync,
+        extract_data_list_from_text_sync,
         # Agentic tool loop
         run_extractor_agent,
         extract_data_with_tools,
@@ -42,6 +47,8 @@ Public API
 from .extractor import (
     extract_data,
     extract_data_from_text,
+    extract_data_list,
+    extract_data_list_from_text,
     extract_data_with_tools,
     run_extractor_agent,
 )
@@ -49,6 +56,8 @@ from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
 from .sync import (
     extract_data_from_text_sync,
+    extract_data_list_from_text_sync,
+    extract_data_list_sync,
     extract_data_sync,
     extract_data_with_tools_sync,
     run_extractor_agent_sync,
@@ -78,9 +87,14 @@ __all__ = [
     # single-shot extraction
     "extract_data",
     "extract_data_from_text",
+    # batch extraction returning list[ModelT]
+    "extract_data_list",
+    "extract_data_list_from_text",
     # synchronous wrappers
     "extract_data_sync",
     "extract_data_from_text_sync",
+    "extract_data_list_sync",
+    "extract_data_list_from_text_sync",
     # agentic tool loop
     "run_extractor_agent",
     "extract_data_with_tools",
