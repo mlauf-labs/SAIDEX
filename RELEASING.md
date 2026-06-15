@@ -43,10 +43,14 @@ The hook runs `uv run cz check` on every commit. Bypass only in emergencies with
 
 ## Releasing — step by step
 
-### 1. Start from a clean, up-to-date `main`
+> **Git Flow:** `main` and `develop` are protected — you never bump or push on
+> them directly. The version bump happens on a short-lived `release/X.Y.Z`
+> branch and reaches `main` through a reviewed PR.
+
+### 1. Make sure `develop` is green and up to date
 
 ```bash
-git switch main
+git switch develop
 git pull
 git status            # must be clean
 ```
@@ -62,7 +66,17 @@ uv run pytest
 
 All four must pass — the same checks run in CI on every push.
 
-### 3. Preview the bump
+> On Windows, `uv run mypy` / `uv run pytest` may fail with
+> `uv trampoline failed to canonicalize script path`. Run them as
+> `uv run python -m mypy src/` / `uv run python -m pytest` instead.
+
+### 3. Create the release branch
+
+```bash
+git switch -c release/X.Y.Z      # use the version from the dry-run below
+```
+
+### 4. Preview the bump
 
 ```bash
 uv run cz bump --dry-run
@@ -70,9 +84,10 @@ uv run cz bump --dry-run
 
 This prints the version Commitizen would choose and why, without changing
 anything. If the result looks wrong, it almost always means a commit used the
-wrong type — fix the history or override the increment in the next step.
+wrong type — fix the history or override the increment in the next step. While
+the project is on `0.x`, a breaking change is still only a **minor** bump.
 
-### 4. Perform the bump
+### 5. Perform the bump
 
 ```bash
 uv run cz bump
@@ -92,7 +107,7 @@ To force a specific level instead of auto-detection:
 uv run cz bump --increment patch   # or minor / major
 ```
 
-### 5. Review
+### 6. Review
 
 ```bash
 git show           # inspect the bump commit + tag
@@ -105,40 +120,58 @@ If the generated `CHANGELOG.md` needs polishing, edit it now and amend:
 git commit --amend --no-edit -- CHANGELOG.md
 ```
 
-### 6. Push the commit and the tag
+### 7. Push the release branch and the tag
 
 ```bash
-git push --follow-tags
+git push -u origin release/X.Y.Z
+git push origin vX.Y.Z
 ```
 
-### 7. Publish the GitHub Release (this triggers PyPI)
+> Commitizen creates a **lightweight** tag, so `git push --follow-tags` will
+> *not* push it — push the tag explicitly as shown above.
+
+### 8. Open the release PR into `main`
 
 ```bash
-gh release create vX.Y.Z --title "vX.Y.Z" --notes-from-tag
+gh pr create --base main --head release/X.Y.Z --title "release: vX.Y.Z" --fill
 ```
 
-…or create it from the GitHub web UI. Publishing the release fires
-`release.yml`, which builds and uploads to PyPI automatically.
+Wait for CI to pass, then **merge with a merge commit — never squash.** A squash
+merge would rewrite the bump commit and leave the `vX.Y.Z` tag pointing at a
+commit that is not in `main`'s history.
 
-### 8. Verify
+### 9. Publish the GitHub Release (this triggers PyPI)
+
+```bash
+gh release create vX.Y.Z --title "vX.Y.Z" --notes-from-tag --verify-tag
+```
+
+…or create it from the GitHub web UI. Publishing the release fires `release.yml`
+(builds and uploads to PyPI via Trusted Publishing) and `docs.yml` (deploys the
+versioned docs and moves the `latest` alias). **This is the only irreversible
+step** — a version published to PyPI cannot be replaced.
+
+### 10. Verify
 
 - Watch the **Release to PyPI** workflow:  `gh run watch`
 - Confirm the new version on PyPI: <https://pypi.org/project/saidex/>
 - `pip install --upgrade saidex` in a clean environment as a smoke test.
 
-## Notes for the very first release (v0.2.0)
+### 11. Back-merge `main` into `develop` and clean up
 
-There are no tags yet, so the automatic increment has no baseline. For the
-initial `0.2.0` release the files already contain the correct version — just
-tag and publish it manually:
+Bring the bump commit and changelog back onto `develop` so the next release has
+the correct baseline, then delete the merged release branch:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
-gh release create v0.2.0 --title "v0.2.0" --notes-file CHANGELOG.md
-```
+git fetch origin
+git switch -c chore/sync-main-to-develop origin/main
+git push -u origin chore/sync-main-to-develop
+gh pr create --base develop --head chore/sync-main-to-develop \
+  --title "chore: back-merge vX.Y.Z into develop" --fill
 
-From the **next** release onward, use `uv run cz bump` as described above.
+# after the release PR is merged, GitHub usually deletes the branch automatically:
+git push origin --delete release/X.Y.Z   # only if it still exists
+```
 
 ## One-time PyPI Trusted Publishing setup
 

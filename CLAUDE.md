@@ -259,6 +259,12 @@ Before opening or marking a PR as ready:
 
 ## Release process (maintainers only)
 
+> **Cutting a release? Read [RELEASING.md](RELEASING.md) first.** It is the
+> authoritative, step-by-step checklist. The short version: sync `develop` →
+> create a `release/X.Y.Z` branch → `uv run cz bump` → PR into `main` and **merge
+> with a merge commit (never squash)** → publish the GitHub Release (this fires
+> the PyPI + docs workflows) → back-merge `main` into `develop`.
+
 Releases are handled by the `release/*` branch flow and automated with Commitizen. See [RELEASING.md](RELEASING.md) and [docs/repo-setup.md](docs/repo-setup.md) for the full checklist.
 
 Never bump versions or edit `CHANGELOG.md` by hand — Commitizen derives both from the commit history.
