@@ -37,6 +37,7 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 | [`07_json_mode.py`](../examples/07_json_mode.py) | Extraction without tool calling (raw JSON) |
 | [`08_agent_tools.py`](../examples/08_agent_tools.py) | Agentic tool loop: `Tool`, `extract_data_with_tools`, `run_extractor_agent` |
 | [`10_batch_extraction.py`](../examples/10_batch_extraction.py) | Batch extraction → `list[ModelT]`: `extract_data_list_from_text` |
+| [`11_quality_analytics.py`](../examples/11_quality_analytics.py) | Aggregate field issues across runs: `summarize_field_issues` |
 
 ---
 

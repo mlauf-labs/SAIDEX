@@ -33,6 +33,11 @@ Public API
         FieldIssue,
         RetryConfig,
         create_instance_safe,
+        # Cross-run field-issue analytics
+        summarize_field_issues,
+        FieldIssueSummary,
+        SchemaProblemSummary,
+        FieldProblemStat,
         # Reusable schema field types
         IsoDateStr,
         IbanStr,
@@ -45,6 +50,12 @@ Public API
     )
 """
 
+from .analytics import (
+    FieldIssueSummary,
+    FieldProblemStat,
+    SchemaProblemSummary,
+    summarize_field_issues,
+)
 from .extractor import (
     extract_data,
     extract_data_from_text,
@@ -109,6 +120,11 @@ __all__ = [
     "ExtractDataStats",
     "FieldIssue",
     "RetryConfig",
+    # cross-run field-issue analytics
+    "summarize_field_issues",
+    "FieldIssueSummary",
+    "SchemaProblemSummary",
+    "FieldProblemStat",
     "RetryResult",
     "DEFAULT_RETRY_CONFIG",
     "with_retry",
