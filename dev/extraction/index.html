@@ -546,15 +546,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#extract_from_text-plain-text-model" class="md-nav__link">
+  <a href="#extract_data_from_text-plain-text-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        extract_from_text — plain text → model
+        extract_data_from_text — plain text → model
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="extract_from_text — plain text → model">
+    <nav class="md-nav" aria-label="extract_data_from_text — plain text → model">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -585,15 +585,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#get_structured_data-chat-history-model" class="md-nav__link">
+  <a href="#extract_data-chat-history-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        get_structured_data — chat history → model
+        extract_data — chat history → model
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="get_structured_data — chat history → model">
+    <nav class="md-nav" aria-label="extract_data — chat history → model">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1130,15 +1130,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#extract_from_text-plain-text-model" class="md-nav__link">
+  <a href="#extract_data_from_text-plain-text-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        extract_from_text — plain text → model
+        extract_data_from_text — plain text → model
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="extract_from_text — plain text → model">
+    <nav class="md-nav" aria-label="extract_data_from_text — plain text → model">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1169,15 +1169,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#get_structured_data-chat-history-model" class="md-nav__link">
+  <a href="#extract_data-chat-history-model" class="md-nav__link">
     <span class="md-ellipsis">
       
-        get_structured_data — chat history → model
+        extract_data — chat history → model
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="get_structured_data — chat history → model">
+    <nav class="md-nav" aria-label="extract_data — chat history → model">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1328,27 +1328,27 @@
 
 <h1 id="extraction">Extraction<a class="headerlink" href="#extraction" title="Permanent link">&para;</a></h1>
 <p>→ <a href="../">Documentation index</a></p>
-<p>This document covers both extraction entry points: <code>extract_from_text</code> for
-simple text strings and <code>get_structured_data</code> for full LangChain message lists.</p>
+<p>This document covers both extraction entry points: <code>extract_data_from_text</code> for
+simple text strings and <code>extract_data</code> for full LangChain message lists.</p>
 <hr />
-<h2 id="extract_from_text-plain-text-model"><code>extract_from_text</code> — plain text → model<a class="headerlink" href="#extract_from_text-plain-text-model" title="Permanent link">&para;</a></h2>
+<h2 id="extract_data_from_text-plain-text-model"><code>extract_data_from_text</code> — plain text → model<a class="headerlink" href="#extract_data_from_text-plain-text-model" title="Permanent link">&para;</a></h2>
 <blockquote>
 <p><strong>Runnable example:</strong> <a href="../examples/01_extract_from_text.py"><code>examples/01_extract_from_text.py</code></a></p>
 </blockquote>
-<p><code>extract_from_text</code> is the simplest entry point.  It takes a plain string,
+<p><code>extract_data_from_text</code> is the simplest entry point.  It takes a plain string,
 wraps it in a <code>[SystemMessage, HumanMessage]</code> pair, and calls
-<code>get_structured_data</code> internally.</p>
+<code>extract_data</code> internally.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_from_text</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">llm_model</span><span class="p">,</span>           <span class="c1"># any LangChain chat model</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">MySchema</span><span class="p">,</span>            <span class="c1"># Pydantic BaseModel subclass</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="s2">&quot;your text here&quot;</span><span class="p">,</span>    <span class="c1"># the text to analyse</span>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">)</span>
 </code></pre></div>
 <h3 id="full-signature">Full signature<a class="headerlink" href="#full-signature" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">extract_from_text</span><span class="p">(</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">llm_model</span><span class="p">:</span>           <span class="n">Any</span><span class="p">,</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">schema</span><span class="p">:</span>              <span class="nb">type</span><span class="p">[</span><span class="n">ModelT</span><span class="p">],</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">text</span><span class="p">:</span>                <span class="nb">str</span><span class="p">,</span>
@@ -1360,7 +1360,7 @@ wraps it in a <code>[SystemMessage, HumanMessage]</code> pair, and calls
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">max_primary_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">max_fallback_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
 <a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>    <span class="n">retry_config</span><span class="p">:</span>        <span class="n">RetryConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">ModelT</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">StructuredOutputStats</span><span class="p">]:</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">ModelT</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ExtractDataStats</span><span class="p">]:</span>
 </code></pre></div>
 <blockquote>
 <p><code>mode</code> selects tool calling (default) or raw JSON output — see
@@ -1374,7 +1374,7 @@ information from the user's text and populate the 'MySchema' schema
 exactly."</em></p>
 </blockquote>
 <p>Override it when the domain requires specific instructions:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">llm</span><span class="p">,</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">Address</span><span class="p">,</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="s2">&quot;Bitte liefern an: Maria Schmidt, Hauptstraße 42, 80331 München&quot;</span><span class="p">,</span>
@@ -1389,15 +1389,15 @@ exactly."</em></p>
 shows a complete <code>PersonInfo</code> extraction with an optional <code>city</code> field and
 demonstrates how <code>stats</code> is used to detect whether retries were needed.</p>
 <hr />
-<h2 id="get_structured_data-chat-history-model"><code>get_structured_data</code> — chat history → model<a class="headerlink" href="#get_structured_data-chat-history-model" title="Permanent link">&para;</a></h2>
+<h2 id="extract_data-chat-history-model"><code>extract_data</code> — chat history → model<a class="headerlink" href="#extract_data-chat-history-model" title="Permanent link">&para;</a></h2>
 <blockquote>
 <p><strong>Runnable example:</strong> <a href="../examples/02_chat_history.py"><code>examples/02_chat_history.py</code></a></p>
 </blockquote>
-<p>Use <code>get_structured_data</code> when you already have a list of LangChain messages —
+<p>Use <code>extract_data</code> when you already have a list of LangChain messages —
 either because your application builds conversations naturally, or because you
 want fine-grained control over the system instruction, context, and prompt.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span> <span class="nn">langchain_core.messages</span> <span class="kn">import</span> <span class="n">SystemMessage</span><span class="p">,</span> <span class="n">HumanMessage</span><span class="p">,</span> <span class="n">AIMessage</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">get_structured_data</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">SystemMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&quot;You are a support analyst. Analyse the conversation.&quot;</span><span class="p">),</span>
@@ -1406,10 +1406,10 @@ want fine-grained control over the system instruction, context, and prompt.</p>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">HumanMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&quot;Please provide the structured summary now.&quot;</span><span class="p">),</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">]</span>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_structured_data</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">SupportTicketSummary</span><span class="p">,</span> <span class="n">messages</span><span class="p">)</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">SupportTicketSummary</span><span class="p">,</span> <span class="n">messages</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="full-signature_1">Full signature<a class="headerlink" href="#full-signature_1" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">get_structured_data</span><span class="p">(</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">extract_data</span><span class="p">(</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">llm_model</span><span class="p">:</span>           <span class="n">Any</span><span class="p">,</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">schema</span><span class="p">:</span>              <span class="nb">type</span><span class="p">[</span><span class="n">ModelT</span><span class="p">],</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">messages</span><span class="p">:</span>            <span class="nb">list</span><span class="p">[</span><span class="n">BaseMessage</span><span class="p">],</span>
@@ -1420,7 +1420,7 @@ want fine-grained control over the system instruction, context, and prompt.</p>
 <a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">max_primary_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
 <a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>    <span class="n">max_fallback_retries</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
 <a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">retry_config</span><span class="p">:</span>        <span class="n">RetryConfig</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">ModelT</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">StructuredOutputStats</span><span class="p">]:</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">ModelT</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">ExtractDataStats</span><span class="p">]:</span>
 </code></pre></div>
 <blockquote>
 <p><code>mode</code> selects tool calling (default) or raw JSON output — see
@@ -1432,8 +1432,8 @@ resets to the original when switching to the fallback model.  Your list is
 always safe to reuse:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">base_messages</span> <span class="o">=</span> <span class="p">[</span><span class="n">SystemMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&quot;Analyse this.&quot;</span><span class="p">),</span> <span class="n">HumanMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="n">doc</span><span class="p">)]</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">result_a</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_structured_data</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">SchemaA</span><span class="p">,</span> <span class="n">base_messages</span><span class="p">)</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">result_b</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_structured_data</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">SchemaB</span><span class="p">,</span> <span class="n">base_messages</span><span class="p">)</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">result_a</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">SchemaA</span><span class="p">,</span> <span class="n">base_messages</span><span class="p">)</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">result_b</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">SchemaB</span><span class="p">,</span> <span class="n">base_messages</span><span class="p">)</span>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="c1"># base_messages is unchanged after both calls</span>
 </code></pre></div>
 <hr />
@@ -1487,12 +1487,12 @@ unusual or highly domain-specific schemas:</p>
 <a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="p">)</span>
 <a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="p">]</span>
 <a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>
-<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="n">order</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_structured_data</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">OrderSummary</span><span class="p">,</span> <span class="n">extraction_messages</span><span class="p">)</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="n">order</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">OrderSummary</span><span class="p">,</span> <span class="n">extraction_messages</span><span class="p">)</span>
 </code></pre></div>
 <hr />
 <h2 id="handling-the-result">Handling the result<a class="headerlink" href="#handling-the-result" title="Permanent link">&para;</a></h2>
 <p>Always check for <code>None</code> before using the result:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">if</span> <span class="n">result</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
 <a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="c1"># All retries exhausted — log and handle gracefully</span>
@@ -1511,11 +1511,11 @@ unusual or highly domain-specific schemas:</p>
 <hr />
 <h2 id="synchronous-usage">Synchronous usage<a class="headerlink" href="#synchronous-usage" title="Permanent link">&para;</a></h2>
 <p>Both entry points are async, but each has a thin synchronous wrapper —
-<code>extract_from_text_sync</code> and <code>get_structured_data_sync</code> — for callers that are
+<code>extract_data_from_text_sync</code> and <code>extract_data_sync</code> — for callers that are
 not running inside an event loop (CLI scripts, sync web views, background jobs):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text_sync</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_from_text_sync</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
-<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_from_text_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_data_from_text_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
 </code></pre></div>
 <p>The wrappers accept exactly the same arguments and return the same
 <code>(model, stats)</code> tuple as the async versions. They run the coroutine via

@@ -635,10 +635,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#extract_with_tools-parameters" class="md-nav__link">
+  <a href="#extract_data_with_tools-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        extract_with_tools parameters
+        extract_data_with_tools parameters
       
     </span>
   </a>
@@ -646,10 +646,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#run_agent_loop-full-message-control" class="md-nav__link">
+  <a href="#run_extractor_agent-full-message-control" class="md-nav__link">
     <span class="md-ellipsis">
       
-        run_agent_loop — full message control
+        run_extractor_agent — full message control
       
     </span>
   </a>
@@ -679,10 +679,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#agentrunstats" class="md-nav__link">
+  <a href="#extractorrunstats" class="md-nav__link">
     <span class="md-ellipsis">
       
-        AgentRunStats
+        ExtractorRunStats
       
     </span>
   </a>
@@ -1101,10 +1101,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#extract_with_tools-parameters" class="md-nav__link">
+  <a href="#extract_data_with_tools-parameters" class="md-nav__link">
     <span class="md-ellipsis">
       
-        extract_with_tools parameters
+        extract_data_with_tools parameters
       
     </span>
   </a>
@@ -1112,10 +1112,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#run_agent_loop-full-message-control" class="md-nav__link">
+  <a href="#run_extractor_agent-full-message-control" class="md-nav__link">
     <span class="md-ellipsis">
       
-        run_agent_loop — full message control
+        run_extractor_agent — full message control
       
     </span>
   </a>
@@ -1145,10 +1145,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#agentrunstats" class="md-nav__link">
+  <a href="#extractorrunstats" class="md-nav__link">
     <span class="md-ellipsis">
       
-        AgentRunStats
+        ExtractorRunStats
       
     </span>
   </a>
@@ -1204,7 +1204,7 @@
 
 <h1 id="agent-loop-let-the-llm-call-your-tools">Agent Loop — let the LLM call your tools<a class="headerlink" href="#agent-loop-let-the-llm-call-your-tools" title="Permanent link">&para;</a></h1>
 <p>→ <a href="../">Documentation index</a></p>
-<p><code>extract_with_tools</code> and <code>run_agent_loop</code> extend structured extraction with an
+<p><code>extract_data_with_tools</code> and <code>run_extractor_agent</code> extend structured extraction with an
 <strong>agentic tool loop</strong>: the LLM may call caller-supplied tools any number of
 times — look up data, create resources, trigger side effects — and then
 delivers a final answer that is validated against your Pydantic schema.</p>
@@ -1217,14 +1217,14 @@ delivers a final answer that is validated against your Pydantic schema.</p>
 <li>the extraction requires a decision based on intermediate lookups.</li>
 </ul>
 <p>If the model only needs to read the text you already have, use
-<a href="../extraction/"><code>extract_from_text</code> / <code>get_structured_data</code></a> instead — they
+<a href="../extraction/"><code>extract_data_from_text</code> / <code>extract_data</code></a> instead — they
 are simpler and cheaper.</p>
 <hr />
 <h2 id="quick-example">Quick example<a class="headerlink" href="#quick-example" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">Tool</span><span class="p">,</span> <span class="n">extract_with_tools</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">Tool</span><span class="p">,</span> <span class="n">extract_data_with_tools</span>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="c1"># 1. Describe the tool&#39;s arguments with a Pydantic model</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">class</span> <span class="nc">OrderStatusArgs</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
@@ -1251,7 +1251,7 @@ are simpler and cheaper.</p>
 <a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>    <span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
 <a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>
-<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    <span class="n">resolution</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_with_tools</span><span class="p">(</span>
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>    <span class="n">resolution</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_with_tools</span><span class="p">(</span>
 <a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>        <span class="n">llm</span><span class="p">,</span>
 <a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>        <span class="n">TicketResolution</span><span class="p">,</span>
 <a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>        <span class="s2">&quot;Customer asks: where is my order ORD-1042?&quot;</span><span class="p">,</span>
@@ -1365,7 +1365,7 @@ to <code>str</code>). Return compact, informative results — the LLM has to rea
   called only once.</li>
 </ul>
 <hr />
-<h2 id="extract_with_tools-parameters"><code>extract_with_tools</code> parameters<a class="headerlink" href="#extract_with_tools-parameters" title="Permanent link">&para;</a></h2>
+<h2 id="extract_data_with_tools-parameters"><code>extract_data_with_tools</code> parameters<a class="headerlink" href="#extract_data_with_tools-parameters" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1444,15 +1444,15 @@ to <code>str</code>). Return compact, informative results — the LLM has to rea
 </tr>
 </tbody>
 </table>
-<p><strong>Returns:</strong> <code>tuple[ModelT | None, AgentRunStats]</code></p>
+<p><strong>Returns:</strong> <code>tuple[ModelT | None, ExtractorRunStats]</code></p>
 <hr />
-<h2 id="run_agent_loop-full-message-control"><code>run_agent_loop</code> — full message control<a class="headerlink" href="#run_agent_loop-full-message-control" title="Permanent link">&para;</a></h2>
-<p><code>extract_with_tools</code> builds <code>[SystemMessage, HumanMessage]</code> for you.
+<h2 id="run_extractor_agent-full-message-control"><code>run_extractor_agent</code> — full message control<a class="headerlink" href="#run_extractor_agent-full-message-control" title="Permanent link">&para;</a></h2>
+<p><code>extract_data_with_tools</code> builds <code>[SystemMessage, HumanMessage]</code> for you.
 When you need precise control over the conversation — multi-turn history,
-few-shot examples, previously gathered context — use <code>run_agent_loop</code> with the
+few-shot examples, previously gathered context — use <code>run_extractor_agent</code> with the
 same parameters but a ready-built message list:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span> <span class="nn">langchain_core.messages</span> <span class="kn">import</span> <span class="n">HumanMessage</span><span class="p">,</span> <span class="n">SystemMessage</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">run_agent_loop</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">run_extractor_agent</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">messages</span> <span class="o">=</span> <span class="p">[</span>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">SystemMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&quot;You are the filing assistant for project X.&quot;</span><span class="p">),</span>
@@ -1460,7 +1460,7 @@ same parameters but a ready-built message list:</p>
 <a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">HumanMessage</span><span class="p">(</span><span class="n">content</span><span class="o">=</span><span class="s2">&quot;File this document: &#39;Service agreement with ACME...&#39;&quot;</span><span class="p">),</span>
 <a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">]</span>
 <a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="n">decision</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">run_agent_loop</span><span class="p">(</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="n">decision</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">run_extractor_agent</span><span class="p">(</span>
 <a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">FilingDecision</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">create_folder</span><span class="p">,</span> <span class="n">list_folders</span><span class="p">]</span>
 <a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="p">)</span>
 </code></pre></div>
@@ -1489,13 +1489,13 @@ the final answer can be collected as raw JSON. For fully tool-free extraction
 see <a href="../extraction-modes/">Extraction Modes</a>.</p>
 <hr />
 <h2 id="fallback-model">Fallback model<a class="headerlink" href="#fallback-model" title="Permanent link">&para;</a></h2>
-<p>Like <code>get_structured_data</code>, the loop accepts a <code>fallback_llm_model</code>. When the
+<p>Like <code>extract_data</code>, the loop accepts a <code>fallback_llm_model</code>. When the
 primary model exhausts <code>max_iterations</code> (or <code>max_validation_retries</code>) without
 a valid final answer, the fallback model starts over with a fresh conversation
 built from the original messages plus a brief hint that a previous attempt
-failed. The returned <code>AgentRunStats</code> are the <strong>sum of both attempts</strong> with
+failed. The returned <code>ExtractorRunStats</code> are the <strong>sum of both attempts</strong> with
 <code>fallback_used=True</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">resolution</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_with_tools</span><span class="p">(</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">resolution</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_with_tools</span><span class="p">(</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">cheap_llm</span><span class="p">,</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">TicketResolution</span><span class="p">,</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">task_text</span><span class="p">,</span>
@@ -1504,7 +1504,7 @@ failed. The returned <code>AgentRunStats</code> are the <strong>sum of both atte
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">)</span>
 </code></pre></div>
 <hr />
-<h2 id="agentrunstats"><code>AgentRunStats</code><a class="headerlink" href="#agentrunstats" title="Permanent link">&para;</a></h2>
+<h2 id="extractorrunstats"><code>ExtractorRunStats</code><a class="headerlink" href="#extractorrunstats" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
@@ -1536,16 +1536,16 @@ failed. The returned <code>AgentRunStats</code> are the <strong>sum of both atte
 </tr>
 </tbody>
 </table>
-<p><code>AgentRunStats</code> instances support <code>+</code> to merge (used internally to combine
+<p><code>ExtractorRunStats</code> instances support <code>+</code> to merge (used internally to combine
 primary and fallback attempts).</p>
 <hr />
 <h2 id="synchronous-usage">Synchronous usage<a class="headerlink" href="#synchronous-usage" title="Permanent link">&para;</a></h2>
 <p>Both functions are async, but each has a synchronous wrapper —
-<code>extract_with_tools_sync</code> and <code>run_agent_loop_sync</code> — for callers outside an
+<code>extract_data_with_tools_sync</code> and <code>run_extractor_agent_sync</code> — for callers outside an
 event loop:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_with_tools_sync</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_with_tools_sync</span>
 <a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_with_tools_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">my_tool</span><span class="p">])</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="n">extract_data_with_tools_sync</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">tools</span><span class="o">=</span><span class="p">[</span><span class="n">my_tool</span><span class="p">])</span>
 </code></pre></div>
 <p>The wrappers take the same arguments and return the same <code>(model, stats)</code> tuple
 as the async versions, delegating via <code>asyncio.run</code>. They must <strong>not</strong> be called

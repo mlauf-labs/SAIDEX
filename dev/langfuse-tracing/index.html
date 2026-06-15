@@ -1233,8 +1233,8 @@ variables, which the Langfuse client picks up automatically:</p>
 <hr />
 <h2 id="1-a-single-extraction">1. A single extraction<a class="headerlink" href="#1-a-single-extraction" title="Permanent link">&para;</a></h2>
 <p>Attach the handler via the <code>callbacks</code> parameter — accepted by <strong>all four</strong>
-public functions (<code>get_structured_data</code>, <code>extract_from_text</code>,
-<code>extract_with_tools</code>, <code>run_agent_loop</code>). Every LLM call SAIDEX makes is then
+public functions (<code>extract_data</code>, <code>extract_data_from_text</code>,
+<code>extract_data_with_tools</code>, <code>run_extractor_agent</code>). Every LLM call SAIDEX makes is then
 recorded automatically.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
@@ -1243,7 +1243,7 @@ recorded automatically.</p>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="kn">from</span> <span class="nn">langfuse.langchain</span> <span class="kn">import</span> <span class="n">CallbackHandler</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_from_text</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
 <a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="k">class</span> <span class="nc">PersonInfo</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
@@ -1260,7 +1260,7 @@ recorded automatically.</p>
 <a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>
 <a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;Alice Müller, 34, is a software engineer based in Munich.&quot;</span>
 <a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>
-<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>    <span class="n">person</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>    <span class="n">person</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>        <span class="n">llm</span><span class="p">,</span>
 <a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>        <span class="n">PersonInfo</span><span class="p">,</span>
 <a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>        <span class="n">text</span><span class="p">,</span>
@@ -1309,7 +1309,7 @@ likely, use a strict schema and a slightly ambiguous input:</p>
 <a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
 <a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="n">text</span> <span class="o">=</span> <span class="s2">&quot;Account holder: ACME GmbH. IBAN: DE89 3704 0044 0532 0130 00.&quot;</span>
 <a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>
-<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>    <span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>        <span class="n">llm</span><span class="p">,</span>
 <a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>        <span class="n">BankDetails</span><span class="p">,</span>
 <a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>        <span class="n">text</span><span class="p">,</span>
@@ -1327,7 +1327,7 @@ what the model was asked to fix. <code>stats.total_retries</code> matches the nu
 extra generations in the trace.</p>
 <hr />
 <h2 id="3-the-agent-loop">3. The agent loop<a class="headerlink" href="#3-the-agent-loop" title="Permanent link">&para;</a></h2>
-<p><code>extract_with_tools</code> / <code>run_agent_loop</code> let the model call your tools any number
+<p><code>extract_data_with_tools</code> / <code>run_extractor_agent</code> let the model call your tools any number
 of times before producing a validated final answer (see
 <a href="../agent-loop/">Agent Loop</a>). Pass the same <code>callbacks</code> list and every iteration
 — each tool-deciding LLM call — is captured as its own generation under one
@@ -1339,7 +1339,7 @@ trace.</p>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="kn">from</span> <span class="nn">langfuse.langchain</span> <span class="kn">import</span> <span class="n">CallbackHandler</span>
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">Tool</span><span class="p">,</span> <span class="n">extract_with_tools</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">Tool</span><span class="p">,</span> <span class="n">extract_data_with_tools</span>
 <a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
 <a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="n">ORDERS</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;ORD-1042&quot;</span><span class="p">:</span> <span class="p">{</span><span class="s2">&quot;status&quot;</span><span class="p">:</span> <span class="s2">&quot;shipped&quot;</span><span class="p">,</span> <span class="s2">&quot;eta&quot;</span><span class="p">:</span> <span class="s2">&quot;2026-06-15&quot;</span><span class="p">,</span> <span class="s2">&quot;carrier&quot;</span><span class="p">:</span> <span class="s2">&quot;DHL&quot;</span><span class="p">}}</span>
 <a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
@@ -1372,7 +1372,7 @@ trace.</p>
 <a id="__codelineno-5-38" name="__codelineno-5-38" href="#__codelineno-5-38"></a>
 <a id="__codelineno-5-39" name="__codelineno-5-39" href="#__codelineno-5-39"></a>    <span class="n">ticket</span> <span class="o">=</span> <span class="s2">&quot;Where is my order ORD-1042? It&#39;s been two weeks!&quot;</span>
 <a id="__codelineno-5-40" name="__codelineno-5-40" href="#__codelineno-5-40"></a>
-<a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a>    <span class="n">resolution</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_with_tools</span><span class="p">(</span>
+<a id="__codelineno-5-41" name="__codelineno-5-41" href="#__codelineno-5-41"></a>    <span class="n">resolution</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_with_tools</span><span class="p">(</span>
 <a id="__codelineno-5-42" name="__codelineno-5-42" href="#__codelineno-5-42"></a>        <span class="n">llm</span><span class="p">,</span>
 <a id="__codelineno-5-43" name="__codelineno-5-43" href="#__codelineno-5-43"></a>        <span class="n">TicketResolution</span><span class="p">,</span>
 <a id="__codelineno-5-44" name="__codelineno-5-44" href="#__codelineno-5-44"></a>        <span class="n">ticket</span><span class="p">,</span>
@@ -1412,7 +1412,7 @@ to the currently active trace context automatically:</p>
 <a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>        <span class="n">tags</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;production&quot;</span><span class="p">,</span> <span class="s2">&quot;v2&quot;</span><span class="p">],</span>
 <a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    <span class="p">):</span>
 <a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>        <span class="n">handler</span> <span class="o">=</span> <span class="n">CallbackHandler</span><span class="p">()</span>
-<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>        <span class="n">invoice</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>        <span class="n">invoice</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>            <span class="n">llm</span><span class="p">,</span> <span class="n">Invoice</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">callbacks</span><span class="o">=</span><span class="p">[</span><span class="n">handler</span><span class="p">]</span>
 <a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>        <span class="p">)</span>
 <a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>        <span class="n">span</span><span class="o">.</span><span class="n">update_trace</span><span class="p">(</span><span class="nb">input</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;text&quot;</span><span class="p">:</span> <span class="n">text</span><span class="p">},</span> <span class="n">output</span><span class="o">=</span><span class="n">invoice</span><span class="p">)</span>

@@ -496,10 +496,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#structuredoutputstats" class="md-nav__link">
+  <a href="#extractdatastats" class="md-nav__link">
     <span class="md-ellipsis">
       
-        StructuredOutputStats
+        ExtractDataStats
       
     </span>
   </a>
@@ -1070,10 +1070,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#structuredoutputstats" class="md-nav__link">
+  <a href="#extractdatastats" class="md-nav__link">
     <span class="md-ellipsis">
       
-        StructuredOutputStats
+        ExtractDataStats
       
     </span>
   </a>
@@ -1194,7 +1194,7 @@ OpenAI, Anthropic, Google Gemini, Mistral, Azure OpenAI, and others.</p>
 <hr />
 <h2 id="core-api">Core API<a class="headerlink" href="#core-api" title="Permanent link">&para;</a></h2>
 <p>The library exposes two async functions:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text</span><span class="p">,</span> <span class="n">get_structured_data</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_from_text</span><span class="p">,</span> <span class="n">extract_data</span>
 </code></pre></div>
 <table>
 <thead>
@@ -1206,22 +1206,22 @@ OpenAI, Anthropic, Google Gemini, Mistral, Azure OpenAI, and others.</p>
 </thead>
 <tbody>
 <tr>
-<td><code>extract_from_text(llm, schema, text, ...)</code></td>
+<td><code>extract_data_from_text(llm, schema, text, ...)</code></td>
 <td>Plain string</td>
 <td>Single-shot text → model</td>
 </tr>
 <tr>
-<td><code>get_structured_data(llm, schema, messages, ...)</code></td>
+<td><code>extract_data(llm, schema, messages, ...)</code></td>
 <td><code>list[BaseMessage]</code></td>
 <td>Multi-turn chat → model</td>
 </tr>
 </tbody>
 </table>
-<p>Both return <code>tuple[ModelT | None, StructuredOutputStats]</code>.</p>
+<p>Both return <code>tuple[ModelT | None, ExtractDataStats]</code>.</p>
 <p>Both accept a <code>mode</code> parameter — tool calling (default) or raw JSON for models
 without tool-calling support.  See <a href="../extraction-modes/">Extraction Modes</a>.</p>
-<h3 id="structuredoutputstats"><code>StructuredOutputStats</code><a class="headerlink" href="#structuredoutputstats" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<h3 id="extractdatastats"><code>ExtractDataStats</code><a class="headerlink" href="#extractdatastats" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">stats</span><span class="o">.</span><span class="n">primary_retries</span>   <span class="c1"># int — retries on the primary model</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_retries</span>  <span class="c1"># int — retries on the fallback model</span>
@@ -1238,7 +1238,7 @@ without tool-calling support.  See <a href="../extraction-modes/">Extraction Mod
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_from_text</span>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="k">class</span> <span class="nc">PersonInfo</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">name</span><span class="p">:</span>       <span class="nb">str</span>
@@ -1249,7 +1249,7 @@ without tool-calling support.  See <a href="../extraction-modes/">Extraction Mod
 <a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
 <a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>    <span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
 <a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
-<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>    <span class="n">person</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a>    <span class="n">person</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>        <span class="n">llm</span><span class="p">,</span>
 <a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>        <span class="n">PersonInfo</span><span class="p">,</span>
 <a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>        <span class="s2">&quot;Alice Müller, 34, works as a software engineer in Munich.&quot;</span><span class="p">,</span>
@@ -1301,7 +1301,7 @@ without tool-calling support.  See <a href="../extraction-modes/">Extraction Mod
 <a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>                   → Return (None, stats)
 </code></pre></div>
 <p>The retry loop means a single API function call can make multiple LLM
-requests internally.  <code>StructuredOutputStats</code> tells you exactly how many.</p>
+requests internally.  <code>ExtractDataStats</code> tells you exactly how many.</p>
 <hr />
 <h2 id="next-steps">Next steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <table>

@@ -913,12 +913,12 @@
   <a href="#isodatestr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ISODateStr
+        IsoDateStr
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="ISODateStr">
+    <nav class="md-nav" aria-label="IsoDateStr">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1248,12 +1248,12 @@
   <a href="#isodatestr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        ISODateStr
+        IsoDateStr
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="ISODateStr">
+    <nav class="md-nav" aria-label="IsoDateStr">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -1529,7 +1529,7 @@ back to a custom validator only when no built-in fits.</p>
 </blockquote>
 <p>All built-ins are exported from the package root:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">ISODateStr</span><span class="p">,</span> <span class="n">IbanStr</span><span class="p">,</span> <span class="n">VatIdStr</span><span class="p">,</span> <span class="n">CountryCodeStr</span><span class="p">,</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">IsoDateStr</span><span class="p">,</span> <span class="n">IbanStr</span><span class="p">,</span> <span class="n">VatIdStr</span><span class="p">,</span> <span class="n">CountryCodeStr</span><span class="p">,</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">CurrencyCodeStr</span><span class="p">,</span> <span class="n">IsinStr</span><span class="p">,</span> <span class="n">PhoneStr</span><span class="p">,</span> <span class="n">LanguageCodeStr</span><span class="p">,</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">)</span>
 </code></pre></div>
@@ -1538,7 +1538,7 @@ back to a custom validator only when no built-in fits.</p>
 your own <code>Annotated</code> type.</p>
 <hr />
 <h2 id="why-use-a-built-in-type">Why use a built-in type?<a class="headerlink" href="#why-use-a-built-in-type" title="Permanent link">&para;</a></h2>
-<p>A built-in like <a href="#isodatestr"><code>ISODateStr</code></a> gives you several things at once:</p>
+<p>A built-in like <a href="#isodatestr"><code>IsoDateStr</code></a> gives you several things at once:</p>
 <ul>
 <li><strong>One annotation, every schema</strong> — attach validation by typing a field, with
   no <code>@field_validator</code> method to copy around.</li>
@@ -1566,7 +1566,7 @@ your own <code>Annotated</code> type.</p>
 </thead>
 <tbody>
 <tr>
-<td><a href="#isodatestr"><code>ISODateStr</code></a></td>
+<td><a href="#isodatestr"><code>IsoDateStr</code></a></td>
 <td><code>validate_iso_date</code></td>
 <td>no (strict)</td>
 <td>A <code>str</code> in ISO <code>yyyy-mm-dd</code> calendar-date format</td>
@@ -1619,8 +1619,8 @@ your own <code>Annotated</code> type.</p>
 and raises <code>ValueError</code> on failure — see <a href="#validate_iso_date"><code>validate_iso_date</code></a>
 for the patterns in which you can reuse them directly.</p>
 <hr />
-<h2 id="isodatestr"><code>ISODateStr</code><a class="headerlink" href="#isodatestr" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">ISODateStr</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_iso_date</span><span class="p">)]</span>
+<h2 id="isodatestr"><code>IsoDateStr</code><a class="headerlink" href="#isodatestr" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">IsoDateStr</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_iso_date</span><span class="p">)]</span>
 </code></pre></div>
 <p>A drop-in replacement for <code>str</code> on any field that must hold a date in
 <code>yyyy-mm-dd</code> form (four-digit year, <strong>zero-padded</strong> month and day). It validates
@@ -1628,21 +1628,21 @@ both the <em>shape</em> and that the value is a <em>real calendar date</em>, whi
 field a <code>str</code>.</p>
 <h3 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span><span class="p">,</span> <span class="n">Field</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">ISODateStr</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">IsoDateStr</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="k">class</span> <span class="nc">MeetingNotes</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="c1"># Required date field</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">meeting_date</span><span class="p">:</span> <span class="n">ISODateStr</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Meeting date as yyyy-mm-dd&quot;</span><span class="p">)</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">meeting_date</span><span class="p">:</span> <span class="n">IsoDateStr</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Meeting date as yyyy-mm-dd&quot;</span><span class="p">)</span>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="c1"># Optional date field — combine with `| None`</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">next_meeting</span><span class="p">:</span> <span class="n">ISODateStr</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">next_meeting</span><span class="p">:</span> <span class="n">IsoDateStr</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
 <a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>        <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
 <a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Date of the next meeting as yyyy-mm-dd, or null&quot;</span><span class="p">,</span>
 <a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="p">)</span>
 </code></pre></div>
-<p><code>ISODateStr</code> also works inside nested models and lists — for example an
+<p><code>IsoDateStr</code> also works inside nested models and lists — for example an
 <code>action_items: list[ActionItem]</code> where each <code>ActionItem.due_date</code> is
-<code>ISODateStr | None</code>. Validation errors report the full path
+<code>IsoDateStr | None</code>. Validation errors report the full path
 (<code>action_items -&gt; 0 -&gt; due_date</code>) so the LLM knows exactly which item to fix.</p>
 <h3 id="what-it-accepts-and-rejects">What it accepts and rejects<a class="headerlink" href="#what-it-accepts-and-rejects" title="Permanent link">&para;</a></h3>
 <table>
@@ -1658,7 +1658,7 @@ field a <code>str</code>.</p>
 <td>✅ valid, returned unchanged</td>
 </tr>
 <tr>
-<td><code>None</code> (on an <code>ISODateStr \| None</code> field)</td>
+<td><code>None</code> (on an <code>IsoDateStr \| None</code> field)</td>
 <td>✅ allowed</td>
 </tr>
 <tr>
@@ -1694,7 +1694,7 @@ model from producing a bad value in the first place. See
 <a href="../schema-design/#datetime-date-time--use-str-instead">Schema Design — dates</a>.</p>
 </blockquote>
 <h3 id="strict-vs-lenient-which-should-you-use">Strict vs. lenient — which should you use?<a class="headerlink" href="#strict-vs-lenient-which-should-you-use" title="Permanent link">&para;</a></h3>
-<p><code>ISODateStr</code> is <strong>strict</strong>: it rejects anything that is not already
+<p><code>IsoDateStr</code> is <strong>strict</strong>: it rejects anything that is not already
 <code>yyyy-mm-dd</code> and lets the retry loop ask the model to correct it. This keeps
 your data clean and surfaces genuinely ambiguous input.</p>
 <p>If you would rather <strong>auto-normalise</strong> other notations (e.g. rewrite
@@ -1707,7 +1707,7 @@ You can even combine both: a <code>BeforeValidator</code> to normalise, then
 <h2 id="validate_iso_date"><code>validate_iso_date</code><a class="headerlink" href="#validate_iso_date" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">def</span> <span class="nf">validate_iso_date</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
 </code></pre></div>
-<p>The plain function that powers <code>ISODateStr</code>. It returns the value unchanged when
+<p>The plain function that powers <code>IsoDateStr</code>. It returns the value unchanged when
 valid and raises <code>ValueError</code> otherwise. Use it directly when you want to:</p>
 <p><strong>Compose your own <code>Annotated</code> type</strong> (e.g. normalise first, then validate):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
@@ -1921,7 +1921,7 @@ or <code>"gb"</code>.</p>
 self-correction flow as any hand-written validator:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>LLM output → create_instance_safe(schema, **output)
 <a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>                   │
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>                   ├─ ISODateStr / validate_iso_date runs
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>                   ├─ IsoDateStr / validate_iso_date runs
 <a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>                   │
 <a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>                   ├─ valid   → validated instance ✅
 <a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>                   └─ invalid → ValueError
@@ -1963,7 +1963,7 @@ their <code>ValueError</code> messages flow into the retry loop via <code>create
    input (e.g. map a country <em>name</em> to a code) before the strict check. You can
    stack both: <code>Annotated[str, BeforeValidator(reshape), AfterValidator(check)]</code>.</li>
 <li><strong>Strict vs normalising.</strong> Return the value unchanged to be strict (like
-   <code>ISODateStr</code>), or return a canonical form to normalise (like <code>IbanStr</code>).
+   <code>IsoDateStr</code>), or return a canonical form to normalise (like <code>IbanStr</code>).
    Document which you chose — callers rely on the output shape.</li>
 <li><strong>The error message.</strong> It is sent verbatim to the LLM. State the rule and give
    an example: <code>"…expected NNNNN or NNNNN-NNNN, e.g. 10115"</code>. See

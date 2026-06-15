@@ -1373,7 +1373,7 @@ error report and appends it to the conversation as a <code>HumanMessage</code>:<
 </code></pre></div>
 <p>The LLM receives this message and gets another attempt.  This loop continues
 up to <code>max_primary_retries</code> times.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_structured_data</span><span class="p">(</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">llm</span><span class="p">,</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">MySchema</span><span class="p">,</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">messages</span><span class="p">,</span>
@@ -1392,12 +1392,12 @@ takes over.  It receives a <strong>clean context</strong> — the original messa
 sentence noting that a previous attempt failed — so the accumulated retry
 noise from the primary model does not confuse it.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_from_text</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">extract_data_from_text</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">primary</span>  <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># fast + cheap</span>
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">fallback</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span>      <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>  <span class="c1"># more capable</span>
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">primary</span><span class="p">,</span>
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">FinancialReport</span><span class="p">,</span>
 <a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">report_text</span><span class="p">,</span>
@@ -1458,7 +1458,7 @@ before the validation loop ever sees the result.</p>
 <a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">)</span>
 </code></pre></div>
 <h3 id="custom-configuration">Custom configuration<a class="headerlink" href="#custom-configuration" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">RetryConfig</span><span class="p">,</span> <span class="n">extract_from_text</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">RetryConfig</span><span class="p">,</span> <span class="n">extract_data_from_text</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">config</span> <span class="o">=</span> <span class="n">RetryConfig</span><span class="p">(</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">max_retries</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
@@ -1467,7 +1467,7 @@ before the validation loop ever sees the result.</p>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">rate_limit_max_duration_seconds</span><span class="o">=</span><span class="mf">300.0</span><span class="p">,</span>   <span class="c1"># give up after 5 minutes</span>
 <a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="p">)</span>
 <a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
 <a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">retry_config</span><span class="o">=</span><span class="n">config</span>
 <a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="p">)</span>
 </code></pre></div>
@@ -1482,7 +1482,7 @@ note on how to add Langfuse tracing via callbacks.</p>
 <a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>    <span class="n">rate_limit_exceptions</span><span class="o">=</span><span class="p">(),</span>
 <a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="p">)</span>
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">get_structured_data</span><span class="p">(</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
 <a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span> <span class="n">retry_config</span><span class="o">=</span><span class="n">NO_RETRY</span>
 <a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="p">)</span>
 </code></pre></div>
@@ -1551,7 +1551,7 @@ note on how to add Langfuse tracing via callbacks.</p>
 </table>
 <hr />
 <h2 id="full-retry-flow">Full retry flow<a class="headerlink" href="#full-retry-flow" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>get_structured_data(primary_llm, schema, messages)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>extract_data(primary_llm, schema, messages)
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>│
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>│  Phase 1 — Primary model
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>│  ┌────────────────────────────────────────────────┐
@@ -1579,7 +1579,7 @@ note on how to add Langfuse tracing via callbacks.</p>
 <hr />
 <h2 id="error-handling">Error handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h2>
 <p>Always check whether the result is <code>None</code> before using it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
 <a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">if</span> <span class="n">result</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
 <a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span>
@@ -1597,10 +1597,10 @@ note on how to add Langfuse tracing via callbacks.</p>
 <a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="n">process</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="tracking-retry-costs">Tracking retry costs<a class="headerlink" href="#tracking-retry-costs" title="Permanent link">&para;</a></h3>
-<p><code>StructuredOutputStats</code> lets you track quality metrics over time:</p>
+<p><code>ExtractDataStats</code> lets you track quality metrics over time:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">for</span> <span class="n">text</span> <span class="ow">in</span> <span class="n">documents</span><span class="p">:</span>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>    <span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">text</span><span class="p">)</span>
 <a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>    <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">({</span>
 <a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>        <span class="s2">&quot;result&quot;</span><span class="p">:</span> <span class="n">result</span><span class="p">,</span>
 <a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>        <span class="s2">&quot;retries&quot;</span><span class="p">:</span> <span class="n">stats</span><span class="o">.</span><span class="n">total_retries</span><span class="p">,</span>
