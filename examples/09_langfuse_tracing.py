@@ -33,7 +33,7 @@ from typing import Any
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import IbanStr, Tool, extract_from_text, extract_with_tools
+from saidex import IbanStr, Tool, extract_data_from_text, extract_data_with_tools
 
 # ---------------------------------------------------------------------------
 # Optional Langfuse wiring — degrade gracefully when it is unavailable
@@ -123,14 +123,14 @@ class TicketResolution(BaseModel):
 
 async def single_extraction(llm: ChatOpenAI, handler: Any | None) -> None:
     text = "Alice Müller, 34, is a software engineer based in Munich."
-    person, stats = await extract_from_text(llm, PersonInfo, text, callbacks=callbacks_for(handler))
+    person, stats = await extract_data_from_text(llm, PersonInfo, text, callbacks=callbacks_for(handler))
     print("A) single extraction:")
     print(f"   {person}  (retries: {stats.total_retries})\n")
 
 
 async def extraction_with_retry(llm: ChatOpenAI, handler: Any | None) -> None:
     text = "Account holder: ACME GmbH. IBAN: DE89 3704 0044 0532 0130 00."
-    result, stats = await extract_from_text(
+    result, stats = await extract_data_from_text(
         llm,
         BankDetails,
         text,
@@ -143,7 +143,7 @@ async def extraction_with_retry(llm: ChatOpenAI, handler: Any | None) -> None:
 
 async def agent_loop(llm: ChatOpenAI, handler: Any | None) -> None:
     ticket = "Where is my order ORD-1042? It's been two weeks!"
-    resolution, stats = await extract_with_tools(
+    resolution, stats = await extract_data_with_tools(
         llm,
         TicketResolution,
         ticket,

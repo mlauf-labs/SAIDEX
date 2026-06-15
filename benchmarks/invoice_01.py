@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 
 from pydantic import BaseModel, Field
-from saidex import CurrencyCodeStr, IbanStr, ISODateStr, VatIdStr
+from saidex import CurrencyCodeStr, IbanStr, IsoDateStr, VatIdStr
 
 from ._base import BenchmarkScenario, run_all_models
 
@@ -24,7 +24,7 @@ class InvoiceData(BaseModel):
     invoice_number: str = Field(description="The invoice's own number/ID, e.g. INV-2024-03-0182")
     contract_number: str = Field(description="Contract or subscription number, e.g. CTR-2024-00891")
     customer_number: str = Field(description="Customer ID or account number, e.g. CUST-4471")
-    invoice_date: ISODateStr = Field(description="Invoice issue date as yyyy-mm-dd, e.g. 2024-03-15")
+    invoice_date: IsoDateStr = Field(description="Invoice issue date as yyyy-mm-dd, e.g. 2024-03-15")
     address: str = Field(description="Full billing address of the customer as a single string")
     billed_company_name: str = Field(description="Name of the company being billed (the recipient)")
     issuing_company_name: str = Field(description="Name of the company that issued the invoice (the seller)")

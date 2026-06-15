@@ -11,9 +11,9 @@ from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from saidex import (
     ExtractionMode,
-    StructuredOutputStats,
-    extract_from_text,
-    get_structured_data,
+    ExtractDataStats,
+    extract_data_from_text,
+    extract_data,
 )
 from pydantic import BaseModel
 
@@ -183,14 +183,14 @@ async def run_scenario(
     try:
         if scenario.vision:
             messages = _build_vision_messages(scenario)
-            value, stats = await get_structured_data(
+            value, stats = await extract_data(
                 llm, scenario.schema, messages, mode=scenario.mode, callbacks=[usage_cb]
             )
         else:
             kwargs: dict[str, Any] = {"mode": scenario.mode, "callbacks": [usage_cb]}
             if scenario.system_prompt:
                 kwargs["system_prompt"] = scenario.system_prompt
-            value, stats = await extract_from_text(
+            value, stats = await extract_data_from_text(
                 llm, scenario.schema, scenario.text, **kwargs
             )
         duration = time.perf_counter() - t0

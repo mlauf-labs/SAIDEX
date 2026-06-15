@@ -21,12 +21,12 @@ from langchain_core.messages.base import BaseMessage
 from pydantic import BaseModel
 
 from .extractor import (
-    extract_from_text,
-    extract_with_tools,
-    get_structured_data,
-    run_agent_loop,
+    extract_data,
+    extract_data_from_text,
+    extract_data_with_tools,
+    run_extractor_agent,
 )
-from .models import AgentRunStats, ExtractionMode, StructuredOutputStats
+from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats
 
 if TYPE_CHECKING:
     from .retry import RetryConfig
@@ -68,7 +68,7 @@ def _run_sync(coro: Coroutine[Any, Any, _T], *, sync_name: str, async_name: str)
     )
 
 
-def get_structured_data_sync(
+def extract_data_sync(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
@@ -79,11 +79,11 @@ def get_structured_data_sync(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, StructuredOutputStats]:
-    """Synchronous wrapper around :func:`~saidex.get_structured_data`.
+) -> tuple[MODEL_T | None, ExtractDataStats]:
+    """Synchronous wrapper around :func:`~saidex.extract_data`.
 
     Identical behaviour and return value; runs the coroutine to completion on a
-    fresh event loop.  See :func:`~saidex.get_structured_data` for the full
+    fresh event loop.  See :func:`~saidex.extract_data` for the full
     parameter documentation.
 
     Args:
@@ -98,13 +98,13 @@ def get_structured_data_sync(
         retry_config: Network-level retry configuration.
 
     Returns:
-        ``(model_instance, stats)`` — see :func:`~saidex.get_structured_data`.
+        ``(model_instance, stats)`` — see :func:`~saidex.extract_data`.
 
     Raises:
         RuntimeError: If called from within a running event loop.
     """
     return _run_sync(
-        get_structured_data(
+        extract_data(
             llm_model,
             schema,
             messages,
@@ -115,12 +115,12 @@ def get_structured_data_sync(
             max_fallback_retries=max_fallback_retries,
             retry_config=retry_config,
         ),
-        sync_name="get_structured_data_sync",
-        async_name="get_structured_data",
+        sync_name="extract_data_sync",
+        async_name="extract_data",
     )
 
 
-def extract_from_text_sync(
+def extract_data_from_text_sync(
     llm_model: Any,
     schema: type[MODEL_T],
     text: str,
@@ -132,11 +132,11 @@ def extract_from_text_sync(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, StructuredOutputStats]:
-    """Synchronous wrapper around :func:`~saidex.extract_from_text`.
+) -> tuple[MODEL_T | None, ExtractDataStats]:
+    """Synchronous wrapper around :func:`~saidex.extract_data_from_text`.
 
     Identical behaviour and return value; runs the coroutine to completion on a
-    fresh event loop.  See :func:`~saidex.extract_from_text` for the full
+    fresh event loop.  See :func:`~saidex.extract_data_from_text` for the full
     parameter documentation.
 
     Args:
@@ -152,13 +152,13 @@ def extract_from_text_sync(
         retry_config: Network-level retry configuration.
 
     Returns:
-        ``(model_instance, stats)`` — see :func:`~saidex.extract_from_text`.
+        ``(model_instance, stats)`` — see :func:`~saidex.extract_data_from_text`.
 
     Raises:
         RuntimeError: If called from within a running event loop.
     """
     return _run_sync(
-        extract_from_text(
+        extract_data_from_text(
             llm_model,
             schema,
             text,
@@ -170,12 +170,12 @@ def extract_from_text_sync(
             max_fallback_retries=max_fallback_retries,
             retry_config=retry_config,
         ),
-        sync_name="extract_from_text_sync",
-        async_name="extract_from_text",
+        sync_name="extract_data_from_text_sync",
+        async_name="extract_data_from_text",
     )
 
 
-def extract_with_tools_sync(
+def extract_data_with_tools_sync(
     llm_model: Any,
     schema: type[MODEL_T],
     text: str,
@@ -188,11 +188,11 @@ def extract_with_tools_sync(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, AgentRunStats]:
-    """Synchronous wrapper around :func:`~saidex.extract_with_tools`.
+) -> tuple[MODEL_T | None, ExtractorRunStats]:
+    """Synchronous wrapper around :func:`~saidex.extract_data_with_tools`.
 
     Identical behaviour and return value; runs the agent loop to completion on a
-    fresh event loop.  See :func:`~saidex.extract_with_tools` for the full
+    fresh event loop.  See :func:`~saidex.extract_data_with_tools` for the full
     parameter documentation.
 
     Args:
@@ -209,13 +209,13 @@ def extract_with_tools_sync(
         retry_config: Network-level retry configuration.
 
     Returns:
-        ``(model_instance, AgentRunStats)`` — see :func:`~saidex.extract_with_tools`.
+        ``(model_instance, ExtractorRunStats)`` — see :func:`~saidex.extract_data_with_tools`.
 
     Raises:
         RuntimeError: If called from within a running event loop.
     """
     return _run_sync(
-        extract_with_tools(
+        extract_data_with_tools(
             llm_model,
             schema,
             text,
@@ -228,12 +228,12 @@ def extract_with_tools_sync(
             max_validation_retries=max_validation_retries,
             retry_config=retry_config,
         ),
-        sync_name="extract_with_tools_sync",
-        async_name="extract_with_tools",
+        sync_name="extract_data_with_tools_sync",
+        async_name="extract_data_with_tools",
     )
 
 
-def run_agent_loop_sync(
+def run_extractor_agent_sync(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
@@ -245,11 +245,11 @@ def run_agent_loop_sync(
     max_iterations: int = 12,
     max_validation_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[MODEL_T | None, AgentRunStats]:
-    """Synchronous wrapper around :func:`~saidex.run_agent_loop`.
+) -> tuple[MODEL_T | None, ExtractorRunStats]:
+    """Synchronous wrapper around :func:`~saidex.run_extractor_agent`.
 
     Identical behaviour and return value; runs the agent loop to completion on a
-    fresh event loop.  See :func:`~saidex.run_agent_loop` for the full parameter
+    fresh event loop.  See :func:`~saidex.run_extractor_agent` for the full parameter
     documentation.
 
     Args:
@@ -265,13 +265,13 @@ def run_agent_loop_sync(
         retry_config: Network-level retry configuration.
 
     Returns:
-        ``(model_instance, AgentRunStats)`` — see :func:`~saidex.run_agent_loop`.
+        ``(model_instance, ExtractorRunStats)`` — see :func:`~saidex.run_extractor_agent`.
 
     Raises:
         RuntimeError: If called from within a running event loop.
     """
     return _run_sync(
-        run_agent_loop(
+        run_extractor_agent(
             llm_model,
             schema,
             messages,
@@ -283,6 +283,6 @@ def run_agent_loop_sync(
             max_validation_retries=max_validation_retries,
             retry_config=retry_config,
         ),
-        sync_name="run_agent_loop_sync",
-        async_name="run_agent_loop",
+        sync_name="run_extractor_agent_sync",
+        async_name="run_extractor_agent",
     )

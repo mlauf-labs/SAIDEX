@@ -21,7 +21,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import ExtractionMode, extract_from_text, get_structured_data
+from saidex import ExtractionMode, extract_data_from_text, extract_data
 
 # ---------------------------------------------------------------------------
 # Define your schema
@@ -47,7 +47,7 @@ async def extract_with_openai_json() -> None:
 
     text = "The UltraWidget Pro costs 49.90 EUR, is in stock, and is a gadget and tool."
 
-    product, stats = await extract_from_text(
+    product, stats = await extract_data_from_text(
         llm,
         Product,
         text,
@@ -84,7 +84,7 @@ async def extract_with_local_model() -> None:
         HumanMessage(content="SilentMouse M2 — 24,99 €, sold out. Tags: mouse, wireless."),
     ]
 
-    product, stats = await get_structured_data(
+    product, stats = await extract_data(
         llm,
         Product,
         messages,

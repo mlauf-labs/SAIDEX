@@ -10,7 +10,7 @@
     "All extraction functions are async — always use async/await",
     "Use Pydantic v2 models as the schema for extraction",
     "Import from saidex directly — the public API is fully exposed in saidex.__init__",
-    "Use extract_from_text for simple text input, get_structured_data for chat history or multimodal content",
+    "Use extract_data_from_text for simple text input, extract_data for chat history or multimodal content",
     "Use ExtractionMode.JSON for models that do not support tool calling"
   ],
   "previousVersions": [

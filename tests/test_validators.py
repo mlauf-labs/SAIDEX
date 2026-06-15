@@ -311,20 +311,20 @@ class TestOrderModelValidators:
 
 
 # ===========================================================================
-# ISODateStr — reusable yyyy-mm-dd date type exported by the library
+# IsoDateStr — reusable yyyy-mm-dd date type exported by the library
 # ===========================================================================
 
 from pydantic import BaseModel  # noqa: E402
 
-from saidex import ISODateStr, validate_iso_date  # noqa: E402
+from saidex import IsoDateStr, validate_iso_date  # noqa: E402
 
 
 class _Event(BaseModel):
-    starts_on: ISODateStr
-    ends_on: ISODateStr | None = None
+    starts_on: IsoDateStr
+    ends_on: IsoDateStr | None = None
 
 
-class TestISODateStr:
+class TestIsoDateStr:
     @pytest.mark.parametrize("value", ["2024-04-05", "1992-12-31", "2000-01-01"])
     def test_valid_dates_pass_through_unchanged(self, value: str) -> None:
         # Returned as a plain str, not coerced to datetime.date.

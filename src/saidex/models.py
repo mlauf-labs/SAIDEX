@@ -25,8 +25,8 @@ class ExtractionMode(str, Enum):
 
 
 @dataclass(frozen=True)
-class StructuredOutputStats:
-    """Statistics from a ``get_structured_data`` call.
+class ExtractDataStats:
+    """Statistics from a ``extract_data`` call.
 
     Tracks how many retries were needed and whether the fallback model was used.
     Backward-compatible with ``int`` so existing code that treated the old return
@@ -80,8 +80,8 @@ class StructuredOutputStats:
 
 
 @dataclass(frozen=True)
-class AgentRunStats:
-    """Statistics from an :func:`extract_with_tools` / :func:`run_agent_loop` call.
+class ExtractorRunStats:
+    """Statistics from an :func:`extract_data_with_tools` / :func:`run_extractor_agent` call.
 
     Attributes:
         iterations: Total LLM invocations performed in the agent loop.
@@ -96,11 +96,11 @@ class AgentRunStats:
     validation_retries: int = 0
     fallback_used: bool = False
 
-    def __add__(self, other: Any) -> "AgentRunStats":
+    def __add__(self, other: Any) -> "ExtractorRunStats":
         """Merge two stats instances (used when combining primary + fallback)."""
-        if not isinstance(other, AgentRunStats):
+        if not isinstance(other, ExtractorRunStats):
             return NotImplemented
-        return AgentRunStats(
+        return ExtractorRunStats(
             iterations=self.iterations + other.iterations,
             tool_calls=self.tool_calls + other.tool_calls,
             validation_retries=self.validation_retries + other.validation_retries,

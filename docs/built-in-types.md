@@ -18,7 +18,7 @@ All built-ins are exported from the package root:
 
 ```python
 from saidex import (
-    ISODateStr, IbanStr, VatIdStr, CountryCodeStr,
+    IsoDateStr, IbanStr, VatIdStr, CountryCodeStr,
     CurrencyCodeStr, IsinStr, PhoneStr, LanguageCodeStr,
 )
 ```
@@ -31,7 +31,7 @@ your own `Annotated` type.
 
 ## Why use a built-in type?
 
-A built-in like [`ISODateStr`](#isodatestr) gives you several things at once:
+A built-in like [`IsoDateStr`](#isodatestr) gives you several things at once:
 
 - **One annotation, every schema** — attach validation by typing a field, with
   no `@field_validator` method to copy around.
@@ -52,7 +52,7 @@ A built-in like [`ISODateStr`](#isodatestr) gives you several things at once:
 
 | Type | Validator | Normalises? | Purpose |
 | --- | --- | --- | --- |
-| [`ISODateStr`](#isodatestr) | `validate_iso_date` | no (strict) | A `str` in ISO `yyyy-mm-dd` calendar-date format |
+| [`IsoDateStr`](#isodatestr) | `validate_iso_date` | no (strict) | A `str` in ISO `yyyy-mm-dd` calendar-date format |
 | [`IbanStr`](#ibanstr) | `validate_iban` | yes | IBAN with structural **and** mod-97 checksum validation |
 | [`VatIdStr`](#vatidstr) | `validate_vat_id` | yes | EU-style VAT identification number (format check) |
 | [`CountryCodeStr`](#countrycodestr) | `validate_country_code` | yes | ISO 3166-1 alpha-2 country code, validated against the official set |
@@ -67,10 +67,10 @@ for the patterns in which you can reuse them directly.
 
 ---
 
-## `ISODateStr`
+## `IsoDateStr`
 
 ```python
-ISODateStr = Annotated[str, AfterValidator(validate_iso_date)]
+IsoDateStr = Annotated[str, AfterValidator(validate_iso_date)]
 ```
 
 A drop-in replacement for `str` on any field that must hold a date in
@@ -82,22 +82,22 @@ field a `str`.
 
 ```python
 from pydantic import BaseModel, Field
-from saidex import ISODateStr
+from saidex import IsoDateStr
 
 class MeetingNotes(BaseModel):
     # Required date field
-    meeting_date: ISODateStr = Field(description="Meeting date as yyyy-mm-dd")
+    meeting_date: IsoDateStr = Field(description="Meeting date as yyyy-mm-dd")
 
     # Optional date field — combine with `| None`
-    next_meeting: ISODateStr | None = Field(
+    next_meeting: IsoDateStr | None = Field(
         default=None,
         description="Date of the next meeting as yyyy-mm-dd, or null",
     )
 ```
 
-`ISODateStr` also works inside nested models and lists — for example an
+`IsoDateStr` also works inside nested models and lists — for example an
 `action_items: list[ActionItem]` where each `ActionItem.due_date` is
-`ISODateStr | None`. Validation errors report the full path
+`IsoDateStr | None`. Validation errors report the full path
 (`action_items -> 0 -> due_date`) so the LLM knows exactly which item to fix.
 
 ### What it accepts and rejects
@@ -105,7 +105,7 @@ class MeetingNotes(BaseModel):
 | Input | Result |
 | --- | --- |
 | `"2024-04-05"` | ✅ valid, returned unchanged |
-| `None` (on an `ISODateStr \| None` field) | ✅ allowed |
+| `None` (on an `IsoDateStr \| None` field) | ✅ allowed |
 | `"2024-4-5"` | ❌ wrong format — month/day must be zero-padded |
 | `"April 5th"`, `"05.04.2024"`, `"31/12/2026"` | ❌ wrong format |
 | `"2024-04-05T00:00:00"` | ❌ wrong format — date only, no time |
@@ -129,7 +129,7 @@ Use a valid yyyy-mm-dd date, e.g. 2024-04-05.
 
 ### Strict vs. lenient — which should you use?
 
-`ISODateStr` is **strict**: it rejects anything that is not already
+`IsoDateStr` is **strict**: it rejects anything that is not already
 `yyyy-mm-dd` and lets the retry loop ask the model to correct it. This keeps
 your data clean and surfaces genuinely ambiguous input.
 
@@ -148,7 +148,7 @@ You can even combine both: a `BeforeValidator` to normalise, then
 def validate_iso_date(value: str) -> str: ...
 ```
 
-The plain function that powers `ISODateStr`. It returns the value unchanged when
+The plain function that powers `IsoDateStr`. It returns the value unchanged when
 valid and raises `ValueError` otherwise. Use it directly when you want to:
 
 **Compose your own `Annotated` type** (e.g. normalise first, then validate):
@@ -384,7 +384,7 @@ self-correction flow as any hand-written validator:
 ```text
 LLM output → create_instance_safe(schema, **output)
                    │
-                   ├─ ISODateStr / validate_iso_date runs
+                   ├─ IsoDateStr / validate_iso_date runs
                    │
                    ├─ valid   → validated instance ✅
                    └─ invalid → ValueError
@@ -434,7 +434,7 @@ Three decisions shape the validator:
    input (e.g. map a country *name* to a code) before the strict check. You can
    stack both: `Annotated[str, BeforeValidator(reshape), AfterValidator(check)]`.
 2. **Strict vs normalising.** Return the value unchanged to be strict (like
-   `ISODateStr`), or return a canonical form to normalise (like `IbanStr`).
+   `IsoDateStr`), or return a canonical form to normalise (like `IbanStr`).
    Document which you chose — callers rely on the output shape.
 3. **The error message.** It is sent verbatim to the LLM. State the rule and give
    an example: `"…expected NNNNN or NNNNN-NNNN, e.g. 10115"`. See

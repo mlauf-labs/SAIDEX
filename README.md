@@ -41,7 +41,7 @@ Extract validated [Pydantic](https://docs.pydantic.dev/) models from LLM respons
 | One model isn't reliable enough | Configure a fallback model that takes over after the primary exhausts its retries |
 | Network errors / rate limits mid-call | Built-in configurable retry with exponential back-off |
 | Your model doesn't support tool calling | Switch to `ExtractionMode.JSON` — works with any chat model |
-| Debugging is hard | Structured `StructuredOutputStats` return value — know exactly how many retries each phase needed |
+| Debugging is hard | Structured `ExtractDataStats` return value — know exactly how many retries each phase needed |
 
 ---
 
@@ -67,7 +67,7 @@ pip install "saidex[openai]"
 import asyncio
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 class PersonInfo(BaseModel):
     name: str
@@ -77,7 +77,7 @@ class PersonInfo(BaseModel):
 async def main():
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
-    person, stats = await extract_from_text(
+    person, stats = await extract_data_from_text(
         llm,
         PersonInfo,
         "Alice Müller, 34, works as a software engineer in Munich.",
@@ -93,7 +93,7 @@ asyncio.run(main())
 
 ```python
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
-from saidex import get_structured_data
+from saidex import extract_data
 
 messages = [
     SystemMessage(content="Analyse the following support conversation."),
@@ -102,17 +102,17 @@ messages = [
     HumanMessage(content="Provide the structured summary."),
 ]
 
-summary, stats = await get_structured_data(llm, SupportTicketSummary, messages)
+summary, stats = await extract_data(llm, SupportTicketSummary, messages)
 ```
 
 ---
 
 ## Core concepts
 
-### `get_structured_data` — the main function
+### `extract_data` — the main function
 
 ```python
-async def get_structured_data(
+async def extract_data(
     llm_model: Any,
     schema: type[ModelT],
     messages: list[BaseMessage],
@@ -123,25 +123,25 @@ async def get_structured_data(
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
     retry_config: RetryConfig | None = None,
-) -> tuple[ModelT | None, StructuredOutputStats]:
+) -> tuple[ModelT | None, ExtractDataStats]:
 ```
 
 Takes a list of `BaseMessage` objects (the full conversation context) and returns a validated `(instance, stats)` tuple.
 
-### `extract_from_text` — convenience wrapper
+### `extract_data_from_text` — convenience wrapper
 
 ```python
-async def extract_from_text(
+async def extract_data_from_text(
     llm_model: Any,
     schema: type[ModelT],
     text: str,
     *,
     system_prompt: str | None = None,
     ...
-) -> tuple[ModelT | None, StructuredOutputStats]:
+) -> tuple[ModelT | None, ExtractDataStats]:
 ```
 
-Converts a plain string into `[SystemMessage, HumanMessage]` and calls `get_structured_data`. You can supply a custom `system_prompt`; a sensible default is used otherwise.
+Converts a plain string into `[SystemMessage, HumanMessage]` and calls `extract_data`. You can supply a custom `system_prompt`; a sensible default is used otherwise.
 
 ### Extraction modes — with or without tool calling
 
@@ -152,13 +152,13 @@ injected into the prompt and the model's raw JSON reply is parsed and
 validated instead.
 
 ```python
-from saidex import ExtractionMode, extract_from_text
+from saidex import ExtractionMode, extract_data_from_text
 
 # Default — tool calling
-result, stats = await extract_from_text(llm, MySchema, text)
+result, stats = await extract_data_from_text(llm, MySchema, text)
 
 # No tool calling required — model replies with raw JSON
-result, stats = await extract_from_text(
+result, stats = await extract_data_from_text(
     llm, MySchema, text, mode=ExtractionMode.JSON
 )
 ```
@@ -186,10 +186,10 @@ JSON object. See **[Extraction Modes](docs/extraction-modes.md)** for details.
 
 When a validation attempt fails, the library appends a **detailed error message** to the conversation — covering missing fields, type errors, enum violations, and constraint failures — so the model knows exactly what to fix.
 
-### `StructuredOutputStats`
+### `ExtractDataStats`
 
 ```python
-result, stats = await get_structured_data(...)
+result, stats = await extract_data(...)
 
 stats.primary_retries   # int — retries against the primary model
 stats.fallback_retries  # int — retries against the fallback model
@@ -205,12 +205,12 @@ int(stats)  # == stats.total_retries  (backward compatible)
 
 Sometimes an extraction needs more than the text in front of the model — a
 database lookup, an API call, or a resource that must be created first.
-`extract_with_tools` runs an agent loop: the LLM may call your tools any
+`extract_data_with_tools` runs an agent loop: the LLM may call your tools any
 number of times, then delivers a final answer validated against your schema.
 
 ```python
 from pydantic import BaseModel, Field
-from saidex import Tool, extract_with_tools
+from saidex import Tool, extract_data_with_tools
 
 # 1. Describe the tool's arguments with a Pydantic model
 class OrderStatusArgs(BaseModel):
@@ -233,7 +233,7 @@ class TicketResolution(BaseModel):
     current_status: str
     customer_reply: str = Field(description="Friendly reply for the customer")
 
-resolution, stats = await extract_with_tools(
+resolution, stats = await extract_data_with_tools(
     llm,
     TicketResolution,
     "Customer asks: where is my order ORD-1042?",
@@ -255,9 +255,9 @@ Good to know:
 
 - Handler exceptions and invalid tool arguments don't crash the loop — they are returned to the LLM as tool output so it can self-correct.
 - Models without tool-calling support can deliver the final answer as raw JSON via `final_answer_mode=ExtractionMode.JSON` (the helper tools themselves always require tool calling).
-- Need full control over the conversation (multi-turn, prior context)? Use `run_agent_loop(llm, schema, messages, tools=...)` — same behaviour, but takes a ready-built message list.
+- Need full control over the conversation (multi-turn, prior context)? Use `run_extractor_agent(llm, schema, messages, tools=...)` — same behaviour, but takes a ready-built message list.
 
-### `AgentRunStats`
+### `ExtractorRunStats`
 
 ```python
 stats.iterations          # int  — LLM invocations in the loop
@@ -276,12 +276,12 @@ Use a cheaper primary model and fall back to a more capable one only when needed
 
 ```python
 from langchain_openai import ChatOpenAI
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 primary  = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 fallback = ChatOpenAI(model="gpt-4o",      temperature=0)
 
-result, stats = await extract_from_text(
+result, stats = await extract_data_from_text(
     primary,
     FinancialReport,
     report_text,
@@ -297,7 +297,7 @@ if stats.fallback_used:
 ### Custom retry configuration
 
 ```python
-from saidex import RetryConfig, extract_from_text
+from saidex import RetryConfig, extract_data_from_text
 
 config = RetryConfig(
     max_retries=2,
@@ -306,7 +306,7 @@ config = RetryConfig(
     rate_limit_max_duration_seconds=300.0,
 )
 
-result, stats = await extract_from_text(
+result, stats = await extract_data_from_text(
     llm, MySchema, text, retry_config=config
 )
 ```
@@ -330,7 +330,7 @@ Any LangChain `BaseCallbackHandler` can be passed via `callbacks`:
 ```python
 from langfuse.callback import CallbackHandler
 
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm,
     MySchema,
     messages,
@@ -369,7 +369,7 @@ import asyncio
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
-from saidex import get_structured_data
+from saidex import extract_data
 
 class ReceiptItem(BaseModel):
     description: str
@@ -399,7 +399,7 @@ async def main():
         ),
     ]
 
-    receipt, stats = await get_structured_data(llm, Receipt, messages)
+    receipt, stats = await extract_data(llm, Receipt, messages)
     print(receipt)
 
 asyncio.run(main())
@@ -426,7 +426,7 @@ messages = [
     image_message_from_file("card.jpg", prompt="Read this business card."),
 ]
 
-result, stats = await get_structured_data(llm, BusinessCard, messages)
+result, stats = await extract_data(llm, BusinessCard, messages)
 ```
 
 ### Use a local vLLM vision model
@@ -455,7 +455,7 @@ Popular vision models supported by vLLM:
 
 ```python
 from langchain_openai import ChatOpenAI
-from saidex import get_structured_data
+from saidex import extract_data
 
 vllm = ChatOpenAI(
     model="Qwen/Qwen2-VL-7B-Instruct",  # must match the loaded model
@@ -470,7 +470,7 @@ messages = [
     image_message_from_url(chart_url, prompt="Analyse this chart."),
 ]
 
-result, stats = await get_structured_data(vllm, ChartData, messages)
+result, stats = await extract_data(vllm, ChartData, messages)
 ```
 
 ### Multiple images in one request
@@ -487,7 +487,7 @@ messages = [
     multi_image_message([url1, url2], prompt="Analyse both labels."),
 ]
 
-result, stats = await get_structured_data(llm, ComparisonSchema, messages)
+result, stats = await extract_data(llm, ComparisonSchema, messages)
 ```
 
 > See [`examples/05_image_analysis.py`](examples/05_image_analysis.py) for the
@@ -725,22 +725,22 @@ class Order(BaseModel):
 
 When a validator raises `ValueError`, `create_instance_safe` catches it,
 formats it into a structured error message, and — inside
-`get_structured_data` — sends it back to the LLM so it can self-correct.
+`extract_data` — sends it back to the LLM so it can self-correct.
 
 > Full example with all four validator types:
 > [`examples/06_pydantic_validators.py`](examples/06_pydantic_validators.py)
 > — [detailed docs](docs/validators.md)
 
 For common cases the library ships **ready-made field types** so you don't have
-to write a validator at all — e.g. `ISODateStr` for `yyyy-mm-dd` dates, plus
+to write a validator at all — e.g. `IsoDateStr` for `yyyy-mm-dd` dates, plus
 `IbanStr`, `VatIdStr`, `CountryCodeStr`, `CurrencyCodeStr`, `IsinStr`,
 `PhoneStr`, and `LanguageCodeStr`:
 
 ```python
-from saidex import ISODateStr, IbanStr, CountryCodeStr
+from saidex import IsoDateStr, IbanStr, CountryCodeStr
 
 class Payment(BaseModel):
-    due_date: ISODateStr | None = Field(None, description="Due date as yyyy-mm-dd")
+    due_date: IsoDateStr | None = Field(None, description="Due date as yyyy-mm-dd")
     iban: IbanStr | None = Field(None, description="Payee IBAN")
     country: CountryCodeStr | None = Field(None, description="ISO 3166-1 alpha-2 code")
 ```
@@ -752,7 +752,7 @@ class Payment(BaseModel):
 
 ## API reference
 
-### `get_structured_data`
+### `extract_data`
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -766,13 +766,13 @@ class Payment(BaseModel):
 | `max_fallback_retries` | `int` | `3` | Validation retries for fallback model |
 | `retry_config` | `RetryConfig \| None` | `DEFAULT_RETRY_CONFIG` | Network retry settings |
 
-**Returns:** `tuple[ModelT | None, StructuredOutputStats]`
+**Returns:** `tuple[ModelT | None, ExtractDataStats]`
 
 ---
 
-### `extract_from_text`
+### `extract_data_from_text`
 
-All parameters of `get_structured_data` plus:
+All parameters of `extract_data` plus:
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -789,7 +789,7 @@ All parameters of `get_structured_data` plus:
 
 ---
 
-### `extract_with_tools`
+### `extract_data_with_tools`
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
@@ -805,9 +805,9 @@ All parameters of `get_structured_data` plus:
 | `max_validation_retries` | `int` | `3` | Max final answers that may fail validation |
 | `retry_config` | `RetryConfig \| None` | `DEFAULT_RETRY_CONFIG` | Network retry settings |
 
-**Returns:** `tuple[ModelT | None, AgentRunStats]`
+**Returns:** `tuple[ModelT | None, ExtractorRunStats]`
 
-`run_agent_loop` accepts the same parameters but takes a full
+`run_extractor_agent` accepts the same parameters but takes a full
 `messages: list[BaseMessage]` instead of `text` / `system_prompt`.
 
 ---
@@ -851,8 +851,8 @@ All parameters of `get_structured_data` plus:
 saidex/
 ├── src/saidex/   # library source
 │   ├── __init__.py              # public API
-│   ├── extractor.py             # get_structured_data, extract_from_text + agent loop
-│   ├── models.py                # StructuredOutputStats, AgentRunStats, ExtractionMode
+│   ├── extractor.py             # extract_data, extract_data_from_text + agent loop
+│   ├── models.py                # ExtractDataStats, ExtractorRunStats, ExtractionMode
 │   ├── retry.py                 # RetryConfig + with_retry
 │   ├── tools.py                 # Tool dataclass for the agent loop
 │   ├── utils.py                 # create_instance_safe

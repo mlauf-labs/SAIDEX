@@ -1,4 +1,4 @@
-"""Tests for get_structured_data and extract_from_text (using mocks)."""
+"""Tests for extract_data and extract_data_from_text (using mocks)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from saidex import ExtractionMode, extract_from_text, get_structured_data
+from saidex import ExtractionMode, extract_data, extract_data_from_text
 from saidex.retry import RetryConfig
 
 # ---------------------------------------------------------------------------
@@ -90,9 +90,7 @@ async def test_success_first_attempt() -> None:
     llm = _make_bound_llm([_make_llm_response({"name": "Alice", "value": 42})])
     messages = [HumanMessage(content="Extract data")]
 
-    result, stats = await get_structured_data(
-        llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY
-    )
+    result, stats = await extract_data(llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY)
 
     assert result is not None
     assert result.name == "Alice"
@@ -114,9 +112,7 @@ async def test_success_after_validation_retry() -> None:
     llm = _make_bound_llm([bad_response, good_response])
     messages = [HumanMessage(content="Extract data")]
 
-    result, stats = await get_structured_data(
-        llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY
-    )
+    result, stats = await extract_data(llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY)
 
     assert result is not None
     assert result.value == 42
@@ -138,7 +134,7 @@ async def test_fallback_used_when_primary_exhausted() -> None:
 
     messages = [HumanMessage(content="Extract")]
 
-    result, stats = await get_structured_data(
+    result, stats = await extract_data(
         primary_llm,
         SimpleSchema,
         messages,
@@ -167,7 +163,7 @@ async def test_returns_none_when_all_fail() -> None:
 
     messages = [HumanMessage(content="Extract")]
 
-    result, stats = await get_structured_data(
+    result, stats = await extract_data(
         primary_llm,
         SimpleSchema,
         messages,
@@ -195,21 +191,19 @@ async def test_no_tool_calls_triggers_retry() -> None:
     llm = _make_bound_llm([no_call, good])
     messages = [HumanMessage(content="Extract")]
 
-    result, stats = await get_structured_data(
-        llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY
-    )
+    result, stats = await extract_data(llm, SimpleSchema, messages, retry_config=NO_NETWORK_RETRY)
 
     assert result is not None
     assert stats.primary_retries == 1
 
 
 # ---------------------------------------------------------------------------
-# extract_from_text — builds correct message list
+# extract_data_from_text — builds correct message list
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_extract_from_text_builds_messages() -> None:
+async def test_extract_data_from_text_builds_messages() -> None:
     captured_messages: list[Any] = []
 
     async def fake_invoke(msgs: Any, **_kwargs: Any) -> MagicMock:
@@ -221,7 +215,7 @@ async def test_extract_from_text_builds_messages() -> None:
     llm = MagicMock()
     llm.bind_tools = MagicMock(return_value=bound)
 
-    result, _ = await extract_from_text(
+    result, _ = await extract_data_from_text(
         llm,
         SimpleSchema,
         "Some text",
@@ -237,7 +231,7 @@ async def test_extract_from_text_builds_messages() -> None:
 
 
 @pytest.mark.asyncio
-async def test_extract_from_text_default_system_prompt() -> None:
+async def test_extract_data_from_text_default_system_prompt() -> None:
     captured_messages: list[Any] = []
 
     async def fake_invoke(msgs: Any, **_kwargs: Any) -> MagicMock:
@@ -249,7 +243,7 @@ async def test_extract_from_text_default_system_prompt() -> None:
     llm = MagicMock()
     llm.bind_tools = MagicMock(return_value=bound)
 
-    await extract_from_text(llm, SimpleSchema, "text", retry_config=NO_NETWORK_RETRY)
+    await extract_data_from_text(llm, SimpleSchema, "text", retry_config=NO_NETWORK_RETRY)
 
     assert isinstance(captured_messages[0], SystemMessage)
     assert "SimpleSchema" in captured_messages[0].content
@@ -265,7 +259,7 @@ async def test_json_mode_success_plain() -> None:
     llm = _make_json_llm(['{"name": "Alice", "value": 42}'])
     messages = [HumanMessage(content="Extract data")]
 
-    result, stats = await get_structured_data(
+    result, stats = await extract_data(
         llm,
         SimpleSchema,
         messages,
@@ -292,7 +286,7 @@ async def test_json_mode_strips_code_fences() -> None:
     llm = _make_json_llm([fenced])
     messages = [HumanMessage(content="Extract data")]
 
-    result, stats = await get_structured_data(
+    result, stats = await extract_data(
         llm,
         SimpleSchema,
         messages,
@@ -317,7 +311,7 @@ async def test_json_mode_isolates_object_from_text() -> None:
     llm = _make_json_llm([noisy])
     messages = [HumanMessage(content="Extract data")]
 
-    result, _ = await get_structured_data(
+    result, _ = await extract_data(
         llm,
         SimpleSchema,
         messages,
@@ -349,7 +343,7 @@ async def test_json_mode_injects_schema_instructions() -> None:
     llm.bind_tools = MagicMock(side_effect=AssertionError("must not bind tools"))
 
     messages = [HumanMessage(content="Extract data")]
-    result, _ = await get_structured_data(
+    result, _ = await extract_data(
         llm,
         SimpleSchema,
         messages,
@@ -375,7 +369,7 @@ async def test_json_mode_retries_on_unparseable_then_succeeds() -> None:
     llm = _make_json_llm(["this is not json at all", '{"name": "Eve", "value": 5}'])
     messages = [HumanMessage(content="Extract data")]
 
-    result, stats = await get_structured_data(
+    result, stats = await extract_data(
         llm,
         SimpleSchema,
         messages,
@@ -400,7 +394,7 @@ async def test_json_mode_validation_retry() -> None:
     )
     messages = [HumanMessage(content="Extract data")]
 
-    result, stats = await get_structured_data(
+    result, stats = await extract_data(
         llm,
         SimpleSchema,
         messages,
@@ -424,7 +418,7 @@ async def test_json_mode_fallback() -> None:
     fallback = _make_json_llm(['{"name": "Grace", "value": 8}'])
 
     messages = [HumanMessage(content="Extract")]
-    result, stats = await get_structured_data(
+    result, stats = await extract_data(
         primary,
         SimpleSchema,
         messages,
@@ -441,15 +435,15 @@ async def test_json_mode_fallback() -> None:
 
 
 # ---------------------------------------------------------------------------
-# JSON mode — extract_from_text end to end
+# JSON mode — extract_data_from_text end to end
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_json_mode_extract_from_text() -> None:
+async def test_json_mode_extract_data_from_text() -> None:
     llm = _make_json_llm(['{"name": "Heidi", "value": 21}'])
 
-    result, _ = await extract_from_text(
+    result, _ = await extract_data_from_text(
         llm,
         SimpleSchema,
         "Heidi is 21",

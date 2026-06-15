@@ -9,12 +9,12 @@ This document covers tracing, callbacks, logging, the standalone
 
 ## Callbacks
 
-Both `extract_from_text` and `get_structured_data` accept a `callbacks`
+Both `extract_data_from_text` and `extract_data` accept a `callbacks`
 parameter.  Pass any list of LangChain `BaseCallbackHandler` instances to
 get automatic tracing of every LLM call — including retry attempts.
 
 ```python
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm,
     MySchema,
     messages,
@@ -39,7 +39,7 @@ from langfuse.langchain import CallbackHandler
 
 handler = CallbackHandler()  # reads LANGFUSE_* env vars
 
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     llm,
     MySchema,
     messages,
@@ -76,7 +76,7 @@ from langsmith.run_helpers import traceable
 
 @traceable(name="extract-invoice")
 async def extract_invoice(text: str) -> Invoice | None:
-    result, _ = await extract_from_text(llm, Invoice, text)
+    result, _ = await extract_data_from_text(llm, Invoice, text)
     return result
 ```
 
@@ -201,17 +201,17 @@ your validator error messages are clear and actionable.
 
 ## Async and sync usage
 
-The library is **async-first**.  Both `extract_from_text` and
-`get_structured_data` are coroutines that must be `await`ed.
+The library is **async-first**.  Both `extract_data_from_text` and
+`extract_data` are coroutines that must be `await`ed.
 
 ### Standard async usage
 
 ```python
 import asyncio
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 async def main() -> None:
-    result, stats = await extract_from_text(llm, MySchema, text)
+    result, stats = await extract_data_from_text(llm, MySchema, text)
     ...
 
 asyncio.run(main())
@@ -226,21 +226,21 @@ its signature exactly and runs the coroutine to completion internally:
 
 | Async | Synchronous wrapper |
 | --- | --- |
-| `extract_from_text` | `extract_from_text_sync` |
-| `get_structured_data` | `get_structured_data_sync` |
-| `extract_with_tools` | `extract_with_tools_sync` |
-| `run_agent_loop` | `run_agent_loop_sync` |
+| `extract_data_from_text` | `extract_data_from_text_sync` |
+| `extract_data` | `extract_data_sync` |
+| `extract_data_with_tools` | `extract_data_with_tools_sync` |
+| `run_extractor_agent` | `run_extractor_agent_sync` |
 
 ```python
-from saidex import extract_from_text_sync
+from saidex import extract_data_from_text_sync
 
 # No async/await, no asyncio.run — just call it.
-result, stats = extract_from_text_sync(llm, MySchema, text)
+result, stats = extract_data_from_text_sync(llm, MySchema, text)
 
 # The agent loop has a sync wrapper too:
-from saidex import extract_with_tools_sync
+from saidex import extract_data_with_tools_sync
 
-result, stats = extract_with_tools_sync(llm, MySchema, text, tools=[my_tool])
+result, stats = extract_data_with_tools_sync(llm, MySchema, text, tools=[my_tool])
 ```
 
 The wrappers delegate to `asyncio.run`, so call them only from code that is
@@ -254,7 +254,7 @@ Jupyter notebooks already run an event loop, so the sync wrappers would raise.
 Use `await` directly in a cell instead:
 
 ```python
-result, stats = await extract_from_text(llm, MySchema, text)
+result, stats = await extract_data_from_text(llm, MySchema, text)
 ```
 
 ### FastAPI integration
@@ -263,13 +263,13 @@ FastAPI routes are async by default — use `await` as normal:
 
 ```python
 from fastapi import FastAPI
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 app = FastAPI()
 
 @app.post("/extract")
 async def extract_endpoint(text: str) -> dict:
-    result, stats = await extract_from_text(llm, MySchema, text)
+    result, stats = await extract_data_from_text(llm, MySchema, text)
     if result is None:
         return {"error": "extraction failed", "retries": stats.total_retries}
     return result.model_dump()
@@ -297,7 +297,7 @@ metrics = ExtractionMetrics()
 
 async def extract_tracked(text: str) -> MySchema | None:
     t0 = time.monotonic()
-    result, stats = await extract_from_text(llm, MySchema, text)
+    result, stats = await extract_data_from_text(llm, MySchema, text)
     elapsed = time.monotonic() - t0
 
     metrics.total += 1

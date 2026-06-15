@@ -12,7 +12,7 @@ from typing import Annotated
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import extract_from_text
+from saidex import extract_data_from_text
 
 # ---------------------------------------------------------------------------
 # Define your schema
@@ -41,7 +41,7 @@ async def main() -> None:
     She has been working at a tech startup for three years.
     """
 
-    person, stats = await extract_from_text(llm, PersonInfo, text)
+    person, stats = await extract_data_from_text(llm, PersonInfo, text)
 
     if person is None:
         print(f"Extraction failed after {stats.total_retries} retries.")

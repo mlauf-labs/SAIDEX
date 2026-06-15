@@ -123,7 +123,7 @@ import asyncio
 from pydantic import BaseModel, Field
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage
-from saidex import get_structured_data
+from saidex import extract_data
 
 class ProductLabel(BaseModel):
     product_name: str  = Field(description="Full product name as printed on the label")
@@ -140,7 +140,7 @@ async def extract_from_image_url(url: str) -> ProductLabel | None:
         image_message_from_url(url, prompt="Extract data from this product label."),
     ]
 
-    result, stats = await get_structured_data(llm, ProductLabel, messages)
+    result, stats = await extract_data(llm, ProductLabel, messages)
     print(f"Retries: {stats.total_retries}")
     return result
 
@@ -160,7 +160,7 @@ async def extract_from_local_file(path: str) -> ProductLabel | None:
         image_message_from_file(path, prompt="Extract data from this product label."),
     ]
 
-    result, stats = await get_structured_data(llm, ProductLabel, messages)
+    result, stats = await extract_data(llm, ProductLabel, messages)
     return result
 
 asyncio.run(extract_from_local_file("./product.jpg"))
@@ -207,7 +207,7 @@ async def extract_with_vllm(url: str) -> ProductLabel | None:
         image_message_from_url(url, prompt="Extract data from this product label."),
     ]
 
-    result, stats = await get_structured_data(llm, ProductLabel, messages)
+    result, stats = await extract_data(llm, ProductLabel, messages)
     return result
 ```
 
@@ -250,7 +250,7 @@ async def compare_products(image_paths: list[str]) -> ComparativeAnalysis | None
         ),
     ]
 
-    result, stats = await get_structured_data(llm, ComparativeAnalysis, messages)
+    result, stats = await extract_data(llm, ComparativeAnalysis, messages)
     return result
 
 asyncio.run(compare_products(["product_a.jpg", "product_b.jpg", "product_c.jpg"]))
@@ -281,7 +281,7 @@ image quality varies:
 primary  = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 fallback = ChatOpenAI(model="gpt-4o",      temperature=0)
 
-result, stats = await get_structured_data(
+result, stats = await extract_data(
     primary, ProductLabel, messages,
     fallback_llm_model=fallback,
     max_primary_retries=1,    # fail fast on the small model
