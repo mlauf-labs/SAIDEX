@@ -110,11 +110,16 @@ class Grounded(FieldCheck):
         locale_field: Name of a sibling field whose value supplies the locale
             hint at runtime (e.g. a ``CountryCodeStr`` field). Takes precedence
             over *locale* when it resolves to a non-empty value.
+        on_mismatch: What a failed check does. ``"retry"`` (default) feeds the
+            failure back to the model and consumes a retry; ``"flag"`` keeps the
+            extracted value and only records a :class:`~saidex.models.FieldIssue`
+            (advisory grounding, no retry).
     """
 
     mode: str = "normalized"
     locale: str | None = None
     locale_field: str | None = None
+    on_mismatch: str = "retry"
 
     def check(self, value: Any, ctx: ExtractionContext) -> str | None:
         if value is None or not ctx.source_text:
@@ -170,6 +175,7 @@ def GroundedField(  # noqa: N802 — mirrors pydantic.Field's CapWords spelling
     mode: str = "normalized",
     locale: str | None = None,
     locale_field: str | None = None,
+    on_mismatch: str = "retry",
     **field_kwargs: Any,
 ) -> Any:
     """Field helper that marks a field as source-grounded.
@@ -184,7 +190,7 @@ def GroundedField(  # noqa: N802 — mirrors pydantic.Field's CapWords spelling
             total: float = GroundedField(locale_field="country", description="…")
     """
     return field_check(
-        Grounded(mode=mode, locale=locale, locale_field=locale_field),
+        Grounded(mode=mode, locale=locale, locale_field=locale_field, on_mismatch=on_mismatch),
         **field_kwargs,
     )
 
@@ -209,13 +215,16 @@ def collect_field_check_issues(
 
     Returns:
         ``([], None)`` when everything passes (or there is no source text);
-        otherwise ``(issues, feedback)``. ``issues`` carry ``attempt=0`` for the
-        caller to re-stamp.
+        otherwise ``(issues, feedback)``. ``issues`` covers every failed check
+        (both ``"retry"`` and ``"flag"``) and carries ``attempt=0`` for the
+        caller to re-stamp. ``feedback`` is built only from ``"retry"`` failures
+        and is ``None`` when all failures are advisory (``"flag"``), so the
+        caller records the issues without consuming a retry.
     """
     if not source_text:
         return [], None
 
-    failures: list[tuple[str, str, str | None]] = []
+    failures: list[_Failure] = []
     _walk(instance, source_text, "", failures)
     if not failures:
         return [], None
@@ -223,30 +232,45 @@ def collect_field_check_issues(
     issues = [
         FieldIssue(
             schema_name=schema_name,
-            field_path=path,
+            field_path=failure.field_path,
             category="grounding",
             error_type="grounding",
-            message=message,
+            message=failure.message,
             attempt=0,
-            received=received,
+            received=failure.received,
         )
-        for path, message, received in failures
+        for failure in failures
     ]
+    retry_messages = [f.message for f in failures if f.on_mismatch != "flag"]
     feedback = (
-        "Some extracted values could not be found in the source text:\n\n"
-        + "\n".join(f"  - {message}" for _, message, _ in failures)
-        + "\n\nReturn a corrected response that uses only values present in the source text."
+        (
+            "Some extracted values could not be found in the source text:\n\n"
+            + "\n".join(f"  - {message}" for message in retry_messages)
+            + "\n\nReturn a corrected response that uses only values present in the source text."
+        )
+        if retry_messages
+        else None
     )
     return issues, feedback
+
+
+@dataclass(frozen=True)
+class _Failure:
+    """One failed field check, tagged with how the engine should react."""
+
+    field_path: str
+    message: str
+    received: str | None
+    on_mismatch: str
 
 
 def _walk(
     obj: Any,
     source_text: str,
     path: str,
-    failures: list[tuple[str, str, str | None]],
+    failures: list[_Failure],
 ) -> None:
-    """Recursively run field checks, accumulating ``(path, message, received)``."""
+    """Recursively run field checks, accumulating :class:`_Failure` records."""
     if isinstance(obj, BaseModel):
         for name, info in type(obj).model_fields.items():
             value = getattr(obj, name)
@@ -262,7 +286,14 @@ def _walk(
                 for check in checks:
                     message = check.check(value, ctx)
                     if message:
-                        failures.append((child_path, message, _truncate(value)))
+                        failures.append(
+                            _Failure(
+                                field_path=child_path,
+                                message=message,
+                                received=_truncate(value),
+                                on_mismatch=getattr(check, "on_mismatch", "retry"),
+                            )
+                        )
             _walk(value, source_text, child_path, failures)
     elif isinstance(obj, (list, tuple)):
         for index, item in enumerate(obj):

@@ -1051,10 +1051,10 @@ async def _run_extractor_agent_with_model(
                 grounding_issues, grounding_error = collect_field_check_issues(
                     instance, source_text, schema.__name__
                 )
+                agent_issues.extend(
+                    replace(i, attempt=validation_retries) for i in grounding_issues
+                )
                 if grounding_error is not None:
-                    agent_issues.extend(
-                        replace(i, attempt=validation_retries) for i in grounding_issues
-                    )
                     failure_reason = "validation_exhausted"
                     if validation_retries >= max_validation_retries:
                         break
@@ -1198,10 +1198,10 @@ async def _run_extractor_agent_with_model(
                     grounding_issues, grounding_error = collect_field_check_issues(
                         instance, source_text, schema.__name__
                     )
+                    agent_issues.extend(
+                        replace(i, attempt=validation_retries) for i in grounding_issues
+                    )
                     if grounding_error is not None:
-                        agent_issues.extend(
-                            replace(i, attempt=validation_retries) for i in grounding_issues
-                        )
                         failure_reason = "validation_exhausted"
                         if validation_retries >= max_validation_retries:
                             tool_result_messages.append(
@@ -1453,6 +1453,9 @@ async def _try_with_model(
         grounding_issues, grounding_error = collect_field_check_issues(
             instance, source_text, schema.__name__
         )
+        # Record every grounding issue (including advisory ``flag`` ones); only a
+        # ``retry`` failure produces feedback and re-enters the loop below.
+        issues.extend(replace(i, attempt=retries) for i in grounding_issues)
         if grounding_error is not None:
             logger.warning(
                 "%s: grounding failed for %s (attempt %d/%d):\n%s",
@@ -1462,7 +1465,6 @@ async def _try_with_model(
                 max_retries,
                 grounding_error,
             )
-            issues.extend(replace(i, attempt=retries) for i in grounding_issues)
             failure_reason = "validation_exhausted"
             messages.append(HumanMessage(content=grounding_error))
             retries += 1

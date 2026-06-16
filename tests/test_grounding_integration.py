@@ -218,6 +218,27 @@ async def test_grounding_in_agent_loop() -> None:
 
 
 # ---------------------------------------------------------------------------
+# on_mismatch="flag" — keep the value, record the issue, no retry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_flag_mode_keeps_value_without_retry() -> None:
+    class Doc(BaseModel):
+        name: Annotated[str, Grounded(on_mismatch="flag")]
+
+    llm = _bound_llm([_tool_response({"name": "Globex"}, "Doc")])  # not in source
+
+    result, stats = await extract_data(llm, Doc, _src(), retry_config=_NO_NETWORK_RETRY)
+
+    assert result is not None
+    assert result.name == "Globex"  # value kept
+    assert stats.success
+    assert stats.primary_retries == 0  # no retry consumed
+    assert any(i.category == "grounding" for i in stats.field_issues)
+
+
+# ---------------------------------------------------------------------------
 # sync wrapper
 # ---------------------------------------------------------------------------
 
