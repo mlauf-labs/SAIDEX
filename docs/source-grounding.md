@@ -39,7 +39,7 @@ class Invoice(BaseModel):
 
 ## How it fits the retry loop
 
-```
+```text
 LLM produces output
         │
         ▼
@@ -90,6 +90,25 @@ Grounded(mode="exact")    # require the verbatim str(value) to be present
 
 Grounding applies to **scalar leaf fields** (`str`, numbers, dates); container
 and nested-model fields are walked through to reach the scalars inside them.
+
+---
+
+## Retry vs. flag (`on_mismatch`)
+
+By default a grounding failure **re-enters the retry loop** so the model can
+correct the value. Set `on_mismatch="flag"` for **advisory** grounding: the
+extracted value is kept, no retry is consumed, and the mismatch is only recorded
+as a `FieldIssue(category="grounding")` for later inspection.
+
+```python
+class Invoice(BaseModel):
+    vendor: Annotated[str, Grounded()]                      # "retry" (default)
+    summary: str = GroundedField(on_mismatch="flag")        # advisory only
+```
+
+Both modes record a `FieldIssue`; only `"retry"` produces feedback to the model
+and consumes an attempt. A schema can mix the two — retry failures drive the
+correction prompt, flag failures ride along as recorded issues.
 
 ---
 
@@ -167,6 +186,6 @@ wrappers. There are no new parameters to pass — just mark the fields.
 
 ## Out of scope (tracked separately)
 
-A flag-only mode, fuzzy matching, value-form localisation (number words,
-boolean yes/no), and phone-number surface forms are tracked as follow-up issues
-on the project tracker.
+Fuzzy matching, value-form localisation (number words, boolean yes/no), and
+phone-number surface forms are tracked as follow-up issues on the project
+tracker.
