@@ -15,6 +15,9 @@ Grounding is locale-aware: a number stored as ``1234.5`` is matched against
 field (e.g. a country code) to drive the formatting from the extracted data, or
 pass a fixed ``locale``.
 
+By default a mismatch re-enters the retry loop; pass ``on_mismatch="flag"`` for
+advisory grounding that keeps the value and only records a ``FieldIssue``.
+
 Run:
     python examples/13_source_grounding.py
 """

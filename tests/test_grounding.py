@@ -191,3 +191,50 @@ class TestEngineWalk:
 def test_base_field_check_is_abstract() -> None:
     with pytest.raises(NotImplementedError):
         FieldCheck().check("x", _ctx("text"))
+
+
+# ---------------------------------------------------------------------------
+# on_mismatch="flag" — record an issue but do not drive a retry
+# ---------------------------------------------------------------------------
+
+
+class TestFlagMode:
+    def test_field_helper_forwards_on_mismatch(self) -> None:
+        class Doc(BaseModel):
+            note: str = GroundedField(on_mismatch="flag")
+
+        check = _checks(Doc, "note")[0]
+        assert isinstance(check, Grounded)
+        assert check.on_mismatch == "flag"
+
+    def test_flag_failure_is_recorded_without_feedback(self) -> None:
+        class Doc(BaseModel):
+            note: Annotated[str, Grounded(on_mismatch="flag")]
+
+        issues, feedback = collect_field_check_issues(
+            Doc(note="Globex"), "Invoice from ACME GmbH", "Doc"
+        )
+        # The issue is recorded for observability...
+        assert len(issues) == 1
+        assert issues[0].category == "grounding"
+        assert issues[0].field_path == "note"
+        # ...but there is no retry feedback, so the value is kept.
+        assert feedback is None
+
+    def test_mixed_retry_and_flag(self) -> None:
+        class Doc(BaseModel):
+            vendor: Annotated[str, Grounded()]  # retry (default)
+            note: Annotated[str, Grounded(on_mismatch="flag")]
+
+        issues, feedback = collect_field_check_issues(
+            Doc(vendor="Globex", note="Initech"), "Invoice from ACME GmbH", "Doc"
+        )
+        # Both failures are recorded...
+        assert {i.field_path for i in issues} == {"vendor", "note"}
+        # ...but only the retry field drives the feedback.
+        assert feedback is not None
+        assert "vendor" in feedback
+        assert "note" not in feedback
+
+    def test_default_on_mismatch_is_retry(self) -> None:
+        assert Grounded().on_mismatch == "retry"
