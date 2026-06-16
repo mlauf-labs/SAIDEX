@@ -1034,6 +1034,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="source-grounding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source Grounding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1178,6 +1206,10 @@
 <td>Pass your own <code>validator</code> callable for cross-field, stateful, or reference-data checks that re-enter the retry loop</td>
 </tr>
 <tr>
+<td><strong><a href="source-grounding/">Source Grounding</a></strong></td>
+<td>Mark fields with <code>Grounded</code> / <code>GroundedField</code> so extracted values are verified against the source text (anti-hallucination)</td>
+</tr>
+<tr>
 <td><strong><a href="images/">Image Extraction</a></strong></td>
 <td>Multimodal messages, OpenAI Vision, local vLLM</td>
 </tr>
@@ -1242,6 +1274,10 @@
 <td><a href="../examples/12_external_validator.py"><code>12_external_validator.py</code></a></td>
 <td>External <code>validator</code> callable: cross-field rule that re-enters the retry loop</td>
 </tr>
+<tr>
+<td><a href="../examples/13_source_grounding.py"><code>13_source_grounding.py</code></a></td>
+<td>Source grounding: <code>Grounded</code> / <code>GroundedField</code> verify values against the text</td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -1259,6 +1295,7 @@
 <li>…clean messy LLM output (currency symbols, date formats) → <a href="validators/#field_validatormodebefore--clean-raw-llm-output">Validators — <code>mode='before'</code></a></li>
 <li>…add cross-field rules (end &gt; start, total = sum) → <a href="validators/#model_validatormodeafter--cross-field-consistency-rules">Validators — <code>mode='after'</code></a></li>
 <li>…validate against a database, business rule, or running total → <a href="external-validators/">External Validators</a></li>
+<li>…make sure the model only returns values present in the document → <a href="source-grounding/">Source Grounding</a></li>
 <li>…extract data from images → <a href="images/">Image Extraction</a></li>
 <li>…add tracing with Langfuse or LangSmith → <a href="observability/">Observability</a></li>
 <li>…call the library from synchronous code → <a href="observability/#sync-usage">Observability — Sync usage</a></li>
