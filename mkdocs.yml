@@ -55,6 +55,7 @@ nav:
       - Built-in Types: built-in-types.md
       - Validators: validators.md
       - External Validators: external-validators.md
+      - Source Grounding: source-grounding.md
 
 markdown_extensions:
   - pymdownx.highlight:

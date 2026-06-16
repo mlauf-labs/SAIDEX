@@ -11,7 +11,8 @@
     "Use Pydantic v2 models as the schema for extraction",
     "Import from saidex directly — the public API is fully exposed in saidex.__init__",
     "Use extract_data_from_text for simple text input, extract_data for chat history or multimodal content",
-    "Use ExtractionMode.JSON for models that do not support tool calling"
+    "Use ExtractionMode.JSON for models that do not support tool calling",
+    "To reject hallucinated values, mark fields with Grounded() (Annotated marker) or GroundedField() so the extracted value is verified against the source text"
   ],
   "previousVersions": [
     {
