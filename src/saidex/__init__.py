@@ -36,6 +36,13 @@ Public API
         Validator,
         RetryConfig,
         create_instance_safe,
+        # Source grounding (schema-declared, source-aware field checks)
+        Grounded,
+        GroundedField,
+        GroundedStr,
+        FieldCheck,
+        ExtractionContext,
+        field_check,
         # Cross-run field-issue analytics
         summarize_field_issues,
         render_field_issue_report,
@@ -70,6 +77,14 @@ from .extractor import (
     extract_data_list_from_text,
     extract_data_with_tools,
     run_extractor_agent,
+)
+from .grounding import (
+    ExtractionContext,
+    FieldCheck,
+    Grounded,
+    GroundedField,
+    GroundedStr,
+    field_check,
 )
 from .models import (
     ExtractDataStats,
@@ -146,6 +161,13 @@ __all__ = [
     "DEFAULT_RETRY_CONFIG",
     "with_retry",
     "create_instance_safe",
+    # source grounding / schema-declared field checks
+    "Grounded",
+    "GroundedField",
+    "GroundedStr",
+    "FieldCheck",
+    "ExtractionContext",
+    "field_check",
     # reusable schema field types
     "IsoDateStr",
     "validate_iso_date",

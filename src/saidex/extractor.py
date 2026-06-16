@@ -19,6 +19,7 @@ from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field, create_model
 
+from .grounding import collect_field_check_issues
 from .models import (
     ExtractDataStats,
     ExtractionEvent,
@@ -231,6 +232,9 @@ async def extract_data(
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
 
     original_messages = list(messages)
+    # Source text for field grounding — derived transiently from the human turn,
+    # independent of ``capture_source_text`` (which controls retention in stats).
+    grounding_source = _source_text_from_messages(original_messages)
 
     logger.debug(
         "Starting structured output extraction for %s (mode=%s)",
@@ -266,6 +270,7 @@ async def extract_data(
         retry_config=effective_retry_config,
         mode=mode,
         validator=validator,
+        source_text=grounding_source,
     )
 
     if primary.instance is not None:
@@ -308,6 +313,7 @@ async def extract_data(
             retry_config=effective_retry_config,
             mode=mode,
             validator=validator,
+            source_text=grounding_source,
         )
 
         combined_issues = (*primary.field_issues, *fallback.field_issues)
@@ -809,6 +815,7 @@ async def run_extractor_agent(
     """
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
     original_messages = list(messages)
+    grounding_source = _source_text_from_messages(original_messages)
 
     async def _finish(
         result: MODEL_T | None, stats: ExtractorRunStats
@@ -840,6 +847,7 @@ async def run_extractor_agent(
         model_label="primary",
         retry_config=effective_retry_config,
         validator=validator,
+        source_text=grounding_source,
     )
 
     if result is not None:
@@ -872,6 +880,7 @@ async def run_extractor_agent(
             model_label="fallback",
             retry_config=effective_retry_config,
             validator=validator,
+            source_text=grounding_source,
         )
         succeeded = result is not None
         combined = ExtractorRunStats(
@@ -920,6 +929,7 @@ async def _run_extractor_agent_with_model(
     model_label: str,
     retry_config: RetryConfig,
     validator: Validator[MODEL_T] | None = None,
+    source_text: str | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Execute the agent loop with one model; return (instance, stats)."""
     from .tools import Tool as ToolType  # noqa: F401 – used for type clarity only
@@ -1038,6 +1048,24 @@ async def _run_extractor_agent_with_model(
                     validation_retries += 1
                     continue
                 assert instance is not None
+                grounding_issues, grounding_error = collect_field_check_issues(
+                    instance, source_text, schema.__name__
+                )
+                if grounding_error is not None:
+                    agent_issues.extend(
+                        replace(i, attempt=validation_retries) for i in grounding_issues
+                    )
+                    failure_reason = "validation_exhausted"
+                    if validation_retries >= max_validation_retries:
+                        break
+                    logger.warning(
+                        "%s: agent loop JSON final answer failed grounding: %s",
+                        model_label,
+                        grounding_error,
+                    )
+                    messages.append(HumanMessage(content=grounding_error))
+                    validation_retries += 1
+                    continue
                 validator_error = await _run_external_validator(
                     validator, instance, schema.__name__
                 )
@@ -1167,6 +1195,34 @@ async def _run_extractor_agent_with_model(
                         validation_retries += 1
                 else:
                     assert instance is not None
+                    grounding_issues, grounding_error = collect_field_check_issues(
+                        instance, source_text, schema.__name__
+                    )
+                    if grounding_error is not None:
+                        agent_issues.extend(
+                            replace(i, attempt=validation_retries) for i in grounding_issues
+                        )
+                        failure_reason = "validation_exhausted"
+                        if validation_retries >= max_validation_retries:
+                            tool_result_messages.append(
+                                ToolMessage(
+                                    content=f"Grounding failed: {grounding_error}",
+                                    tool_call_id=tc_id,
+                                )
+                            )
+                        else:
+                            tool_result_messages.append(
+                                ToolMessage(
+                                    content=(
+                                        f"{grounding_error}\n\n"
+                                        f"Please call '{final_tool_name}' again with corrected "
+                                        f"values."
+                                    ),
+                                    tool_call_id=tc_id,
+                                )
+                            )
+                            validation_retries += 1
+                        continue
                     validator_error = await _run_external_validator(
                         validator, instance, schema.__name__
                     )
@@ -1286,6 +1342,7 @@ async def _try_with_model(
     retry_config: RetryConfig,
     mode: ExtractionMode,
     validator: Validator[MODEL_T] | None = None,
+    source_text: str | None = None,
 ) -> _ModelAttempt[MODEL_T]:
     """Attempt structured extraction with one model, with validation retries.
 
@@ -1393,6 +1450,25 @@ async def _try_with_model(
             continue
 
         assert instance is not None
+        grounding_issues, grounding_error = collect_field_check_issues(
+            instance, source_text, schema.__name__
+        )
+        if grounding_error is not None:
+            logger.warning(
+                "%s: grounding failed for %s (attempt %d/%d):\n%s",
+                model_label,
+                schema.__name__,
+                retries + 1,
+                max_retries,
+                grounding_error,
+            )
+            issues.extend(replace(i, attempt=retries) for i in grounding_issues)
+            failure_reason = "validation_exhausted"
+            messages.append(HumanMessage(content=grounding_error))
+            retries += 1
+            remaining -= 1
+            continue
+
         validator_error = await _run_external_validator(validator, instance, schema.__name__)
         if validator_error is not None:
             logger.warning(

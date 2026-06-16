@@ -44,7 +44,8 @@ class FieldIssue:
         field_path: Dotted/arrow path to the offending field, e.g.
             ``"items -> 0 -> price"``.
         category: Coarse, human-facing bucket — one of ``"missing"``,
-            ``"type"``, ``"enum"``, ``"value"``, ``"format"`` or ``"other"``.
+            ``"type"``, ``"enum"``, ``"value"``, ``"format"``, ``"grounding"``
+            (a value not found in the source text) or ``"other"``.
         error_type: The raw Pydantic error type, e.g. ``"int_parsing"``.
         message: Human-readable description of the problem.
         attempt: Zero-based retry attempt in which the error occurred.
