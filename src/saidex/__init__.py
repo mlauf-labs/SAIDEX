@@ -58,6 +58,7 @@ Public API
         IsinStr,
         PhoneStr,
         LanguageCodeStr,
+        RRuleStr,
     )
 """
 
@@ -112,6 +113,7 @@ from .validators import (
     IsoDateStr,
     LanguageCodeStr,
     PhoneStr,
+    RRuleStr,
     VatIdStr,
     validate_country_code,
     validate_currency_code,
@@ -120,6 +122,7 @@ from .validators import (
     validate_iso_date,
     validate_language_code,
     validate_phone,
+    validate_rrule,
     validate_vat_id,
 )
 
@@ -185,6 +188,8 @@ __all__ = [
     "validate_phone",
     "LanguageCodeStr",
     "validate_language_code",
+    "RRuleStr",
+    "validate_rrule",
 ]
 
 __version__ = "0.3.0"
