@@ -1104,6 +1104,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rrulestr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RRuleStr
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-built-ins-fit-the-retry-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1495,6 +1506,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#rrulestr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RRuleStr
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#how-built-ins-fit-the-retry-loop" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1643,7 +1665,8 @@ back to a custom validator only when no built-in fits.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="p">(</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">IsoDateStr</span><span class="p">,</span> <span class="n">IbanStr</span><span class="p">,</span> <span class="n">VatIdStr</span><span class="p">,</span> <span class="n">CountryCodeStr</span><span class="p">,</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">CurrencyCodeStr</span><span class="p">,</span> <span class="n">IsinStr</span><span class="p">,</span> <span class="n">PhoneStr</span><span class="p">,</span> <span class="n">LanguageCodeStr</span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="p">)</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">RRuleStr</span><span class="p">,</span>  <span class="c1"># requires the optional `saidex[rrule]` extra</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="p">)</span>
 </code></pre></div>
 <p>Each type <code>X</code> also exports its underlying <code>validate_x</code> function (e.g.
 <code>validate_iban</code>) so you can reuse the check outside a schema or compose it into
@@ -1724,6 +1747,12 @@ your own <code>Annotated</code> type.</p>
 <td><code>validate_language_code</code></td>
 <td>yes</td>
 <td>ISO 639-1 language code, validated against the official set</td>
+</tr>
+<tr>
+<td><a href="#rrulestr"><code>RRuleStr</code></a></td>
+<td><code>validate_rrule</code></td>
+<td>no (strict)</td>
+<td>RFC 5545 recurrence rule (<code>RRULE</code>); needs the <code>saidex[rrule]</code> extra</td>
 </tr>
 </tbody>
 </table>
@@ -2028,22 +2057,79 @@ or <code>"gb"</code>.</p>
 <a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="n">Page</span><span class="p">(</span><span class="n">language</span><span class="o">=</span><span class="s2">&quot;EN&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">language</span>   <span class="c1"># -&gt; &quot;en&quot;</span>
 </code></pre></div>
 <hr />
+<h2 id="rrulestr"><code>RRuleStr</code><a class="headerlink" href="#rrulestr" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">RRuleStr</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_rrule</span><span class="p">)]</span>
+</code></pre></div>
+<p>An <a href="https://www.rfc-editor.org/rfc/rfc5545#section-3.3.10">RFC 5545</a> recurrence
+rule (<code>RRULE</code>) — the string that encodes <em>"every year on May 1st"</em> or <em>"every
+Monday, Wednesday and Friday"</em>. The value is validated by parsing it and is
+<strong>kept verbatim</strong> (strict, like <a href="#isodatestr"><code>IsoDateStr</code></a>) so it round-trips
+exactly as the model produced it.</p>
+<blockquote>
+<p><strong>Optional dependency.</strong> <code>RRuleStr</code> parses the rule with
+<a href="https://dateutil.readthedocs.io/"><code>python-dateutil</code></a>, which ships in the
+<code>saidex[rrule]</code> extra. Install it with <code>pip install 'saidex[rrule]'</code>. If the
+extra is missing, <code>validate_rrule</code> raises <strong><code>RuntimeError</code></strong> (not <code>ValueError</code>)
+— a missing dependency is an environment problem the retry loop must not try to
+"correct".</p>
+</blockquote>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">RRuleStr</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="k">class</span> <span class="nc">CalendarEvent</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a>    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>    <span class="n">recurrence</span><span class="p">:</span> <span class="n">RRuleStr</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>        <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Recurrence as an RFC 5545 RRULE, e.g. FREQ=WEEKLY;BYDAY=MO,WE,FR&quot;</span><span class="p">,</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>    <span class="p">)</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="n">CalendarEvent</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="s2">&quot;Standup&quot;</span><span class="p">,</span> <span class="n">recurrence</span><span class="o">=</span><span class="s2">&quot;FREQ=WEEKLY;BYDAY=MO,WE,FR&quot;</span><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Input</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>"FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=1"</code></td>
+<td>✅ valid, returned unchanged</td>
+</tr>
+<tr>
+<td><code>"FREQ=WEEKLY;BYDAY=MO,WE,FR"</code></td>
+<td>✅ valid</td>
+</tr>
+<tr>
+<td><code>"FREQ=DAILY;COUNT=10"</code></td>
+<td>✅ valid</td>
+</tr>
+<tr>
+<td><code>"every monday"</code>, <code>"FREQ=FORTNIGHTLY"</code></td>
+<td>❌ not a parseable RRULE</td>
+</tr>
+<tr>
+<td><code>""</code></td>
+<td>❌ empty</td>
+</tr>
+</tbody>
+</table>
+<hr />
 <h2 id="how-built-ins-fit-the-retry-loop">How built-ins fit the retry loop<a class="headerlink" href="#how-built-ins-fit-the-retry-loop" title="Permanent link">&para;</a></h2>
 <p>Because every built-in raises <code>ValueError</code> on bad input, it plugs into the same
 self-correction flow as any hand-written validator:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a>LLM output → create_instance_safe(schema, **output)
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>                   │
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>                   ├─ IsoDateStr / validate_iso_date runs
-<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>                   │
-<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a>                   ├─ valid   → validated instance ✅
-<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>                   └─ invalid → ValueError
-<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a>                                   │
-<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a>                                   ▼
-<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>                         structured field-level error
-<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a>                         (&quot;action_items -&gt; 0 -&gt; due_date: …&quot;)
-<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a>                                   │
-<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a>                                   ▼
-<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a>                         sent back to the LLM as a retry prompt
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a>LLM output → create_instance_safe(schema, **output)
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>                   │
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a>                   ├─ IsoDateStr / validate_iso_date runs
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>                   │
+<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a>                   ├─ valid   → validated instance ✅
+<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>                   └─ invalid → ValueError
+<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a>                                   │
+<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>                                   ▼
+<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>                         structured field-level error
+<a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>                         (&quot;action_items -&gt; 0 -&gt; due_date: …&quot;)
+<a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a>                                   │
+<a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a>                                   ▼
+<a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a>                         sent back to the LLM as a retry prompt
 </code></pre></div>
 <p>See <a href="../retry-and-fallback/">Retry &amp; Fallback</a> for the full end-to-end loop and
 <a href="../validators/#testing-validators-independently">Validators — testing</a> for how to
@@ -2055,16 +2141,16 @@ aliases wrapping a validator function. You can create your own in <strong>your</
 the exact same way, and they behave identically: reusable across schemas, and
 their <code>ValueError</code> messages flow into the retry loop via <code>create_instance_safe</code>.</p>
 <h3 id="the-recipe">The recipe<a class="headerlink" href="#the-recipe" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">AfterValidator</span>
-<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a>
-<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="k">def</span> <span class="nf">validate_x</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the (optionally normalised) value, or raise ValueError.&quot;&quot;&quot;</span>
-<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">is_acceptable</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
-<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;…specific, actionable message telling the LLM the rule…&quot;</span><span class="p">)</span>
-<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>    <span class="k">return</span> <span class="n">normalise</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>          <span class="c1"># or just `return value` to keep it as-is</span>
-<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a>
-<a id="__codelineno-23-10" name="__codelineno-23-10" href="#__codelineno-23-10"></a><span class="n">XStr</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_x</span><span class="p">)]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">AfterValidator</span>
+<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
+<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="k">def</span> <span class="nf">validate_x</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Return the (optionally normalised) value, or raise ValueError.&quot;&quot;&quot;</span>
+<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">is_acceptable</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">&quot;…specific, actionable message telling the LLM the rule…&quot;</span><span class="p">)</span>
+<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>    <span class="k">return</span> <span class="n">normalise</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>          <span class="c1"># or just `return value` to keep it as-is</span>
+<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>
+<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a><span class="n">XStr</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_x</span><span class="p">)]</span>
 </code></pre></div>
 <p>Three decisions shape the validator:</p>
 <ol>
@@ -2083,38 +2169,38 @@ their <code>ValueError</code> messages flow into the retry loop via <code>create
 </ol>
 <h3 id="example-1-a-strict-pattern-type">Example 1 — a strict pattern type<a class="headerlink" href="#example-1-a-strict-pattern-type" title="Permanent link">&para;</a></h3>
 <p>A reference/order ID that must look like <code>ORD-12345</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="kn">import</span> <span class="nn">re</span>
-<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
-<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">AfterValidator</span>
-<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a>
-<a id="__codelineno-24-5" name="__codelineno-24-5" href="#__codelineno-24-5"></a><span class="n">_ORDER_ID_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^ORD-\d</span><span class="si">{5}</span><span class="s2">$&quot;</span><span class="p">)</span>
-<a id="__codelineno-24-6" name="__codelineno-24-6" href="#__codelineno-24-6"></a>
-<a id="__codelineno-24-7" name="__codelineno-24-7" href="#__codelineno-24-7"></a><span class="k">def</span> <span class="nf">validate_order_id</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<a id="__codelineno-24-8" name="__codelineno-24-8" href="#__codelineno-24-8"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">_ORDER_ID_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
-<a id="__codelineno-24-9" name="__codelineno-24-9" href="#__codelineno-24-9"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
-<a id="__codelineno-24-10" name="__codelineno-24-10" href="#__codelineno-24-10"></a>            <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not a valid order ID. Expected &#39;ORD-&#39; followed by &quot;</span>
-<a id="__codelineno-24-11" name="__codelineno-24-11" href="#__codelineno-24-11"></a>            <span class="sa">f</span><span class="s2">&quot;exactly five digits, e.g. &#39;ORD-04812&#39;.&quot;</span>
-<a id="__codelineno-24-12" name="__codelineno-24-12" href="#__codelineno-24-12"></a>        <span class="p">)</span>
-<a id="__codelineno-24-13" name="__codelineno-24-13" href="#__codelineno-24-13"></a>    <span class="k">return</span> <span class="n">value</span>
-<a id="__codelineno-24-14" name="__codelineno-24-14" href="#__codelineno-24-14"></a>
-<a id="__codelineno-24-15" name="__codelineno-24-15" href="#__codelineno-24-15"></a><span class="n">OrderId</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_order_id</span><span class="p">)]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="kn">import</span> <span class="nn">re</span>
+<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">AfterValidator</span>
+<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>
+<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="n">_ORDER_ID_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s2">&quot;^ORD-\d</span><span class="si">{5}</span><span class="s2">$&quot;</span><span class="p">)</span>
+<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>
+<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="k">def</span> <span class="nf">validate_order_id</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="ow">not</span> <span class="n">_ORDER_ID_RE</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+<a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+<a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a>            <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not a valid order ID. Expected &#39;ORD-&#39; followed by &quot;</span>
+<a id="__codelineno-26-11" name="__codelineno-26-11" href="#__codelineno-26-11"></a>            <span class="sa">f</span><span class="s2">&quot;exactly five digits, e.g. &#39;ORD-04812&#39;.&quot;</span>
+<a id="__codelineno-26-12" name="__codelineno-26-12" href="#__codelineno-26-12"></a>        <span class="p">)</span>
+<a id="__codelineno-26-13" name="__codelineno-26-13" href="#__codelineno-26-13"></a>    <span class="k">return</span> <span class="n">value</span>
+<a id="__codelineno-26-14" name="__codelineno-26-14" href="#__codelineno-26-14"></a>
+<a id="__codelineno-26-15" name="__codelineno-26-15" href="#__codelineno-26-15"></a><span class="n">OrderId</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_order_id</span><span class="p">)]</span>
 </code></pre></div>
 <h3 id="example-2-a-normalising-set-validated-type">Example 2 — a normalising, set-validated type<a class="headerlink" href="#example-2-a-normalising-set-validated-type" title="Permanent link">&para;</a></h3>
 <p>Validate against an allowed set and normalise. The same shape as
 <code>CountryCodeStr</code> / <code>CurrencyCodeStr</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
-<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">AfterValidator</span>
-<a id="__codelineno-25-3" name="__codelineno-25-3" href="#__codelineno-25-3"></a>
-<a id="__codelineno-25-4" name="__codelineno-25-4" href="#__codelineno-25-4"></a><span class="n">_PRIORITIES</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;high&quot;</span><span class="p">,</span> <span class="s2">&quot;critical&quot;</span><span class="p">}</span>
-<a id="__codelineno-25-5" name="__codelineno-25-5" href="#__codelineno-25-5"></a>
-<a id="__codelineno-25-6" name="__codelineno-25-6" href="#__codelineno-25-6"></a><span class="k">def</span> <span class="nf">validate_priority</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
-<a id="__codelineno-25-7" name="__codelineno-25-7" href="#__codelineno-25-7"></a>    <span class="n">norm</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
-<a id="__codelineno-25-8" name="__codelineno-25-8" href="#__codelineno-25-8"></a>    <span class="k">if</span> <span class="n">norm</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_PRIORITIES</span><span class="p">:</span>
-<a id="__codelineno-25-9" name="__codelineno-25-9" href="#__codelineno-25-9"></a>        <span class="n">allowed</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_PRIORITIES</span><span class="p">))</span>
-<a id="__codelineno-25-10" name="__codelineno-25-10" href="#__codelineno-25-10"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not a valid priority. Use one of: </span><span class="si">{</span><span class="n">allowed</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
-<a id="__codelineno-25-11" name="__codelineno-25-11" href="#__codelineno-25-11"></a>    <span class="k">return</span> <span class="n">norm</span>
-<a id="__codelineno-25-12" name="__codelineno-25-12" href="#__codelineno-25-12"></a>
-<a id="__codelineno-25-13" name="__codelineno-25-13" href="#__codelineno-25-13"></a><span class="n">Priority</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_priority</span><span class="p">)]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">AfterValidator</span>
+<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>
+<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="n">_PRIORITIES</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;low&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;high&quot;</span><span class="p">,</span> <span class="s2">&quot;critical&quot;</span><span class="p">}</span>
+<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>
+<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a><span class="k">def</span> <span class="nf">validate_priority</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a>    <span class="n">norm</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a>    <span class="k">if</span> <span class="n">norm</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_PRIORITIES</span><span class="p">:</span>
+<a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a>        <span class="n">allowed</span> <span class="o">=</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">sorted</span><span class="p">(</span><span class="n">_PRIORITIES</span><span class="p">))</span>
+<a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not a valid priority. Use one of: </span><span class="si">{</span><span class="n">allowed</span><span class="si">}</span><span class="s2">.&quot;</span><span class="p">)</span>
+<a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a>    <span class="k">return</span> <span class="n">norm</span>
+<a id="__codelineno-27-12" name="__codelineno-27-12" href="#__codelineno-27-12"></a>
+<a id="__codelineno-27-13" name="__codelineno-27-13" href="#__codelineno-27-13"></a><span class="n">Priority</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_priority</span><span class="p">)]</span>
 </code></pre></div>
 <blockquote>
 <p>For a fixed, <em>small</em> set you usually want a <code>typing.Literal</code> or an <code>Enum</code>
@@ -2125,19 +2211,19 @@ codes), comes from data, or needs normalisation before the check.</p>
 <h3 id="example-3-reshape-first-then-reuse-a-built-in">Example 3 — reshape first, then reuse a built-in<a class="headerlink" href="#example-3-reshape-first-then-reuse-a-built-in" title="Permanent link">&para;</a></h3>
 <p>Map a country <em>name</em> to a code with a <code>BeforeValidator</code>, then hand off to the
 library's <code>validate_country_code</code> for the authoritative check:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span><span class="p">,</span> <span class="n">Any</span>
-<a id="__codelineno-26-2" name="__codelineno-26-2" href="#__codelineno-26-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BeforeValidator</span><span class="p">,</span> <span class="n">AfterValidator</span>
-<a id="__codelineno-26-3" name="__codelineno-26-3" href="#__codelineno-26-3"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">validate_country_code</span>
-<a id="__codelineno-26-4" name="__codelineno-26-4" href="#__codelineno-26-4"></a>
-<a id="__codelineno-26-5" name="__codelineno-26-5" href="#__codelineno-26-5"></a><span class="n">_NAME_TO_CODE</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;germany&quot;</span><span class="p">:</span> <span class="s2">&quot;DE&quot;</span><span class="p">,</span> <span class="s2">&quot;deutschland&quot;</span><span class="p">:</span> <span class="s2">&quot;DE&quot;</span><span class="p">,</span> <span class="s2">&quot;united kingdom&quot;</span><span class="p">:</span> <span class="s2">&quot;GB&quot;</span><span class="p">}</span>
-<a id="__codelineno-26-6" name="__codelineno-26-6" href="#__codelineno-26-6"></a>
-<a id="__codelineno-26-7" name="__codelineno-26-7" href="#__codelineno-26-7"></a><span class="k">def</span> <span class="nf">name_to_code</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
-<a id="__codelineno-26-8" name="__codelineno-26-8" href="#__codelineno-26-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
-<a id="__codelineno-26-9" name="__codelineno-26-9" href="#__codelineno-26-9"></a>        <span class="k">return</span> <span class="n">_NAME_TO_CODE</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">(),</span> <span class="n">value</span><span class="p">)</span>
-<a id="__codelineno-26-10" name="__codelineno-26-10" href="#__codelineno-26-10"></a>    <span class="k">return</span> <span class="n">value</span>
-<a id="__codelineno-26-11" name="__codelineno-26-11" href="#__codelineno-26-11"></a>
-<a id="__codelineno-26-12" name="__codelineno-26-12" href="#__codelineno-26-12"></a><span class="c1"># Accepts &quot;Germany&quot;, &quot;DE&quot;, or &quot;de&quot;; always ends up validated and normalised to &quot;DE&quot;.</span>
-<a id="__codelineno-26-13" name="__codelineno-26-13" href="#__codelineno-26-13"></a><span class="n">LenientCountryCode</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BeforeValidator</span><span class="p">(</span><span class="n">name_to_code</span><span class="p">),</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_country_code</span><span class="p">)]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span><span class="p">,</span> <span class="n">Any</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BeforeValidator</span><span class="p">,</span> <span class="n">AfterValidator</span>
+<a id="__codelineno-28-3" name="__codelineno-28-3" href="#__codelineno-28-3"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">validate_country_code</span>
+<a id="__codelineno-28-4" name="__codelineno-28-4" href="#__codelineno-28-4"></a>
+<a id="__codelineno-28-5" name="__codelineno-28-5" href="#__codelineno-28-5"></a><span class="n">_NAME_TO_CODE</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;germany&quot;</span><span class="p">:</span> <span class="s2">&quot;DE&quot;</span><span class="p">,</span> <span class="s2">&quot;deutschland&quot;</span><span class="p">:</span> <span class="s2">&quot;DE&quot;</span><span class="p">,</span> <span class="s2">&quot;united kingdom&quot;</span><span class="p">:</span> <span class="s2">&quot;GB&quot;</span><span class="p">}</span>
+<a id="__codelineno-28-6" name="__codelineno-28-6" href="#__codelineno-28-6"></a>
+<a id="__codelineno-28-7" name="__codelineno-28-7" href="#__codelineno-28-7"></a><span class="k">def</span> <span class="nf">name_to_code</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<a id="__codelineno-28-8" name="__codelineno-28-8" href="#__codelineno-28-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+<a id="__codelineno-28-9" name="__codelineno-28-9" href="#__codelineno-28-9"></a>        <span class="k">return</span> <span class="n">_NAME_TO_CODE</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">(),</span> <span class="n">value</span><span class="p">)</span>
+<a id="__codelineno-28-10" name="__codelineno-28-10" href="#__codelineno-28-10"></a>    <span class="k">return</span> <span class="n">value</span>
+<a id="__codelineno-28-11" name="__codelineno-28-11" href="#__codelineno-28-11"></a>
+<a id="__codelineno-28-12" name="__codelineno-28-12" href="#__codelineno-28-12"></a><span class="c1"># Accepts &quot;Germany&quot;, &quot;DE&quot;, or &quot;de&quot;; always ends up validated and normalised to &quot;DE&quot;.</span>
+<a id="__codelineno-28-13" name="__codelineno-28-13" href="#__codelineno-28-13"></a><span class="n">LenientCountryCode</span> <span class="o">=</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">BeforeValidator</span><span class="p">(</span><span class="n">name_to_code</span><span class="p">),</span> <span class="n">AfterValidator</span><span class="p">(</span><span class="n">validate_country_code</span><span class="p">)]</span>
 </code></pre></div>
 <h3 id="where-to-put-it">Where to put it<a class="headerlink" href="#where-to-put-it" title="Permanent link">&para;</a></h3>
 <p>Define each type once in a small module (e.g. <code>myapp/schema_types.py</code>) and
@@ -2147,17 +2233,17 @@ single, testable place — exactly how SAIDEX keeps its own in
 <h3 id="test-it-without-an-llm">Test it without an LLM<a class="headerlink" href="#test-it-without-an-llm" title="Permanent link">&para;</a></h3>
 <p>Validators are plain functions, so test them directly — and assert on the
 message the LLM would receive via <code>create_instance_safe</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="kn">import</span> <span class="nn">pytest</span>
-<a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">create_instance_safe</span>
-<a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>
-<a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a><span class="k">def</span> <span class="nf">test_order_id_rejects_bad_value</span><span class="p">():</span>
-<a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>    <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="n">match</span><span class="o">=</span><span class="s2">&quot;valid order ID&quot;</span><span class="p">):</span>
-<a id="__codelineno-27-6" name="__codelineno-27-6" href="#__codelineno-27-6"></a>        <span class="n">validate_order_id</span><span class="p">(</span><span class="s2">&quot;12345&quot;</span><span class="p">)</span>
-<a id="__codelineno-27-7" name="__codelineno-27-7" href="#__codelineno-27-7"></a>
-<a id="__codelineno-27-8" name="__codelineno-27-8" href="#__codelineno-27-8"></a><span class="k">def</span> <span class="nf">test_schema_reports_field_path</span><span class="p">():</span>
-<a id="__codelineno-27-9" name="__codelineno-27-9" href="#__codelineno-27-9"></a>    <span class="n">instance</span><span class="p">,</span> <span class="n">error</span> <span class="o">=</span> <span class="n">create_instance_safe</span><span class="p">(</span><span class="n">MyOrder</span><span class="p">,</span> <span class="n">order_id</span><span class="o">=</span><span class="s2">&quot;12345&quot;</span><span class="p">)</span>
-<a id="__codelineno-27-10" name="__codelineno-27-10" href="#__codelineno-27-10"></a>    <span class="k">assert</span> <span class="n">instance</span> <span class="ow">is</span> <span class="kc">None</span>
-<a id="__codelineno-27-11" name="__codelineno-27-11" href="#__codelineno-27-11"></a>    <span class="k">assert</span> <span class="s2">&quot;order_id&quot;</span> <span class="ow">in</span> <span class="n">error</span>      <span class="c1"># this text is sent back to the model</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="kn">import</span> <span class="nn">pytest</span>
+<a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">create_instance_safe</span>
+<a id="__codelineno-29-3" name="__codelineno-29-3" href="#__codelineno-29-3"></a>
+<a id="__codelineno-29-4" name="__codelineno-29-4" href="#__codelineno-29-4"></a><span class="k">def</span> <span class="nf">test_order_id_rejects_bad_value</span><span class="p">():</span>
+<a id="__codelineno-29-5" name="__codelineno-29-5" href="#__codelineno-29-5"></a>    <span class="k">with</span> <span class="n">pytest</span><span class="o">.</span><span class="n">raises</span><span class="p">(</span><span class="ne">ValueError</span><span class="p">,</span> <span class="n">match</span><span class="o">=</span><span class="s2">&quot;valid order ID&quot;</span><span class="p">):</span>
+<a id="__codelineno-29-6" name="__codelineno-29-6" href="#__codelineno-29-6"></a>        <span class="n">validate_order_id</span><span class="p">(</span><span class="s2">&quot;12345&quot;</span><span class="p">)</span>
+<a id="__codelineno-29-7" name="__codelineno-29-7" href="#__codelineno-29-7"></a>
+<a id="__codelineno-29-8" name="__codelineno-29-8" href="#__codelineno-29-8"></a><span class="k">def</span> <span class="nf">test_schema_reports_field_path</span><span class="p">():</span>
+<a id="__codelineno-29-9" name="__codelineno-29-9" href="#__codelineno-29-9"></a>    <span class="n">instance</span><span class="p">,</span> <span class="n">error</span> <span class="o">=</span> <span class="n">create_instance_safe</span><span class="p">(</span><span class="n">MyOrder</span><span class="p">,</span> <span class="n">order_id</span><span class="o">=</span><span class="s2">&quot;12345&quot;</span><span class="p">)</span>
+<a id="__codelineno-29-10" name="__codelineno-29-10" href="#__codelineno-29-10"></a>    <span class="k">assert</span> <span class="n">instance</span> <span class="ow">is</span> <span class="kc">None</span>
+<a id="__codelineno-29-11" name="__codelineno-29-11" href="#__codelineno-29-11"></a>    <span class="k">assert</span> <span class="s2">&quot;order_id&quot;</span> <span class="ow">in</span> <span class="n">error</span>      <span class="c1"># this text is sent back to the model</span>
 </code></pre></div>
 <p>See <a href="../validators/#testing-validators-independently">Validators — testing</a> for
 more on testing validators and inspecting the retry message.</p>
