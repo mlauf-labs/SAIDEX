@@ -41,6 +41,7 @@ dependencies = [
 
 [project.optional-dependencies]
 openai = ["openai>=1.0.0"]
+rrule = ["python-dateutil>=2.8.2"]
 benchmarks = ["langchain-openai>=0.1.0", "Pillow>=10.0"]
 
 [project.urls]
@@ -79,6 +80,12 @@ packages = ["saidex"]
 module = "openai"
 ignore_missing_imports = true
 
+# python-dateutil is an optional extra (saidex[rrule]) — its import in the RRULE
+# validator is guarded at runtime, raising RuntimeError when the extra is absent.
+[[tool.mypy.overrides]]
+module = "dateutil.*"
+ignore_missing_imports = true
+
 [tool.commitizen]
 name = "cz_conventional_commits"
 version = "0.3.0"
@@ -112,4 +119,6 @@ dev = [
     "ruff>=0.3.0",
     "hatchling",
     "commitizen>=4.16.3",
+    # Exercises the optional saidex[rrule] extra in the test suite.
+    "python-dateutil>=2.8.2",
 ]

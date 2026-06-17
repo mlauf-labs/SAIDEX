@@ -770,7 +770,8 @@ formats it into a structured error message, and — inside
 For common cases the library ships **ready-made field types** so you don't have
 to write a validator at all — e.g. `IsoDateStr` for `yyyy-mm-dd` dates, plus
 `IbanStr`, `VatIdStr`, `CountryCodeStr`, `CurrencyCodeStr`, `IsinStr`,
-`PhoneStr`, and `LanguageCodeStr`:
+`PhoneStr`, and `LanguageCodeStr` (and `RRuleStr` for RFC 5545 recurrence rules,
+via the optional `saidex[rrule]` extra):
 
 ```python
 from saidex import IsoDateStr, IbanStr, CountryCodeStr

@@ -500,6 +500,64 @@ class TestLanguageCodeStr:
             validate_language_code(value)
 
 
+# ===========================================================================
+# RRuleStr — RFC 5545 recurrence rule (optional, needs python-dateutil)
+# ===========================================================================
+
+import sys  # noqa: E402
+
+from saidex import RRuleStr, validate_rrule  # noqa: E402
+
+
+class _Schedule(BaseModel):
+    recurrence: RRuleStr
+    fallback: RRuleStr | None = None
+
+
+class TestRRuleStr:
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=1",
+            "FREQ=WEEKLY;BYDAY=MO,WE,FR",
+            "FREQ=DAILY;COUNT=10",
+            "FREQ=MONTHLY;INTERVAL=2",
+            "FREQ=YEARLY",
+        ],
+    )
+    def test_valid_rrule_passes_through_unchanged(self, value: str) -> None:
+        # Returned verbatim — the string is not rewritten to a canonical form.
+        assert validate_rrule(value) == value
+        assert _Schedule(recurrence=value).recurrence == value
+
+    def test_optional_none_allowed(self) -> None:
+        schedule = _Schedule(recurrence="FREQ=DAILY", fallback=None)
+        assert schedule.fallback is None
+
+    @pytest.mark.parametrize(
+        "value",
+        ["", "not a rule", "every year", "FREQ=FORTNIGHTLY", "FREQ=DAILY;COUNT=abc", "BYDAY=MO"],
+    )
+    def test_invalid_rrule_rejected(self, value: str) -> None:
+        with pytest.raises(ValueError, match="Invalid RRULE"):
+            validate_rrule(value)
+
+    def test_create_instance_safe_reports_field_path(self) -> None:
+        instance, error = create_instance_safe(_Schedule, recurrence="every monday")
+        assert instance is None
+        assert error is not None
+        assert "recurrence" in error
+
+    def test_missing_dateutil_raises_runtime_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Simulate the saidex[rrule] extra not being installed: a missing
+        # dependency must surface as RuntimeError, not a ValueError the retry
+        # loop would pointlessly try to "correct".
+        monkeypatch.setitem(sys.modules, "dateutil", None)
+        monkeypatch.setitem(sys.modules, "dateutil.rrule", None)
+        with pytest.raises(RuntimeError, match="python-dateutil"):
+            validate_rrule("FREQ=DAILY")
+
+
 class TestFieldTypesInModel:
     def test_full_valid_model_normalises_all_fields(self) -> None:
         acc = _BankAccount(

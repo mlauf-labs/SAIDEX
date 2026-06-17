@@ -1830,6 +1830,9 @@ benchmarks = [
 openai = [
     { name = "openai" },
 ]
+rrule = [
+    { name = "python-dateutil" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -1840,6 +1843,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
+    { name = "python-dateutil" },
     { name = "ruff" },
 ]
 docs = [
@@ -1855,8 +1859,9 @@ requires-dist = [
     { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0.0" },
     { name = "pillow", marker = "extra == 'benchmarks'", specifier = ">=10.0" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "python-dateutil", marker = "extra == 'rrule'", specifier = ">=2.8.2" },
 ]
-provides-extras = ["benchmarks", "openai"]
+provides-extras = ["benchmarks", "openai", "rrule"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1867,6 +1872,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "pytest-cov", specifier = ">=4.0" },
     { name = "pytest-mock", specifier = ">=3.10" },
+    { name = "python-dateutil", specifier = ">=2.8.2" },
     { name = "ruff", specifier = ">=0.3.0" },
 ]
 docs = [

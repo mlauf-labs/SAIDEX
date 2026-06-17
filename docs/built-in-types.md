@@ -20,6 +20,7 @@ All built-ins are exported from the package root:
 from saidex import (
     IsoDateStr, IbanStr, VatIdStr, CountryCodeStr,
     CurrencyCodeStr, IsinStr, PhoneStr, LanguageCodeStr,
+    RRuleStr,  # requires the optional `saidex[rrule]` extra
 )
 ```
 
@@ -60,6 +61,7 @@ A built-in like [`IsoDateStr`](#isodatestr) gives you several things at once:
 | [`IsinStr`](#isinstr) | `validate_isin` | yes | ISIN with structural **and** Luhn check-digit validation |
 | [`PhoneStr`](#phonestr) | `validate_phone` | yes | Phone number normalised to E.164 (`+` and country code) |
 | [`LanguageCodeStr`](#languagecodestr) | `validate_language_code` | yes | ISO 639-1 language code, validated against the official set |
+| [`RRuleStr`](#rrulestr) | `validate_rrule` | no (strict) | RFC 5545 recurrence rule (`RRULE`); needs the `saidex[rrule]` extra |
 
 Every `validate_*` function returns the (optionally normalised) value on success
 and raises `ValueError` on failure — see [`validate_iso_date`](#validate_iso_date)
@@ -373,6 +375,47 @@ class Page(BaseModel):
 
 Page(language="EN").language   # -> "en"
 ```
+
+---
+
+## `RRuleStr`
+
+```python
+RRuleStr = Annotated[str, AfterValidator(validate_rrule)]
+```
+
+An [RFC 5545](https://www.rfc-editor.org/rfc/rfc5545#section-3.3.10) recurrence
+rule (`RRULE`) — the string that encodes *"every year on May 1st"* or *"every
+Monday, Wednesday and Friday"*. The value is validated by parsing it and is
+**kept verbatim** (strict, like [`IsoDateStr`](#isodatestr)) so it round-trips
+exactly as the model produced it.
+
+> **Optional dependency.** `RRuleStr` parses the rule with
+> [`python-dateutil`](https://dateutil.readthedocs.io/), which ships in the
+> `saidex[rrule]` extra. Install it with `pip install 'saidex[rrule]'`. If the
+> extra is missing, `validate_rrule` raises **`RuntimeError`** (not `ValueError`)
+> — a missing dependency is an environment problem the retry loop must not try to
+> "correct".
+
+```python
+from saidex import RRuleStr
+
+class CalendarEvent(BaseModel):
+    title: str
+    recurrence: RRuleStr = Field(
+        description="Recurrence as an RFC 5545 RRULE, e.g. FREQ=WEEKLY;BYDAY=MO,WE,FR",
+    )
+
+CalendarEvent(title="Standup", recurrence="FREQ=WEEKLY;BYDAY=MO,WE,FR")
+```
+
+| Input | Result |
+| --- | --- |
+| `"FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=1"` | ✅ valid, returned unchanged |
+| `"FREQ=WEEKLY;BYDAY=MO,WE,FR"` | ✅ valid |
+| `"FREQ=DAILY;COUNT=10"` | ✅ valid |
+| `"every monday"`, `"FREQ=FORTNIGHTLY"` | ❌ not a parseable RRULE |
+| `""` | ❌ empty |
 
 ---
 
