@@ -32,7 +32,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
-from ._localization import normalize_for_match, render_candidates
+from ._localization import fuzzy_contains, normalize_for_match, render_candidates
 from .models import FieldIssue
 
 __all__ = [
@@ -104,7 +104,9 @@ class Grounded(FieldCheck):
     Attributes:
         mode: ``"normalized"`` (default) compares case/whitespace/diacritics
             insensitively and tries locale-aware surface forms of the value;
-            ``"exact"`` requires the verbatim ``str(value)`` to be present.
+            ``"exact"`` requires the verbatim ``str(value)`` to be present;
+            ``"fuzzy"`` accepts an approximate match (see *threshold*), tolerating
+            OCR noise and hyphenation across line breaks.
         locale: A fixed locale hint (country or language code, e.g. ``"de"``)
             used to render numbers/dates. Ignored in ``"exact"`` mode.
         locale_field: Name of a sibling field whose value supplies the locale
@@ -114,12 +116,16 @@ class Grounded(FieldCheck):
             failure back to the model and consumes a retry; ``"flag"`` keeps the
             extracted value and only records a :class:`~saidex.models.FieldIssue`
             (advisory grounding, no retry).
+        threshold: Minimum similarity in ``[0, 1]`` required in ``"fuzzy"`` mode
+            (``1.0`` == exact). Ignored in the other modes. The ratio is
+            length-sensitive, so short values need a lower threshold.
     """
 
     mode: str = "normalized"
     locale: str | None = None
     locale_field: str | None = None
     on_mismatch: str = "retry"
+    threshold: float = 0.85
 
     def check(self, value: Any, ctx: ExtractionContext) -> str | None:
         if value is None or not ctx.source_text:
@@ -127,10 +133,14 @@ class Grounded(FieldCheck):
         if self.mode == "exact":
             return None if str(value) in ctx.source_text else self._error(value, ctx)
         normalized_text = normalize_for_match(ctx.source_text)
-        for candidate in render_candidates(value, self._resolve_hint(ctx)):
-            if normalize_for_match(candidate) in normalized_text:
-                return None
-        return self._error(value, ctx)
+        candidates = (
+            normalize_for_match(c) for c in render_candidates(value, self._resolve_hint(ctx))
+        )
+        if self.mode == "fuzzy":
+            matched = any(fuzzy_contains(c, normalized_text, self.threshold) for c in candidates)
+        else:
+            matched = any(c in normalized_text for c in candidates)
+        return None if matched else self._error(value, ctx)
 
     def _resolve_hint(self, ctx: ExtractionContext) -> str | None:
         if self.locale_field is not None and ctx.model is not None:
@@ -176,6 +186,7 @@ def GroundedField(  # noqa: N802 — mirrors pydantic.Field's CapWords spelling
     locale: str | None = None,
     locale_field: str | None = None,
     on_mismatch: str = "retry",
+    threshold: float = 0.85,
     **field_kwargs: Any,
 ) -> Any:
     """Field helper that marks a field as source-grounded.
@@ -190,7 +201,13 @@ def GroundedField(  # noqa: N802 — mirrors pydantic.Field's CapWords spelling
             total: float = GroundedField(locale_field="country", description="…")
     """
     return field_check(
-        Grounded(mode=mode, locale=locale, locale_field=locale_field, on_mismatch=on_mismatch),
+        Grounded(
+            mode=mode,
+            locale=locale,
+            locale_field=locale_field,
+            on_mismatch=on_mismatch,
+            threshold=threshold,
+        ),
         **field_kwargs,
     )
 

@@ -84,12 +84,34 @@ diacritics-insensitively** (so `acme  gmbh` matches `ACME GmbH`, and `Müller`
 matches `Muller`). Non-breaking and thin spaces are treated as ordinary spaces.
 
 ```python
-Grounded()                # normalized (default)
-Grounded(mode="exact")    # require the verbatim str(value) to be present
+Grounded()                              # normalized (default)
+Grounded(mode="exact")                  # require the verbatim str(value)
+Grounded(mode="fuzzy", threshold=0.85)  # approximate — tolerate OCR/typos
 ```
 
 Grounding applies to **scalar leaf fields** (`str`, numbers, dates); container
 and nested-model fields are walked through to reach the scalars inside them.
+
+### Fuzzy matching (`mode="fuzzy"`)
+
+Scanned or OCR'd documents introduce small character-level noise —
+`Corporation` read as `Corporatlon`, a word split as `Corpor-\nation` — that
+breaks an otherwise-correct match. `mode="fuzzy"` accepts a value when its best
+match in the text is *similar enough*:
+
+```python
+vendor: Annotated[str, Grounded(mode="fuzzy", threshold=0.85)]
+```
+
+Similarity is `1 - edit_distance / len(value)` against the best-matching
+substring of the source (an in-house Levenshtein variant — no extra
+dependency). Insertions, deletions and substitutions each cost one edit, so
+hyphenation and stray OCR characters are tolerated.
+
+`threshold` (default `0.85`) is **length-sensitive**: one edit in a 4-character
+value already drops the ratio to `0.75`, while one edit in a 16-character value
+still scores `0.94`. Lower the threshold for short values; raise it to demand a
+closer match.
 
 ---
 
@@ -199,5 +221,5 @@ wrappers. There are no new parameters to pass — just mark the fields.
 
 ## Out of scope (tracked separately)
 
-Fuzzy matching and phone-number surface forms are tracked as follow-up issues
-on the project tracker.
+Phone-number surface forms are tracked as a follow-up issue on the project
+tracker.
