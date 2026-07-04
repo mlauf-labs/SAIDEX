@@ -88,7 +88,7 @@ ignore_missing_imports = true
 
 [tool.commitizen]
 name = "cz_conventional_commits"
-version = "0.3.0"
+version = "0.4.0"
 version_provider = "commitizen"
 tag_format = "v$version"
 update_changelog_on_bump = true
