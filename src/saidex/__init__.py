@@ -36,6 +36,13 @@ Public API
         Validator,
         RetryConfig,
         create_instance_safe,
+        # Source grounding (schema-declared, source-aware field checks)
+        Grounded,
+        GroundedField,
+        GroundedStr,
+        FieldCheck,
+        ExtractionContext,
+        field_check,
         # Cross-run field-issue analytics
         summarize_field_issues,
         render_field_issue_report,
@@ -51,6 +58,7 @@ Public API
         IsinStr,
         PhoneStr,
         LanguageCodeStr,
+        RRuleStr,
     )
 """
 
@@ -70,6 +78,14 @@ from .extractor import (
     extract_data_list_from_text,
     extract_data_with_tools,
     run_extractor_agent,
+)
+from .grounding import (
+    ExtractionContext,
+    FieldCheck,
+    Grounded,
+    GroundedField,
+    GroundedStr,
+    field_check,
 )
 from .models import (
     ExtractDataStats,
@@ -97,6 +113,7 @@ from .validators import (
     IsoDateStr,
     LanguageCodeStr,
     PhoneStr,
+    RRuleStr,
     VatIdStr,
     validate_country_code,
     validate_currency_code,
@@ -105,6 +122,7 @@ from .validators import (
     validate_iso_date,
     validate_language_code,
     validate_phone,
+    validate_rrule,
     validate_vat_id,
 )
 
@@ -146,6 +164,13 @@ __all__ = [
     "DEFAULT_RETRY_CONFIG",
     "with_retry",
     "create_instance_safe",
+    # source grounding / schema-declared field checks
+    "Grounded",
+    "GroundedField",
+    "GroundedStr",
+    "FieldCheck",
+    "ExtractionContext",
+    "field_check",
     # reusable schema field types
     "IsoDateStr",
     "validate_iso_date",
@@ -163,6 +188,8 @@ __all__ = [
     "validate_phone",
     "LanguageCodeStr",
     "validate_language_code",
+    "RRuleStr",
+    "validate_rrule",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"

@@ -770,7 +770,8 @@ formats it into a structured error message, and — inside
 For common cases the library ships **ready-made field types** so you don't have
 to write a validator at all — e.g. `IsoDateStr` for `yyyy-mm-dd` dates, plus
 `IbanStr`, `VatIdStr`, `CountryCodeStr`, `CurrencyCodeStr`, `IsinStr`,
-`PhoneStr`, and `LanguageCodeStr`:
+`PhoneStr`, and `LanguageCodeStr` (and `RRuleStr` for RFC 5545 recurrence rules,
+via the optional `saidex[rrule]` extra):
 
 ```python
 from saidex import IsoDateStr, IbanStr, CountryCodeStr
@@ -800,6 +801,36 @@ invoice, stats = await extract_data_from_text(llm, Invoice, text, validator=vali
 > Cross-field example and full guide:
 > [`examples/12_external_validator.py`](examples/12_external_validator.py)
 > — [detailed docs](docs/external-validators.md)
+
+---
+
+## Source grounding — reject hallucinated values
+
+To make sure the model only returns values that are actually in the document,
+mark a field as **grounded**. After Pydantic validation, SAIDEX checks that the
+value appears in the source text; if it doesn't, the same retry loop asks the
+model to correct it. Both surfaces are visible right in the schema:
+
+```python
+from typing import Annotated
+from saidex import Grounded, GroundedField
+
+class Invoice(BaseModel):
+    vendor: Annotated[str, Grounded()]                    # marker form
+    invoice_no: str = GroundedField(description="No.")     # field-helper form
+    country: str
+    total: float = GroundedField(locale_field="country")   # locale-aware matching
+```
+
+Matching is case/whitespace/diacritics-insensitive and **locale-aware**: a
+`total` of `1234.5` is matched against `1.234,50` (de) or `1,234.50` (en), with
+the locale taken from a sibling field (`locale_field`) or a fixed `locale`.
+It is built on a reusable `FieldCheck` pattern, so you can add your own
+source-aware checks the same way.
+
+> Full guide and the custom-check pattern:
+> [`examples/13_source_grounding.py`](examples/13_source_grounding.py)
+> — [detailed docs](docs/source-grounding.md)
 
 ---
 

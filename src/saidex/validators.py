@@ -49,6 +49,8 @@ __all__ = [
     "validate_phone",
     "LanguageCodeStr",
     "validate_language_code",
+    "RRuleStr",
+    "validate_rrule",
 ]
 
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -266,3 +268,38 @@ def validate_language_code(value: str) -> str:
 
 LanguageCodeStr = Annotated[str, AfterValidator(validate_language_code)]
 """A ``str`` field constrained to a valid ISO 639-1 language code."""
+
+
+def validate_rrule(value: str) -> str:
+    """Validate an RFC 5545 recurrence rule (``RRULE``) string.
+
+    The value is returned unchanged when valid (kept verbatim rather than
+    rewritten to a canonical form, so extracted rules round-trip exactly as the
+    model produced them). On an unparseable rule a :class:`ValueError` with a
+    clear, LLM-friendly message is raised, so the retry loop can ask the model to
+    correct the offending field.
+
+    This validator relies on ``python-dateutil``, which is an optional extra
+    (``saidex[rrule]``). When it is not installed a :class:`RuntimeError` — not a
+    :class:`ValueError` — is raised: a missing dependency is an environment
+    problem the LLM cannot fix, so it must not be fed back into self-correction.
+    """
+    try:
+        from dateutil.rrule import rrulestr
+    except ImportError as exc:  # keep python-dateutil an optional dependency
+        raise RuntimeError(
+            "RRULE validation requires 'python-dateutil'. "
+            "Install it with: pip install 'saidex[rrule]'."
+        ) from exc
+    try:
+        rrulestr(str(value))
+    except (ValueError, TypeError) as exc:
+        raise ValueError(
+            f"Invalid RRULE '{value}': {exc}. Use an RFC 5545 recurrence rule "
+            f"such as 'FREQ=YEARLY;BYMONTH=5;BYMONTHDAY=1' or 'FREQ=WEEKLY;BYDAY=MO,WE,FR'."
+        ) from exc
+    return value
+
+
+RRuleStr = Annotated[str, AfterValidator(validate_rrule)]
+"""A ``str`` field constrained to a valid RFC 5545 ``RRULE`` (requires ``saidex[rrule]``)."""
