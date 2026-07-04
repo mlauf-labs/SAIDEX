@@ -34,6 +34,8 @@ Public API
         ExtractionEvent,
         OnComplete,
         Validator,
+        collect_stats,
+        StatsSink,
         RetryConfig,
         create_instance_safe,
         # Source grounding (schema-declared, source-aware field checks)
@@ -94,6 +96,7 @@ from .models import (
     ExtractorRunStats,
     FieldIssue,
 )
+from .observability import StatsSink, collect_stats
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
 from .sync import (
     extract_data_from_text_sync,
@@ -153,6 +156,8 @@ __all__ = [
     "ExtractionEvent",
     "OnComplete",
     "Validator",
+    "collect_stats",
+    "StatsSink",
     "RetryConfig",
     # cross-run field-issue analytics
     "summarize_field_issues",

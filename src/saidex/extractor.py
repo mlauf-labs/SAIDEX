@@ -27,6 +27,7 @@ from .models import (
     ExtractorRunStats,
     FieldIssue,
 )
+from .observability import dispatch_to_observers
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
 from .utils import create_instance_with_issues
 
@@ -121,17 +122,17 @@ def _source_text_from_messages(messages: list[BaseMessage]) -> str:
 
 
 async def _emit_completion(on_complete: OnComplete | None, event: ExtractionEvent) -> None:
-    """Invoke an ``on_complete`` hook, isolating any error it raises.
+    """Invoke an ``on_complete`` hook and notify scoped/global observers.
 
-    A failing hook must never break the extraction it is observing, so its
-    exceptions are logged and swallowed.
+    A failing hook or observer must never break the extraction it is watching,
+    so their exceptions are logged and swallowed.
     """
-    if on_complete is None:
-        return
-    try:
-        await on_complete(event)
-    except Exception as exc:  # noqa: BLE001 — observers must not break the run
-        logger.error("on_complete hook raised and was suppressed: %s", exc)
+    if on_complete is not None:
+        try:
+            await on_complete(event)
+        except Exception as exc:  # noqa: BLE001 — observers must not break the run
+            logger.error("on_complete hook raised and was suppressed: %s", exc)
+    await dispatch_to_observers(event)
 
 
 async def extract_data(
