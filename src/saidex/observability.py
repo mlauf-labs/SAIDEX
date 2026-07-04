@@ -1,19 +1,29 @@
-"""Scoped observer for extraction statistics.
+"""Scoped and global observers for extraction statistics.
 
 `collect_stats` is a scoped context manager — usable with either ``async with``
 or plain ``with`` — that captures the stats of every extraction inside its
 block, so callers need not thread a stats object through intermediate
-signatures.
+signatures.  `on_extraction` registers a process-wide listener for observability
+integrations (logging, tracing, metrics).
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import contextlib
+import inspect
+import logging
+from collections.abc import Awaitable, Callable, Iterator
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .models import ExtractDataStats, ExtractionEvent, ExtractorRunStats
+
+logger = logging.getLogger(__name__)
+
+#: Signature of an ``on_extraction`` listener: a sync **or** async callable that
+#: receives the completed :class:`~saidex.models.ExtractionEvent`.
+ExtractionListener = Callable[["ExtractionEvent"], "Awaitable[None] | None"]
 
 
 class StatsSink:
@@ -48,6 +58,7 @@ class StatsSink:
 
 
 _active_sinks: ContextVar[tuple[StatsSink, ...]] = ContextVar("saidex_active_sinks", default=())
+_global_listeners: list[ExtractionListener] = []
 
 
 class _StatsCollector:
@@ -100,18 +111,74 @@ def collect_stats() -> _StatsCollector:
     return _StatsCollector()
 
 
+class Subscription:
+    """Handle returned by :func:`on_extraction`, used to remove the listener.
+
+    Removing the listener can be done three equivalent, idempotent ways: call
+    the object, call :meth:`unsubscribe`, or use it as a context manager (the
+    listener is removed on block exit).
+    """
+
+    def __init__(self, callback: ExtractionListener) -> None:
+        self._callback = callback
+        self._active = True
+
+    def unsubscribe(self) -> None:
+        """Remove the registered listener.  Safe to call more than once."""
+        if self._active:
+            self._active = False
+            with contextlib.suppress(ValueError):
+                _global_listeners.remove(self._callback)
+
+    def __call__(self) -> None:
+        self.unsubscribe()
+
+    def __enter__(self) -> Subscription:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.unsubscribe()
+
+
+def on_extraction(callback: ExtractionListener) -> Subscription:
+    """Register a process-wide listener invoked after every extraction.
+
+    The listener fires once per top-level extraction, on both success and
+    failure, receiving the full :class:`~saidex.models.ExtractionEvent` (stats,
+    result, messages, source text).  It may be sync or async.  Any exception it
+    raises is logged and swallowed so an observer can never break the run.
+
+    Args:
+        callback: A sync or async callable receiving the completed
+            :class:`~saidex.models.ExtractionEvent`.
+
+    Returns:
+        A :class:`Subscription` that removes the listener when called, when its
+        :meth:`Subscription.unsubscribe` method runs, or on context-manager exit.
+    """
+    _global_listeners.append(callback)
+    return Subscription(callback)
+
+
 async def dispatch_to_observers(event: ExtractionEvent) -> None:
-    """Notify every active sink of a completed extraction.
+    """Notify every active sink and global listener of a completed extraction.
 
     Invoked once per extraction from the single completion choke point.  Returns
-    immediately when no sink is active, so inactive observers add no measurable
-    overhead.
+    immediately when neither a sink nor a listener is active, so inactive
+    observers add no measurable overhead.
 
     Args:
         event: The completed extraction's event.
     """
     sinks = _active_sinks.get()
-    if not sinks:
+    if not sinks and not _global_listeners:
         return
     for sink in sinks:
         sink._record(event)
+    for listener in tuple(_global_listeners):
+        try:
+            outcome = listener(event)
+            if inspect.isawaitable(outcome):
+                await outcome
+        except Exception as exc:  # noqa: BLE001 — observers must not break the run
+            logger.error("on_extraction listener raised and was suppressed: %s", exc)
