@@ -76,6 +76,39 @@ class TestNumberCandidates:
 
 
 # ---------------------------------------------------------------------------
+# render_candidates — number-words (small integers)
+# ---------------------------------------------------------------------------
+
+
+class TestNumberWordCandidates:
+    def test_english_number_word(self) -> None:
+        assert "two" in render_candidates(2, "en")
+
+    def test_german_number_word(self) -> None:
+        assert "zwei" in render_candidates(2, "de")
+
+    def test_french_number_word(self) -> None:
+        assert "deux" in render_candidates(2, "fr")
+
+    def test_range_boundaries(self) -> None:
+        assert "zero" in render_candidates(0, "en")
+        assert "zwanzig" in render_candidates(20, "de")
+
+    def test_out_of_range_integer_has_no_word(self) -> None:
+        cands = render_candidates(21, "en")
+        assert "21" in cands
+        assert not any(cand.isalpha() for cand in cands)
+
+    def test_non_whole_number_has_no_word(self) -> None:
+        cands = render_candidates(2.5, "en")
+        assert not any(cand.isalpha() for cand in cands)
+
+    def test_bare_integer_string_gets_number_word(self) -> None:
+        # A field typed as a plain string holding "2" still localises.
+        assert "zwei" in render_candidates("2", "de")
+
+
+# ---------------------------------------------------------------------------
 # render_candidates — dates
 # ---------------------------------------------------------------------------
 
@@ -112,5 +145,30 @@ class TestStringCandidates:
     def test_plain_string_is_returned_verbatim(self) -> None:
         assert render_candidates("ACME GmbH", None) == ["ACME GmbH"]
 
-    def test_bool_is_stringified(self) -> None:
-        assert render_candidates(True, None) == ["True"]
+
+class TestBooleanCandidates:
+    def test_bool_still_includes_stringified_form(self) -> None:
+        assert "True" in render_candidates(True, None)
+
+    def test_true_localised_words(self) -> None:
+        assert "ja" in render_candidates(True, "de")
+        assert "yes" in render_candidates(True, "en")
+        assert "oui" in render_candidates(True, "fr")
+
+    def test_false_localised_words(self) -> None:
+        assert "nein" in render_candidates(False, "de")
+        assert "no" in render_candidates(False, "en")
+
+    def test_true_check_glyphs(self) -> None:
+        assert "✓" in render_candidates(True, "en")
+
+    def test_false_has_no_true_word_or_glyph(self) -> None:
+        cands = render_candidates(False, "en")
+        assert "yes" not in cands
+        assert "✓" not in cands
+
+    def test_no_hint_covers_all_languages(self) -> None:
+        cands = render_candidates(True, None)
+        assert "True" in cands
+        assert "yes" in cands
+        assert "ja" in cands

@@ -104,6 +104,17 @@ class TestGroundedCheck:
         )
         assert Grounded(locale_field="country").check(1234.5, ctx) is None
 
+    def test_number_word_matches_in_document_language(self) -> None:
+        assert Grounded(locale="en").check(2, _ctx("There are two invoices")) is None
+        assert Grounded(locale="de").check(2, _ctx("Es gibt zwei Rechnungen")) is None
+
+    def test_boolean_matches_localised_yes_no(self) -> None:
+        assert Grounded(locale="de").check(True, _ctx("Bezahlt: ja")) is None
+        assert Grounded(locale="en").check(False, _ctx("Paid: no")) is None
+
+    def test_boolean_matches_check_glyph(self) -> None:
+        assert Grounded().check(True, _ctx("Paid: ✓")) is None
+
 
 # ---------------------------------------------------------------------------
 # Engine walk
