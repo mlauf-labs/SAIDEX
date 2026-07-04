@@ -165,7 +165,9 @@ async def dispatch_to_observers(event: ExtractionEvent) -> None:
 
     Invoked once per extraction from the single completion choke point.  Returns
     immediately when neither a sink nor a listener is active, so inactive
-    observers add no measurable overhead.
+    observers add no measurable overhead.  A failing observer is isolated: its
+    exception is logged with a traceback and swallowed so it neither breaks the
+    extraction nor stops the remaining observers from being notified.
 
     Args:
         event: The completed extraction's event.
@@ -174,11 +176,14 @@ async def dispatch_to_observers(event: ExtractionEvent) -> None:
     if not sinks and not _global_listeners:
         return
     for sink in sinks:
-        sink._record(event)
+        try:
+            sink._record(event)
+        except Exception as exc:  # noqa: BLE001 — observers must not break the run
+            logger.error("stats sink failed to record and was skipped: %s", exc, exc_info=True)
     for listener in tuple(_global_listeners):
         try:
             outcome = listener(event)
             if inspect.isawaitable(outcome):
                 await outcome
         except Exception as exc:  # noqa: BLE001 — observers must not break the run
-            logger.error("on_extraction listener raised and was suppressed: %s", exc)
+            logger.error("on_extraction listener raised and was suppressed: %s", exc, exc_info=True)
