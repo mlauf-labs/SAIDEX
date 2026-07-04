@@ -5,6 +5,11 @@ repo_url: https://github.com/mlauf-labs/saidex
 repo_name: mlauf-labs/saidex
 edit_uri: edit/main/docs/
 
+# Design specs under docs/superpowers/specs/ are versioned with the code but are
+# internal notes, not part of the published site.
+exclude_docs: |
+  superpowers/
+
 theme:
   name: material
   custom_dir: docs/overrides
@@ -49,6 +54,7 @@ nav:
       - Retry & Fallback: retry-and-fallback.md
       - Observability: observability.md
       - Quality Analytics: quality-analytics.md
+      - Token Counting: token-counting.md
       - Langfuse Tracing: langfuse-tracing.md
   - Schema & Validation:
       - Schema Design: schema-design.md
