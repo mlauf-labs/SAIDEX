@@ -121,18 +121,23 @@ def _source_text_from_messages(messages: list[BaseMessage]) -> str:
     return "\n".join(p for p in parts if p)
 
 
-async def _emit_completion(on_complete: OnComplete | None, event: ExtractionEvent) -> None:
+async def _emit_completion(
+    on_complete: OnComplete | None, event: ExtractionEvent, *, dispatch: bool = True
+) -> None:
     """Invoke an ``on_complete`` hook and notify scoped/global observers.
 
     A failing hook or observer must never break the extraction it is watching,
-    so their exceptions are logged and swallowed.
+    so their exceptions are logged and swallowed.  ``dispatch`` is ``False`` for
+    internal sub-extractions (the ``…List`` container extraction inside
+    :func:`extract_data_list`) so observers see only the top-level call.
     """
     if on_complete is not None:
         try:
             await on_complete(event)
         except Exception as exc:  # noqa: BLE001 — observers must not break the run
             logger.error("on_complete hook raised and was suppressed: %s", exc)
-    await dispatch_to_observers(event)
+    if dispatch:
+        await dispatch_to_observers(event)
 
 
 async def extract_data(
@@ -149,6 +154,9 @@ async def extract_data(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    # Private: suppresses observer dispatch for the internal container
+    # sub-extraction inside extract_data_list. Not part of the public API.
+    _notify_observers: bool = True,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a LangChain message list.
 
@@ -258,6 +266,7 @@ async def extract_data(
                 messages=original_messages,
                 source_text=source_text,
             ),
+            dispatch=_notify_observers,
         )
         return result, stats
 
@@ -561,8 +570,9 @@ async def extract_data_list(
 
         container_validator = _validate_each_item
 
-    # The inner call must not fire the hook: it would report the internal
-    # ``…List`` container and the wrapper instance instead of the list result.
+    # The inner call must not fire the hook or notify observers: it would report
+    # the internal ``…List`` container and the wrapper instance instead of the
+    # list result.
     result, stats = await extract_data(
         llm_model=llm_model,
         schema=container,
@@ -575,6 +585,7 @@ async def extract_data_list(
         retry_config=retry_config,
         capture_source_text=capture_source_text,
         validator=container_validator,
+        _notify_observers=False,
     )
     # Report the item schema name (not the internal ``…List`` container) so the
     # stats group under the schema the caller actually passed.

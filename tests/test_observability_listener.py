@@ -14,6 +14,7 @@ from saidex import (
     ExtractionEvent,
     collect_stats,
     extract_data,
+    extract_data_list,
     observability,
     on_extraction,
 )
@@ -133,3 +134,16 @@ async def test_listener_and_sink_coexist() -> None:
         await _extract_once({"name": "A", "value": 1})
     assert len(seen) == 1
     assert len(sink) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_extraction_fires_listener_once() -> None:
+    seen: list[ExtractionEvent] = []
+    on_extraction(lambda e: seen.append(e))
+    items = [{"name": "A", "value": 1}, {"name": "B", "value": 2}]
+    llm = _bound_llm([_response({"items": items})])
+    await extract_data_list(llm, SimpleSchema, [HumanMessage(content="all")], retry_config=NO_RETRY)
+    # Fired once for the list, not also for the internal container.
+    assert len(seen) == 1
+    assert seen[0].schema_name == "SimpleSchema"
+    assert isinstance(seen[0].result, list)

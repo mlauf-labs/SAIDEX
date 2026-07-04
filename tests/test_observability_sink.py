@@ -15,6 +15,7 @@ from saidex import (
     collect_stats,
     extract_data,
     extract_data_from_text_sync,
+    extract_data_list,
 )
 from saidex.retry import RetryConfig
 
@@ -139,3 +140,18 @@ def test_sync_context_manager_around_sync_wrapper() -> None:
         extract_data_from_text_sync(llm, SimpleSchema, "Alice is 1", retry_config=NO_RETRY)
     assert len(sink) == 1
     assert sink.all()[0].success is True
+
+
+@pytest.mark.asyncio
+async def test_list_extraction_records_once_with_item_schema() -> None:
+    items = [{"name": "A", "value": 1}, {"name": "B", "value": 2}]
+    llm = _bound_llm([_response({"items": items})])
+    async with collect_stats() as sink:
+        _, stats = await extract_data_list(
+            llm, SimpleSchema, [HumanMessage(content="all")], retry_config=NO_RETRY
+        )
+    # Exactly one entry — the internal container extraction must be invisible.
+    assert len(sink) == 1
+    assert sink.all()[0] is stats
+    assert sink.all()[0].schema_name == "SimpleSchema"  # item schema, not the container
+    assert sink.all()[0].item_count == 2
