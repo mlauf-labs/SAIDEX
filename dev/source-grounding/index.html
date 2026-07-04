@@ -1084,6 +1084,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Matching semantics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fuzzy-matching-modefuzzy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fuzzy matching (mode="fuzzy")
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1213,6 +1230,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Matching semantics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fuzzy-matching-modefuzzy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fuzzy matching (mode="fuzzy")
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -1365,20 +1399,36 @@ on structurally valid instances.</p>
 <p>The default <code>mode="normalized"</code> compares <strong>case-, whitespace- and
 diacritics-insensitively</strong> (so <code>acme  gmbh</code> matches <code>ACME GmbH</code>, and <code>Müller</code>
 matches <code>Muller</code>). Non-breaking and thin spaces are treated as ordinary spaces.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">Grounded</span><span class="p">()</span>                <span class="c1"># normalized (default)</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">Grounded</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;exact&quot;</span><span class="p">)</span>    <span class="c1"># require the verbatim str(value) to be present</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">Grounded</span><span class="p">()</span>                              <span class="c1"># normalized (default)</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">Grounded</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;exact&quot;</span><span class="p">)</span>                  <span class="c1"># require the verbatim str(value)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">Grounded</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;fuzzy&quot;</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.85</span><span class="p">)</span>  <span class="c1"># approximate — tolerate OCR/typos</span>
 </code></pre></div>
 <p>Grounding applies to <strong>scalar leaf fields</strong> (<code>str</code>, numbers, dates); container
 and nested-model fields are walked through to reach the scalars inside them.</p>
+<h3 id="fuzzy-matching-modefuzzy">Fuzzy matching (<code>mode="fuzzy"</code>)<a class="headerlink" href="#fuzzy-matching-modefuzzy" title="Permanent link">&para;</a></h3>
+<p>Scanned or OCR'd documents introduce small character-level noise —
+<code>Corporation</code> read as <code>Corporatlon</code>, a word split as <code>Corpor-\nation</code> — that
+breaks an otherwise-correct match. <code>mode="fuzzy"</code> accepts a value when its best
+match in the text is <em>similar enough</em>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">vendor</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Grounded</span><span class="p">(</span><span class="n">mode</span><span class="o">=</span><span class="s2">&quot;fuzzy&quot;</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.85</span><span class="p">)]</span>
+</code></pre></div>
+<p>Similarity is <code>1 - edit_distance / len(value)</code> against the best-matching
+substring of the source (an in-house Levenshtein variant — no extra
+dependency). Insertions, deletions and substitutions each cost one edit, so
+hyphenation and stray OCR characters are tolerated.</p>
+<p><code>threshold</code> (default <code>0.85</code>) is <strong>length-sensitive</strong>: one edit in a 4-character
+value already drops the ratio to <code>0.75</code>, while one edit in a 16-character value
+still scores <code>0.94</code>. Lower the threshold for short values; raise it to demand a
+closer match.</p>
 <hr />
 <h2 id="retry-vs-flag-on_mismatch">Retry vs. flag (<code>on_mismatch</code>)<a class="headerlink" href="#retry-vs-flag-on_mismatch" title="Permanent link">&para;</a></h2>
 <p>By default a grounding failure <strong>re-enters the retry loop</strong> so the model can
 correct the value. Set <code>on_mismatch="flag"</code> for <strong>advisory</strong> grounding: the
 extracted value is kept, no retry is consumed, and the mismatch is only recorded
 as a <code>FieldIssue(category="grounding")</code> for later inspection.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">class</span> <span class="nc">Invoice</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">vendor</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Grounded</span><span class="p">()]</span>                      <span class="c1"># &quot;retry&quot; (default)</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">summary</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">GroundedField</span><span class="p">(</span><span class="n">on_mismatch</span><span class="o">=</span><span class="s2">&quot;flag&quot;</span><span class="p">)</span>        <span class="c1"># advisory only</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">class</span> <span class="nc">Invoice</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">vendor</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Grounded</span><span class="p">()]</span>                      <span class="c1"># &quot;retry&quot; (default)</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">summary</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">GroundedField</span><span class="p">(</span><span class="n">on_mismatch</span><span class="o">=</span><span class="s2">&quot;flag&quot;</span><span class="p">)</span>        <span class="c1"># advisory only</span>
 </code></pre></div>
 <p>Both modes record a <code>FieldIssue</code>; only <code>"retry"</code> produces feedback to the model
 and consumes an attempt. A schema can mix the two — retry failures drive the
@@ -1418,10 +1468,10 @@ difference is locale dependent:</p>
 </tbody>
 </table>
 <p>Tell grounding which locale to render for:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">class</span> <span class="nc">Invoice</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">country</span><span class="p">:</span> <span class="nb">str</span>                                          <span class="c1"># e.g. &quot;DE&quot;</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">total</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">GroundedField</span><span class="p">(</span><span class="n">locale_field</span><span class="o">=</span><span class="s2">&quot;country&quot;</span><span class="p">)</span>  <span class="c1"># dynamic: from a sibling</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">tax</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">GroundedField</span><span class="p">(</span><span class="n">locale</span><span class="o">=</span><span class="s2">&quot;de&quot;</span><span class="p">)</span>               <span class="c1"># static: fixed hint</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">class</span> <span class="nc">Invoice</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">country</span><span class="p">:</span> <span class="nb">str</span>                                          <span class="c1"># e.g. &quot;DE&quot;</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="n">total</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">GroundedField</span><span class="p">(</span><span class="n">locale_field</span><span class="o">=</span><span class="s2">&quot;country&quot;</span><span class="p">)</span>  <span class="c1"># dynamic: from a sibling</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>    <span class="n">tax</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">GroundedField</span><span class="p">(</span><span class="n">locale</span><span class="o">=</span><span class="s2">&quot;de&quot;</span><span class="p">)</span>               <span class="c1"># static: fixed hint</span>
 </code></pre></div>
 <ul>
 <li><code>locale_field</code> reads the hint from a sibling field at runtime (a <code>CountryCodeStr</code>
@@ -1454,19 +1504,19 @@ grounding very short boolean or number-word fields.</p>
 or via the <code>field_check</code> helper — and SAIDEX runs it over the validated instance
 with an <code>ExtractionContext</code> (source text, the containing instance, the field
 path).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">FieldCheck</span><span class="p">,</span> <span class="n">ExtractionContext</span><span class="p">,</span> <span class="n">field_check</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">class</span> <span class="nc">InCatalogue</span><span class="p">(</span><span class="n">FieldCheck</span><span class="p">):</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="k">def</span> <span class="nf">check</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">ExtractionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>        <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">KNOWN_SKUS</span><span class="p">:</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not a known SKU.&quot;</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>        <span class="k">return</span> <span class="kc">None</span>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="k">class</span> <span class="nc">Order</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>    <span class="n">sku</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">InCatalogue</span><span class="p">()]</span>            <span class="c1"># marker form</span>
-<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>    <span class="n">alt_sku</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">field_check</span><span class="p">(</span><span class="n">InCatalogue</span><span class="p">())</span>     <span class="c1"># helper form</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">FieldCheck</span><span class="p">,</span> <span class="n">ExtractionContext</span><span class="p">,</span> <span class="n">field_check</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="k">class</span> <span class="nc">InCatalogue</span><span class="p">(</span><span class="n">FieldCheck</span><span class="p">):</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="k">def</span> <span class="nf">check</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">ExtractionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>        <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">KNOWN_SKUS</span><span class="p">:</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not a known SKU.&quot;</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>        <span class="k">return</span> <span class="kc">None</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="k">class</span> <span class="nc">Order</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>    <span class="n">sku</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">InCatalogue</span><span class="p">()]</span>            <span class="c1"># marker form</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    <span class="n">alt_sku</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">field_check</span><span class="p">(</span><span class="n">InCatalogue</span><span class="p">())</span>     <span class="c1"># helper form</span>
 </code></pre></div>
 <p>A check returns <code>None</code> to accept or an LLM-friendly message to reject; rejections
 re-enter the same retry loop as grounding. Return <code>None</code> when <code>ctx.source_text</code>
@@ -1479,8 +1529,8 @@ and the agent loop (checked on the <strong>final answer</strong>), plus all the 
 wrappers. There are no new parameters to pass — just mark the fields.</p>
 <hr />
 <h2 id="out-of-scope-tracked-separately">Out of scope (tracked separately)<a class="headerlink" href="#out-of-scope-tracked-separately" title="Permanent link">&para;</a></h2>
-<p>Fuzzy matching and phone-number surface forms are tracked as follow-up issues
-on the project tracker.</p>
+<p>Phone-number surface forms are tracked as a follow-up issue on the project
+tracker.</p>
 
 
 
