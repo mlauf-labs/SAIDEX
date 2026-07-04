@@ -24,6 +24,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.1.0
 
+## v0.5.0 (2026-07-04)
+
+### Feat
+
+- **grounding**: add fuzzy matching mode for grounded fields
+- **grounding**: localise number-words and boolean yes/no in candidate rendering
+- **observability**: add on_extraction global listener
+- **observability**: add collect_stats scoped stats sink
+
+### Fix
+
+- **observability**: isolate failing observers and log with traceback
+- **observability**: fire observers once per top-level extract_data_list
+
 ## v0.4.0 (2026-07-04)
 
 ### Feat
