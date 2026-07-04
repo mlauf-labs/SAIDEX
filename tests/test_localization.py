@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from saidex._localization import normalize_for_match, render_candidates
+from saidex._localization import fuzzy_contains, normalize_for_match, render_candidates
 
 # ---------------------------------------------------------------------------
 # normalize_for_match
@@ -144,6 +144,39 @@ class TestDateCandidates:
 class TestStringCandidates:
     def test_plain_string_is_returned_verbatim(self) -> None:
         assert render_candidates("ACME GmbH", None) == ["ACME GmbH"]
+
+
+# ---------------------------------------------------------------------------
+# fuzzy_contains — approximate substring matching
+# ---------------------------------------------------------------------------
+
+
+class TestFuzzyContains:
+    def test_exact_substring_matches_any_threshold(self) -> None:
+        assert fuzzy_contains("acme", "invoice from acme gmbh", 0.99)
+
+    def test_single_typo_within_threshold(self) -> None:
+        # "corporatlon" is "corporation" with one substitution (i -> l).
+        assert fuzzy_contains("corporation", "acme corporatlon inc", 0.85)
+
+    def test_hyphenation_break_within_threshold(self) -> None:
+        # A line-break hyphen inserts two chars ("- ") into the surface form.
+        assert fuzzy_contains("corporation", "acme corpor- ation inc", 0.8)
+
+    def test_dissimilar_does_not_match(self) -> None:
+        assert not fuzzy_contains("globex", "invoice from acme gmbh", 0.8)
+
+    def test_typo_below_threshold_is_rejected(self) -> None:
+        # One edit in a 4-char needle is only ratio 0.75.
+        assert not fuzzy_contains("acme", "invoice from acne gmbh", 0.9)
+
+    def test_empty_needle_never_matches(self) -> None:
+        assert not fuzzy_contains("", "anything at all", 0.1)
+
+
+# ---------------------------------------------------------------------------
+# render_candidates — booleans
+# ---------------------------------------------------------------------------
 
 
 class TestBooleanCandidates:

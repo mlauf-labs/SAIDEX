@@ -26,7 +26,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-__all__ = ["normalize_for_match", "render_candidates"]
+__all__ = ["fuzzy_contains", "normalize_for_match", "render_candidates"]
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -272,6 +272,36 @@ def normalize_for_match(text: str) -> str:
     return collapsed.strip().casefold()
 
 
+def fuzzy_contains(needle: str, haystack: str, threshold: float) -> bool:
+    """Report whether *needle* appears in *haystack* allowing minor differences.
+
+    Tolerant of the character-level noise typical of scanned/OCR'd text and of
+    hyphenation across line breaks: an inserted, deleted or substituted character
+    costs one edit rather than breaking the match. Both arguments are expected to
+    be normalised already (see :func:`normalize_for_match`).
+
+    The similarity is ``1 - d / len(needle)`` where ``d`` is the edit distance
+    between *needle* and its best-matching substring of *haystack* (Sellers'
+    approximate substring matching). A match requires similarity ``>= threshold``.
+
+    Args:
+        needle: The (normalised) surface form to look for.
+        haystack: The (normalised) source text to search.
+        threshold: Minimum similarity in ``[0, 1]``; ``1.0`` means exact.
+
+    Returns:
+        ``True`` when the best-matching substring is similar enough, else
+        ``False``. An empty *needle* never matches.
+    """
+    if not needle:
+        return False
+    if needle in haystack:
+        return True
+    distance = _min_substring_distance(needle, haystack)
+    similarity = 1.0 - distance / len(needle)
+    return similarity >= threshold
+
+
 def render_candidates(value: Any, locale_hint: str | None) -> list[str]:
     """Render *value* into the surface forms it may take in the source text.
 
@@ -301,6 +331,24 @@ def render_candidates(value: Any, locale_hint: str | None) -> list[str]:
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+def _min_substring_distance(needle: str, haystack: str) -> int:
+    """Edit distance between *needle* and its best-matching substring of *haystack*.
+
+    Sellers' variant of Levenshtein: the first row is all zeros so a match may
+    begin at any position, and the answer is the minimum of the final row.
+    ``O(len(needle) * len(haystack))`` time, ``O(len(haystack))`` space.
+    """
+    previous = [0] * (len(haystack) + 1)
+    for i in range(1, len(needle) + 1):
+        current = [i] + [0] * len(haystack)
+        needle_char = needle[i - 1]
+        for j in range(1, len(haystack) + 1):
+            substitution = previous[j - 1] + (0 if needle_char == haystack[j - 1] else 1)
+            current[j] = min(previous[j] + 1, current[j - 1] + 1, substitution)
+        previous = current
+    return min(previous)
 
 
 def _norm_hint(hint: str | None) -> str | None:

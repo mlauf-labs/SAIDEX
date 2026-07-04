@@ -115,6 +115,32 @@ class TestGroundedCheck:
     def test_boolean_matches_check_glyph(self) -> None:
         assert Grounded().check(True, _ctx("Paid: ✓")) is None
 
+    def test_fuzzy_mode_tolerates_ocr_typo(self) -> None:
+        check = Grounded(mode="fuzzy", threshold=0.8)
+        assert check.check("ACME Corporation", _ctx("Issued by ACME Corporatlon Inc.")) is None
+
+    def test_fuzzy_mode_tolerates_hyphenation(self) -> None:
+        check = Grounded(mode="fuzzy", threshold=0.8)
+        assert check.check("ACME Corporation", _ctx("by ACME Corpor-\nation Inc.")) is None
+
+    def test_fuzzy_mode_rejects_dissimilar_value(self) -> None:
+        check = Grounded(mode="fuzzy", threshold=0.9)
+        assert check.check("Globex", _ctx("Invoice from ACME GmbH")) is not None
+
+    def test_default_mode_and_threshold(self) -> None:
+        g = Grounded()
+        assert g.mode == "normalized"
+        assert g.threshold == 0.85
+
+    def test_field_helper_forwards_threshold(self) -> None:
+        class Doc(BaseModel):
+            v: str = GroundedField(mode="fuzzy", threshold=0.7)
+
+        check = _checks(Doc, "v")[0]
+        assert isinstance(check, Grounded)
+        assert check.mode == "fuzzy"
+        assert check.threshold == 0.7
+
 
 # ---------------------------------------------------------------------------
 # Engine walk
