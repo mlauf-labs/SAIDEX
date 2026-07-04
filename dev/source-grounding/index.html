@@ -1407,6 +1407,14 @@ difference is locale dependent:</p>
 <td><code>"2024-04-05"</code></td>
 <td><code>05.04.2024</code> · <code>5. April 2024</code> · <code>April 5, 2024</code></td>
 </tr>
+<tr>
+<td><code>2</code> (int 0–20)</td>
+<td><code>two</code> (en) · <code>zwei</code> (de) · <code>deux</code> (fr)</td>
+</tr>
+<tr>
+<td><code>True</code> / <code>False</code></td>
+<td><code>yes</code>/<code>no</code> (en) · <code>ja</code>/<code>nein</code> (de) · <code>oui</code>/<code>non</code> (fr) · check glyphs <code>✓ ✔ ☑ x X</code> (True)</td>
+</tr>
 </tbody>
 </table>
 <p>Tell grounding which locale to render for:</p>
@@ -1428,6 +1436,17 @@ difference is locale dependent:</p>
 <p>Currency symbols need no special handling: the number <code>1234.5</code> rendered as
 <code>1.234,50</code> is found as a substring of <code>€1.234,50</code> / <code>EUR 1.234,50</code>.</p>
 </blockquote>
+<p>Number-words are localised for <strong>whole integers 0–20</strong>; larger or fractional
+values fall back to numeric forms only.</p>
+<div class="admonition warning">
+<p class="admonition-title">Short surface forms match loosely</p>
+<p>Grounding uses a normalised <strong>substring</strong> test, so short lexical forms —
+<code>"x"</code>, <code>"ja"</code>, <code>"no"</code>, a spelled-out <code>"one"</code> — can also match inside
+unrelated words (<code>"Jacke"</code>, <code>"nowhere"</code>). This mirrors how a bare <code>"2"</code> is
+found inside <code>"2024"</code>. It rarely matters because grounding is opt-in per
+field, but prefer <code>on_mismatch="flag"</code> (advisory) over <code>"retry"</code> when
+grounding very short boolean or number-word fields.</p>
+</div>
 <hr />
 <h2 id="build-your-own-check-the-fieldcheck-pattern">Build your own check — the <code>FieldCheck</code> pattern<a class="headerlink" href="#build-your-own-check-the-fieldcheck-pattern" title="Permanent link">&para;</a></h2>
 <p>Grounding is the first built-in check on a reusable mechanism. Any
@@ -1460,9 +1479,8 @@ and the agent loop (checked on the <strong>final answer</strong>), plus all the 
 wrappers. There are no new parameters to pass — just mark the fields.</p>
 <hr />
 <h2 id="out-of-scope-tracked-separately">Out of scope (tracked separately)<a class="headerlink" href="#out-of-scope-tracked-separately" title="Permanent link">&para;</a></h2>
-<p>Fuzzy matching, value-form localisation (number words, boolean yes/no), and
-phone-number surface forms are tracked as follow-up issues on the project
-tracker.</p>
+<p>Fuzzy matching and phone-number surface forms are tracked as follow-up issues
+on the project tracker.</p>
 
 
 
