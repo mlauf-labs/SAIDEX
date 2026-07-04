@@ -155,3 +155,22 @@ async def test_list_extraction_records_once_with_item_schema() -> None:
     assert sink.all()[0] is stats
     assert sink.all()[0].schema_name == "SimpleSchema"  # item schema, not the container
     assert sink.all()[0].item_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failing_sink_does_not_break_run_or_other_sinks() -> None:
+    def _boom(event: object) -> None:
+        raise RuntimeError("sink recording must never break the extraction")
+
+    llm = _bound_llm([_response({"name": "A", "value": 1})])
+    async with collect_stats() as outer:
+        outer._record = _boom  # force the outer sink to raise on record
+        async with collect_stats() as inner:
+            result, _ = await extract_data(
+                llm, SimpleSchema, [HumanMessage(content="x")], retry_config=NO_RETRY
+            )
+
+    # The extraction completed despite the outer sink raising ...
+    assert result is not None
+    # ... and the healthy inner sink still recorded its event.
+    assert len(inner) == 1
