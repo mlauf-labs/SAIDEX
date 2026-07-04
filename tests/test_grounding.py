@@ -104,6 +104,43 @@ class TestGroundedCheck:
         )
         assert Grounded(locale_field="country").check(1234.5, ctx) is None
 
+    def test_number_word_matches_in_document_language(self) -> None:
+        assert Grounded(locale="en").check(2, _ctx("There are two invoices")) is None
+        assert Grounded(locale="de").check(2, _ctx("Es gibt zwei Rechnungen")) is None
+
+    def test_boolean_matches_localised_yes_no(self) -> None:
+        assert Grounded(locale="de").check(True, _ctx("Bezahlt: ja")) is None
+        assert Grounded(locale="en").check(False, _ctx("Paid: no")) is None
+
+    def test_boolean_matches_check_glyph(self) -> None:
+        assert Grounded().check(True, _ctx("Paid: ✓")) is None
+
+    def test_fuzzy_mode_tolerates_ocr_typo(self) -> None:
+        check = Grounded(mode="fuzzy", threshold=0.8)
+        assert check.check("ACME Corporation", _ctx("Issued by ACME Corporatlon Inc.")) is None
+
+    def test_fuzzy_mode_tolerates_hyphenation(self) -> None:
+        check = Grounded(mode="fuzzy", threshold=0.8)
+        assert check.check("ACME Corporation", _ctx("by ACME Corpor-\nation Inc.")) is None
+
+    def test_fuzzy_mode_rejects_dissimilar_value(self) -> None:
+        check = Grounded(mode="fuzzy", threshold=0.9)
+        assert check.check("Globex", _ctx("Invoice from ACME GmbH")) is not None
+
+    def test_default_mode_and_threshold(self) -> None:
+        g = Grounded()
+        assert g.mode == "normalized"
+        assert g.threshold == 0.85
+
+    def test_field_helper_forwards_threshold(self) -> None:
+        class Doc(BaseModel):
+            v: str = GroundedField(mode="fuzzy", threshold=0.7)
+
+        check = _checks(Doc, "v")[0]
+        assert isinstance(check, Grounded)
+        assert check.mode == "fuzzy"
+        assert check.threshold == 0.7
+
 
 # ---------------------------------------------------------------------------
 # Engine walk

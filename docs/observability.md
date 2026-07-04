@@ -24,6 +24,82 @@ result, stats = await extract_data(
 
 ---
 
+## Collecting stats without threading signatures
+
+When SAIDEX is buried under layers of application code, capturing each
+extraction's `stats` at the call site — or threading a stats object up through
+intermediate function signatures — is awkward. `collect_stats()` is a scoped
+context manager that captures the stats of **every** extraction inside its
+block, with no signature changes:
+
+```python
+from saidex import collect_stats
+
+async with collect_stats() as sink:
+    await deeply_nested_pipeline(document)   # calls extract_* somewhere inside
+
+for s in sink.all():                         # list[ExtractDataStats | ExtractorRunStats]
+    print(s.schema_name, s.success, s.fallback_used)
+```
+
+`sink.all()` returns the stats in chronological order. The sink stores only the
+stats object of each run — never the messages, result, or source text — so it
+stays PII-light by default.
+
+It works as a plain `with` too, so the synchronous wrappers are covered:
+
+```python
+from saidex import collect_stats
+
+with collect_stats() as sink:
+    extract_data_from_text_sync(llm, MySchema, text)
+
+print(len(sink), "extraction(s) recorded")
+```
+
+**Nesting** behaves as you would expect: an inner `collect_stats` collects only
+its own extractions, while any enclosing block collects those too.
+
+```python
+async with collect_stats() as outer:
+    await extract_data_from_text(llm, MySchema, a)
+    async with collect_stats() as inner:
+        await extract_data_from_text(llm, MySchema, b)
+    assert len(inner) == 1      # just b
+assert len(outer) == 2          # a and b
+```
+
+There is no overhead and no global state when no `collect_stats` block is active.
+
+### Global listener — `on_extraction`
+
+For process-wide observability (logging, tracing, metrics) register a listener
+with `on_extraction`. It fires once per top-level extraction — on success and
+failure — with the full `ExtractionEvent` (stats, result, messages, source
+text). The callback may be sync or async:
+
+```python
+import logging
+from saidex import on_extraction, ExtractionEvent
+
+def log_extraction(event: ExtractionEvent) -> None:
+    logging.getLogger("saidex.metrics").info(
+        "extracted %s: success=%s issues=%d",
+        event.schema_name, event.stats.success, len(event.stats.field_issues),
+    )
+
+unsubscribe = on_extraction(log_extraction)
+# ... later, to stop listening:
+unsubscribe()
+```
+
+The returned handle removes the listener when called, via its `.unsubscribe()`
+method, or on exit when used as a context manager (`with on_extraction(cb): ...`).
+A listener that raises is logged and ignored — it can never break the extraction
+it observes.
+
+---
+
 ## Langfuse
 
 [Langfuse](https://langfuse.com) provides open-source LLM observability with
@@ -279,37 +355,28 @@ async def extract_endpoint(text: str) -> dict:
 
 ## Measuring quality over time
 
-Track extraction quality metrics in production:
+Track extraction quality across a batch of work without changing the signatures
+of the functions doing the extraction — wrap the batch in `collect_stats`:
 
 ```python
-import time
-from dataclasses import dataclass, field
+from saidex import collect_stats
 
-@dataclass
-class ExtractionMetrics:
-    total:       int   = 0
-    failures:    int   = 0
-    fallbacks:   int   = 0
-    total_time:  float = 0.0
-    total_retries: int = 0
+async def run_batch(documents: list[str]) -> None:
+    async with collect_stats() as sink:
+        for text in documents:
+            await deeply_nested_pipeline(text)   # extract_* somewhere inside
 
-metrics = ExtractionMetrics()
-
-async def extract_tracked(text: str) -> MySchema | None:
-    t0 = time.monotonic()
-    result, stats = await extract_data_from_text(llm, MySchema, text)
-    elapsed = time.monotonic() - t0
-
-    metrics.total += 1
-    metrics.total_time  += elapsed
-    metrics.total_retries += stats.total_retries
-    if result is None:
-        metrics.failures += 1
-    if stats.fallback_used:
-        metrics.fallbacks += 1
-
-    return result
+    runs = sink.all()
+    total = len(runs)
+    failures = sum(1 for s in runs if not s.success)
+    fallbacks = sum(1 for s in runs if s.fallback_used)
+    issues = sum(len(s.field_issues) for s in runs)
+    print(f"{total} runs, {failures} failed, {fallbacks} fallback, {issues} field issues")
 ```
+
+For per-run observability that spans your whole process (not just one block),
+register a global `on_extraction` listener instead — see
+[Collecting stats without threading signatures](#collecting-stats-without-threading-signatures).
 
 ---
 

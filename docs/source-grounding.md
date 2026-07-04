@@ -84,12 +84,34 @@ diacritics-insensitively** (so `acme  gmbh` matches `ACME GmbH`, and `Müller`
 matches `Muller`). Non-breaking and thin spaces are treated as ordinary spaces.
 
 ```python
-Grounded()                # normalized (default)
-Grounded(mode="exact")    # require the verbatim str(value) to be present
+Grounded()                              # normalized (default)
+Grounded(mode="exact")                  # require the verbatim str(value)
+Grounded(mode="fuzzy", threshold=0.85)  # approximate — tolerate OCR/typos
 ```
 
 Grounding applies to **scalar leaf fields** (`str`, numbers, dates); container
 and nested-model fields are walked through to reach the scalars inside them.
+
+### Fuzzy matching (`mode="fuzzy"`)
+
+Scanned or OCR'd documents introduce small character-level noise —
+`Corporation` read as `Corporatlon`, a word split as `Corpor-\nation` — that
+breaks an otherwise-correct match. `mode="fuzzy"` accepts a value when its best
+match in the text is *similar enough*:
+
+```python
+vendor: Annotated[str, Grounded(mode="fuzzy", threshold=0.85)]
+```
+
+Similarity is `1 - edit_distance / len(value)` against the best-matching
+substring of the source (an in-house Levenshtein variant — no extra
+dependency). Insertions, deletions and substitutions each cost one edit, so
+hyphenation and stray OCR characters are tolerated.
+
+`threshold` (default `0.85`) is **length-sensitive**: one edit in a 4-character
+value already drops the ratio to `0.75`, while one edit in a 16-character value
+still scores `0.94`. Lower the threshold for short values; raise it to demand a
+closer match.
 
 ---
 
@@ -122,6 +144,8 @@ difference is locale dependent:
 | `1234.5` | `1.234,50` (de) · `1,234.50` (en) · `1 234,50` (fr) · `1'234.50` (ch) |
 | `-1234.5` | `-1.234,50` · `(1.234,50)` · `1.234,50-` |
 | `"2024-04-05"` | `05.04.2024` · `5. April 2024` · `April 5, 2024` |
+| `2` (int 0–20) | `two` (en) · `zwei` (de) · `deux` (fr) |
+| `True` / `False` | `yes`/`no` (en) · `ja`/`nein` (de) · `oui`/`non` (fr) · check glyphs `✓ ✔ ☑ x X` (True) |
 
 Tell grounding which locale to render for:
 
@@ -142,6 +166,17 @@ class Invoice(BaseModel):
 
 > Currency symbols need no special handling: the number `1234.5` rendered as
 > `1.234,50` is found as a substring of `€1.234,50` / `EUR 1.234,50`.
+
+Number-words are localised for **whole integers 0–20**; larger or fractional
+values fall back to numeric forms only.
+
+!!! warning "Short surface forms match loosely"
+    Grounding uses a normalised **substring** test, so short lexical forms —
+    `"x"`, `"ja"`, `"no"`, a spelled-out `"one"` — can also match inside
+    unrelated words (`"Jacke"`, `"nowhere"`). This mirrors how a bare `"2"` is
+    found inside `"2024"`. It rarely matters because grounding is opt-in per
+    field, but prefer `on_mismatch="flag"` (advisory) over `"retry"` when
+    grounding very short boolean or number-word fields.
 
 ---
 
@@ -186,6 +221,5 @@ wrappers. There are no new parameters to pass — just mark the fields.
 
 ## Out of scope (tracked separately)
 
-Fuzzy matching, value-form localisation (number words, boolean yes/no), and
-phone-number surface forms are tracked as follow-up issues on the project
+Phone-number surface forms are tracked as a follow-up issue on the project
 tracker.

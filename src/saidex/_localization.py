@@ -5,7 +5,9 @@ text.  The trouble is that the *canonical* value an LLM returns rarely matches
 its *surface form* in the document, and the difference is locale dependent:
 
 * ``1234.5`` may appear as ``1.234,50`` (de), ``1,234.50`` (en) or ``1 234,50`` (fr);
-* a date stored as ``2024-04-05`` may read ``05.04.2024`` or ``5. April 2024``.
+* a date stored as ``2024-04-05`` may read ``05.04.2024`` or ``5. April 2024``;
+* a boolean ``True`` may read ``ja`` / ``yes`` / a ``✓`` glyph, and a small
+  integer ``2`` may be spelled ``two`` / ``zwei`` / ``deux``.
 
 :func:`render_candidates` turns a value plus an optional locale hint (a country
 or language code) into the list of surface forms worth searching for.
@@ -24,7 +26,7 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-__all__ = ["normalize_for_match", "render_candidates"]
+__all__ = ["fuzzy_contains", "normalize_for_match", "render_candidates"]
 
 _WHITESPACE_RE = re.compile(r"\s+")
 _ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -163,6 +165,92 @@ _MONTHS: dict[str, dict[str, list[str]]] = {
 
 _FALLBACK_LANGUAGES = ["en", "de", "fr"]
 
+# Spelled-out cardinals 0..20 per language (index == value). Kept small on
+# purpose: compound forms (twenty-one / einundzwanzig) are out of scope.
+_NUMBER_WORDS: dict[str, list[str]] = {
+    "en": [
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+    ],
+    "de": [
+        "null",
+        "eins",
+        "zwei",
+        "drei",
+        "vier",
+        "fünf",
+        "sechs",
+        "sieben",
+        "acht",
+        "neun",
+        "zehn",
+        "elf",
+        "zwölf",
+        "dreizehn",
+        "vierzehn",
+        "fünfzehn",
+        "sechzehn",
+        "siebzehn",
+        "achtzehn",
+        "neunzehn",
+        "zwanzig",
+    ],
+    "fr": [
+        "zéro",
+        "un",
+        "deux",
+        "trois",
+        "quatre",
+        "cinq",
+        "six",
+        "sept",
+        "huit",
+        "neuf",
+        "dix",
+        "onze",
+        "douze",
+        "treize",
+        "quatorze",
+        "quinze",
+        "seize",
+        "dix-sept",
+        "dix-huit",
+        "dix-neuf",
+        "vingt",
+    ],
+}
+
+# Yes/no surface words per language, indexed by the boolean value.
+_BOOLEAN_WORDS: dict[str, dict[bool, list[str]]] = {
+    "en": {True: ["yes"], False: ["no"]},
+    "de": {True: ["ja"], False: ["nein"]},
+    "fr": {True: ["oui"], False: ["non"]},
+}
+
+# Language-independent "ticked" marks that stand in for a True value in forms.
+# Only True has glyphs — a False box is the absence of a mark, which cannot be
+# matched. These are short, so they broaden matching (see module note).
+_BOOLEAN_TRUE_GLYPHS: list[str] = ["✓", "✔", "☑", "x", "X"]
+
 
 def normalize_for_match(text: str) -> str:
     """Canonicalise *text* for a locale-tolerant substring comparison.
@@ -184,6 +272,36 @@ def normalize_for_match(text: str) -> str:
     return collapsed.strip().casefold()
 
 
+def fuzzy_contains(needle: str, haystack: str, threshold: float) -> bool:
+    """Report whether *needle* appears in *haystack* allowing minor differences.
+
+    Tolerant of the character-level noise typical of scanned/OCR'd text and of
+    hyphenation across line breaks: an inserted, deleted or substituted character
+    costs one edit rather than breaking the match. Both arguments are expected to
+    be normalised already (see :func:`normalize_for_match`).
+
+    The similarity is ``1 - d / len(needle)`` where ``d`` is the edit distance
+    between *needle* and its best-matching substring of *haystack* (Sellers'
+    approximate substring matching). A match requires similarity ``>= threshold``.
+
+    Args:
+        needle: The (normalised) surface form to look for.
+        haystack: The (normalised) source text to search.
+        threshold: Minimum similarity in ``[0, 1]``; ``1.0`` means exact.
+
+    Returns:
+        ``True`` when the best-matching substring is similar enough, else
+        ``False``. An empty *needle* never matches.
+    """
+    if not needle:
+        return False
+    if needle in haystack:
+        return True
+    distance = _min_substring_distance(needle, haystack)
+    similarity = 1.0 - distance / len(needle)
+    return similarity >= threshold
+
+
 def render_candidates(value: Any, locale_hint: str | None) -> list[str]:
     """Render *value* into the surface forms it may take in the source text.
 
@@ -198,7 +316,7 @@ def render_candidates(value: Any, locale_hint: str | None) -> list[str]:
         ``str(value)``.
     """
     if isinstance(value, bool):
-        return [str(value)]
+        return _boolean_candidates(value, locale_hint)
     if isinstance(value, (int, float, Decimal)):
         return _number_candidates(value, locale_hint)
     if isinstance(value, datetime):
@@ -213,6 +331,24 @@ def render_candidates(value: Any, locale_hint: str | None) -> list[str]:
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+def _min_substring_distance(needle: str, haystack: str) -> int:
+    """Edit distance between *needle* and its best-matching substring of *haystack*.
+
+    Sellers' variant of Levenshtein: the first row is all zeros so a match may
+    begin at any position, and the answer is the minimum of the final row.
+    ``O(len(needle) * len(haystack))`` time, ``O(len(haystack))`` space.
+    """
+    previous = [0] * (len(haystack) + 1)
+    for i in range(1, len(needle) + 1):
+        current = [i] + [0] * len(haystack)
+        needle_char = needle[i - 1]
+        for j in range(1, len(haystack) + 1):
+            substitution = previous[j - 1] + (0 if needle_char == haystack[j - 1] else 1)
+            current[j] = min(previous[j] + 1, current[j - 1] + 1, substitution)
+        previous = current
+    return min(previous)
 
 
 def _norm_hint(hint: str | None) -> str | None:
@@ -288,6 +424,40 @@ def _number_candidates(value: Any, hint: str | None) -> list[str]:
                     out += [f"-{body}", f"({body})", f"{body}-"]
                 else:
                     out.append(body)
+    out += _number_word_candidates(value, hint)
+    return _dedup(out)
+
+
+def _number_word_candidates(value: Any, hint: str | None) -> list[str]:
+    """Spell out whole numbers 0..20 in the resolved languages.
+
+    Returns ``[]`` for non-integers and values outside ``0..20`` so callers can
+    unconditionally extend their candidate list.
+    """
+    try:
+        dec = Decimal(str(value))
+    except InvalidOperation:
+        return []
+    if dec != dec.to_integral_value() or not (0 <= dec <= 20):
+        return []
+    index = int(dec)
+    out: list[str] = []
+    for lang in _languages_for(hint):
+        words = _NUMBER_WORDS.get(lang)
+        if words:
+            out.append(words[index])
+    return out
+
+
+def _boolean_candidates(value: bool, hint: str | None) -> list[str]:
+    """Render a boolean into its stringified, localised and glyph surface forms."""
+    out: list[str] = [str(value)]
+    for lang in _languages_for(hint):
+        words = _BOOLEAN_WORDS.get(lang)
+        if words:
+            out += words[value]
+    if value:
+        out += _BOOLEAN_TRUE_GLYPHS
     return _dedup(out)
 
 
