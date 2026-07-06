@@ -4,12 +4,43 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 from langchain_core.callbacks.base import AsyncCallbackHandler
+from pydantic import BaseModel
 
+from saidex import run_extractor_agent
 from saidex._callbacks import _ChainRun, _ToolSpan
+from saidex.retry import RetryConfig
+
+_NO_RETRY = RetryConfig(max_retries=0, retry_delays=[])
+
+
+class _Final(BaseModel):
+    result: str
+
+
+class _Args(BaseModel):
+    q: str
+
+
+def _resp(tool_calls: list[dict[str, Any]] | None = None) -> MagicMock:
+    r = MagicMock()
+    r.tool_calls = tool_calls or []
+    r.invalid_tool_calls = []
+    r.content = ""
+    return r
+
+
+def _llm(responses: list[MagicMock]) -> MagicMock:
+    bound = MagicMock()
+    bound.ainvoke = AsyncMock(side_effect=responses)
+    llm = MagicMock()
+    llm.bind_tools = MagicMock(return_value=bound)
+    llm.ainvoke = bound.ainvoke
+    return llm
 
 
 class RecordingHandler(AsyncCallbackHandler):
@@ -156,3 +187,25 @@ async def test_toolspan_and_error_suppress_raising_run(caplog: pytest.LogCapture
 
     messages = [r.getMessage() for r in caplog.records if r.name == "saidex._callbacks"]
     assert any("suppressed" in m for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_wraps_generations_in_chain_run() -> None:
+    rec = RecordingHandler()
+    llm = _llm([_resp([{"name": "_Final", "args": {"result": "done"}, "id": "c1"}])])
+
+    result, _ = await run_extractor_agent(
+        llm, _Final, [], tools=[], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None and result.result == "done"
+    names = [e[0] for e in rec.events]
+    assert names[0] == "chain_start"
+    assert rec.events[0] == ("chain_start", "saidex.agent_loop")
+    assert names[-1] == "chain_end"
+    end_outputs = rec.events[-1][1]
+    assert end_outputs["success"] is True
+    assert "iterations" in end_outputs and "tool_calls" in end_outputs
+    # Generations are wired to nest: the child manager was passed to ainvoke.
+    call = llm.ainvoke.call_args
+    assert call.kwargs["config"]["callbacks"] is not None
