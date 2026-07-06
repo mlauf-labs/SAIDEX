@@ -1394,14 +1394,25 @@ variables, which the Langfuse client picks up automatically:</p>
 </code></pre></div>
 <hr />
 <h2 id="1-a-single-extraction">1. A single extraction<a class="headerlink" href="#1-a-single-extraction" title="Permanent link">&para;</a></h2>
-<p>Attach the handler via the <code>callbacks</code> parameter — accepted by <strong>all four</strong>
-public functions (<code>extract_data</code>, <code>extract_data_from_text</code>,
-<code>extract_data_with_tools</code>, <code>run_extractor_agent</code>). Every LLM call SAIDEX makes is then
-recorded automatically.</p>
+<p>Attach the handler via the <code>callbacks</code> parameter — accepted by <strong>every</strong>
+public extraction function (<code>extract_data</code>, <code>extract_data_from_text</code>,
+<code>extract_data_list</code>, <code>extract_data_list_from_text</code>, <code>extract_data_with_tools</code>,
+<code>run_extractor_agent</code>, and their <code>*_sync</code> wrappers). Every LLM call SAIDEX
+makes is then recorded automatically.</p>
 <p>Each extraction is wrapped in a single enclosing span (<code>saidex.extract_data</code>,
 <code>saidex.extract_data_list</code>, or <code>saidex.agent_loop</code>) so retries and — in the agent
 loop — tool executions nest under one logical run instead of appearing side by
 side.</p>
+<div class="admonition note">
+<p class="admonition-title">What the spans contain</p>
+<p>The enclosing span's <strong>output</strong> carries the validated result plus run
+metrics (<code>success</code>, retries, <code>problem_fields</code>, …) — the same values a
+tracer already sees inside the LLM generations. The span's <strong>input</strong>
+contains only the schema name and mode by default; the raw source text is
+included <strong>only</strong> when you opt in with <code>capture_source_text=True</code>. Enable
+that flag deliberately when a tracing handler is attached — it exports the
+full input text to the tracing backend.</p>
+</div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
@@ -1486,11 +1497,13 @@ likely, use a strict schema and a slightly ambiguous input:</p>
 <a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">result</span><span class="p">,</span> <span class="sa">f</span><span class="s2">&quot;(retries: </span><span class="si">{</span><span class="n">stats</span><span class="o">.</span><span class="n">total_retries</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
 <a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a>    <span class="n">get_client</span><span class="p">()</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
 </code></pre></div>
-<p><strong>What the trace shows:</strong> the root trace now contains <strong>N+1 generations</strong> for
-<code>N</code> retries. The validation error message that triggered each retry appears as
-the <em>input</em> of the following generation — so you can read, span by span, exactly
-what the model was asked to fix. <code>stats.total_retries</code> matches the number of
-extra generations in the trace.</p>
+<p><strong>What the trace shows:</strong> one <code>saidex.extract_data</code> span containing <strong>N+1
+generations</strong> for <code>N</code> retries. The validation error message that triggered each
+retry appears as the <em>input</em> of the following generation — so you can read,
+span by span, exactly what the model was asked to fix. The span's output
+carries the retry metrics: <code>stats.total_retries</code> matches both the
+<code>total_retries</code> value there and the number of extra generations nested under
+the span.</p>
 <hr />
 <h2 id="3-the-agent-loop">3. The agent loop<a class="headerlink" href="#3-the-agent-loop" title="Permanent link">&para;</a></h2>
 <p><code>extract_data_with_tools</code> / <code>run_extractor_agent</code> let the model call your tools any number

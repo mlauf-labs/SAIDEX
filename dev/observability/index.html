@@ -1609,6 +1609,14 @@ their own spans:</p>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">callbacks</span><span class="o">=</span><span class="p">[</span><span class="n">my_handler</span><span class="p">],</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
 </code></pre></div>
+<p><strong>What reaches the handlers:</strong> the chain-run span closes with the validated
+result and run metrics as its outputs — the same data the handler already sees
+inside the LLM generations, packaged once per extraction. The raw source text
+is <strong>not</strong> part of the trace unless you opt in with <code>capture_source_text=True</code>,
+which then also includes it in the span's inputs. If your handler exports to an
+external backend, enable that flag deliberately. (The <code>collect_stats</code> sink
+below stays PII-light regardless — it never stores messages, results, or
+source text.)</p>
 <hr />
 <h2 id="collecting-stats-without-threading-signatures">Collecting stats without threading signatures<a class="headerlink" href="#collecting-stats-without-threading-signatures" title="Permanent link">&para;</a></h2>
 <p>When SAIDEX is buried under layers of application code, capturing each
