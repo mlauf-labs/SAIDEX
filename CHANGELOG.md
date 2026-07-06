@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.1.0
 
+## v0.6.0 (2026-07-06)
+
+### Feat
+
+- **observability**: wrap extract_data and batch runs in chain runs
+- **observability**: emit tool spans for agent-loop tool calls
+- **observability**: wrap the agent loop in a chain run
+- **tools**: surface handler exceptions via Tool._invoke
+- **observability**: add private LangChain chain-run/tool-span helper
+
+### Fix
+
+- **observability**: close trace spans on cancellation and callback failures
+- **tools**: reject non-mapping tool args instead of crashing the loop
+
 ## v0.5.0 (2026-07-04)
 
 ### Feat
