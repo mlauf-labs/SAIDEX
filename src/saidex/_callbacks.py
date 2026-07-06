@@ -19,8 +19,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from langchain_core.callbacks import AsyncCallbackManager
-from langchain_core.callbacks.manager import (
+from langchain_core.callbacks import (
+    AsyncCallbackManager,
     AsyncCallbackManagerForChainRun,
     AsyncCallbackManagerForToolRun,
 )

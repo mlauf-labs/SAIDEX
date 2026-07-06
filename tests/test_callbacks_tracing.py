@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import UUID
 
 import pytest
 from langchain_core.callbacks.base import AsyncCallbackHandler
 
-from saidex._callbacks import _ChainRun
+from saidex._callbacks import _ChainRun, _ToolSpan
 
 
 class RecordingHandler(AsyncCallbackHandler):
@@ -103,18 +104,55 @@ async def test_chain_run_is_noop_without_callbacks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_broken_handler_is_swallowed() -> None:
-    class Broken(AsyncCallbackHandler):
-        async def on_chain_start(self, *a: Any, **k: Any) -> None:
-            raise RuntimeError("start boom")
+async def test_module_suppresses_callback_errors(caplog: pytest.LogCaptureFixture) -> None:
+    """The module's own try/except swallows callback errors and logs them.
+
+    ``raise_error = True`` forces langchain-core to re-raise past its internal
+    catch, so the exception reaches _callbacks.py's own suppression layer
+    (langchain's default swallow would let this test pass even with our
+    try/except removed).
+    """
+
+    class RaisingHandler(AsyncCallbackHandler):
+        raise_error = True  # re-raise past langchain's default internal swallow
 
         async def on_tool_start(self, *a: Any, **k: Any) -> None:
-            raise RuntimeError("tool boom")
+            raise RuntimeError("tool_start boom")
 
         async def on_chain_end(self, *a: Any, **k: Any) -> None:
-            raise RuntimeError("end boom")
+            raise RuntimeError("chain_end boom")
 
-    trace = await _ChainRun.start([Broken()], name="saidex.test", inputs={})
-    async with trace.tool_span("x", {}) as span:  # must not raise
+    trace = await _ChainRun.start([RaisingHandler()], name="saidex.test", inputs={})
+    # Chain started (no on_chain_start override), so the child manager exists.
+    assert trace.child_callbacks() is not None
+
+    with caplog.at_level(logging.ERROR, logger="saidex._callbacks"):
+        async with trace.tool_span("x", {}) as span:  # on_tool_start raises into our except
+            span.record_output("y")
+        await trace.end({})  # on_chain_end raises into our except
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "saidex._callbacks"]
+    assert any("suppressed" in m for m in messages)  # proves OUR except ran
+
+
+@pytest.mark.asyncio
+async def test_toolspan_and_error_suppress_raising_run(caplog: pytest.LogCaptureFixture) -> None:
+    """_ToolSpan._finish and _ChainRun.error swallow a run whose callbacks raise."""
+
+    class RaisingRun:
+        async def on_tool_end(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("tool_end boom")
+
+        async def on_chain_error(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("chain_error boom")
+
+    with caplog.at_level(logging.ERROR, logger="saidex._callbacks"):
+        span = _ToolSpan(RaisingRun())  # type: ignore[arg-type]
         span.record_output("y")
-    await trace.end({})  # must not raise
+        await span._finish()  # must not raise
+
+        trace = _ChainRun(RaisingRun(), None)  # type: ignore[arg-type]
+        await trace.error(RuntimeError("x"))  # must not raise
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "saidex._callbacks"]
+    assert any("suppressed" in m for m in messages)
