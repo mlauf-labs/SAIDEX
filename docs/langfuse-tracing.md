@@ -69,10 +69,25 @@ Langfuse(
 
 ## 1. A single extraction
 
-Attach the handler via the `callbacks` parameter — accepted by **all four**
-public functions (`extract_data`, `extract_data_from_text`,
-`extract_data_with_tools`, `run_extractor_agent`). Every LLM call SAIDEX makes is then
-recorded automatically.
+Attach the handler via the `callbacks` parameter — accepted by **every**
+public extraction function (`extract_data`, `extract_data_from_text`,
+`extract_data_list`, `extract_data_list_from_text`, `extract_data_with_tools`,
+`run_extractor_agent`, and their `*_sync` wrappers). Every LLM call SAIDEX
+makes is then recorded automatically.
+
+Each extraction is wrapped in a single enclosing span (`saidex.extract_data`,
+`saidex.extract_data_list`, or `saidex.agent_loop`) so retries and — in the agent
+loop — tool executions nest under one logical run instead of appearing side by
+side.
+
+!!! note "What the spans contain"
+    The enclosing span's **output** carries the validated result plus run
+    metrics (`success`, retries, `problem_fields`, …) — the same values a
+    tracer already sees inside the LLM generations. The span's **input**
+    contains only the schema name and mode by default; the raw source text is
+    included **only** when you opt in with `capture_source_text=True`. Enable
+    that flag deliberately when a tracing handler is attached — it exports the
+    full input text to the tracing backend.
 
 ```python
 import asyncio
@@ -166,11 +181,13 @@ async def main() -> None:
     get_client().flush()
 ```
 
-**What the trace shows:** the root trace now contains **N+1 generations** for
-`N` retries. The validation error message that triggered each retry appears as
-the *input* of the following generation — so you can read, span by span, exactly
-what the model was asked to fix. `stats.total_retries` matches the number of
-extra generations in the trace.
+**What the trace shows:** one `saidex.extract_data` span containing **N+1
+generations** for `N` retries. The validation error message that triggered each
+retry appears as the *input* of the following generation — so you can read,
+span by span, exactly what the model was asked to fix. The span's output
+carries the retry metrics: `stats.total_retries` matches both the
+`total_retries` value there and the number of extra generations nested under
+the span.
 
 ---
 
@@ -240,9 +257,13 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**What the trace shows:** one trace spanning the whole loop. You can follow the
-sequence — model decides to call `get_order_status`, the tool result comes back,
-the model calls the `TicketResolution` final-answer tool — and reconcile it with
+**What the trace shows:** one `saidex.agent_loop` span for the whole loop. Under
+it sit each tool-deciding LLM generation **and** a dedicated span for every tool
+your model calls — `get_order_status` appears as its own `on_tool_start` /
+`on_tool_end` span with the arguments as input and the tool result as output. If
+a tool handler raises, its span is marked as an error (`on_tool_error`) while the
+loop keeps running. The final-answer schema call is not a tool span — it is the
+loop's output, attached to the `saidex.agent_loop` span. Reconcile the tree with
 `stats.iterations` and `stats.tool_calls`.
 
 ---

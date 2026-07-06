@@ -36,6 +36,20 @@ from pydantic import BaseModel
 
 
 @dataclass
+class _ToolOutcome:
+    """Result of running one tool: the ``ToolMessage`` content plus any handler error.
+
+    Attributes:
+        content: The string appended to the conversation as the tool's result.
+        handler_error: The exception the handler raised, or ``None`` when the tool
+            ran cleanly or the arguments were merely invalid.
+    """
+
+    content: str
+    handler_error: Exception | None
+
+
+@dataclass
 class Tool:
     """A caller-supplied tool the LLM may invoke during the agent loop.
 
@@ -73,6 +87,44 @@ class Tool:
             },
         }
 
+    async def _invoke(self, raw_args: dict[str, Any]) -> _ToolOutcome:
+        """Validate *raw_args*, run the handler, and capture the outcome.
+
+        ``content`` is always the string destined for the ``ToolMessage``.
+        ``handler_error`` is set **only** when the handler itself raised — invalid
+        arguments are a normal tool result, not a handler crash.
+        """
+        from .utils import create_instance_safe  # local import to avoid circular deps
+
+        # LLM tool-call args are not guaranteed to be a mapping (double-encoded
+        # JSON parses to a str) and may collide with the callee's own parameter
+        # names — both would raise at the ``**`` boundary and crash the whole
+        # agent loop instead of feeding the model a correctable error.
+        if not isinstance(raw_args, dict):
+            return _ToolOutcome(
+                f"Invalid arguments for tool '{self.name}': expected a JSON object, "
+                f"got {type(raw_args).__name__}.",
+                None,
+            )
+        try:
+            args_model, error_text = create_instance_safe(self.parameters, **raw_args)
+        except TypeError as exc:
+            return _ToolOutcome(f"Invalid arguments for tool '{self.name}': {exc}", None)
+        if error_text or args_model is None:
+            return _ToolOutcome(f"Invalid arguments for tool '{self.name}': {error_text}", None)
+
+        try:
+            result = await self.handler(**args_model.model_dump())
+        except Exception as exc:  # noqa: BLE001
+            return _ToolOutcome(f"Tool '{self.name}' raised an error: {exc}", exc)
+
+        if isinstance(result, str):
+            return _ToolOutcome(result, None)
+        try:
+            return _ToolOutcome(json.dumps(result, ensure_ascii=False, default=str), None)
+        except (TypeError, ValueError):
+            return _ToolOutcome(str(result), None)
+
     async def execute(self, raw_args: dict[str, Any]) -> str:
         """Validate *raw_args* against ``parameters``, run the handler, return result.
 
@@ -84,20 +136,4 @@ class Tool:
             Handler exceptions are caught and returned as error strings so the
             LLM can self-correct rather than crashing the whole pipeline.
         """
-        from .utils import create_instance_safe  # local import to avoid circular deps
-
-        args_model, error_text = create_instance_safe(self.parameters, **raw_args)
-        if error_text or args_model is None:
-            return f"Invalid arguments for tool '{self.name}': {error_text}"
-
-        try:
-            result = await self.handler(**args_model.model_dump())
-        except Exception as exc:  # noqa: BLE001
-            return f"Tool '{self.name}' raised an error: {exc}"
-
-        if isinstance(result, str):
-            return result
-        try:
-            return json.dumps(result, ensure_ascii=False, default=str)
-        except (TypeError, ValueError):
-            return str(result)
+        return (await self._invoke(raw_args)).content

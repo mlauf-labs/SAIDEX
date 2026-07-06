@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -18,6 +17,8 @@ from saidex import (
     run_extractor_agent,
 )
 from saidex.retry import RetryConfig
+from tests._mock_llm import make_llm as _make_llm
+from tests._mock_llm import make_response as _make_response
 
 # ---------------------------------------------------------------------------
 # Helpers & Schemas
@@ -39,30 +40,6 @@ class ToolArgs(BaseModel):
 def _tc(name: str, args: dict[str, Any], call_id: str = "call_1") -> dict[str, Any]:
     """Build a tool_call dict as LangChain returns them."""
     return {"name": name, "args": args, "id": call_id}
-
-
-def _make_response(
-    tool_calls: list[dict[str, Any]] | None = None,
-    content: str = "",
-    invalid: bool = False,
-) -> MagicMock:
-    r = MagicMock()
-    r.tool_calls = tool_calls or []
-    r.invalid_tool_calls = (
-        [{"name": "bad", "args": "{bad", "id": "x", "error": "parse error"}] if invalid else []
-    )
-    r.content = content
-    return r
-
-
-def _make_llm(responses: list[MagicMock]) -> MagicMock:
-    """LLM mock whose bind_tools() returns a bound model yielding *responses*."""
-    bound = MagicMock()
-    bound.ainvoke = AsyncMock(side_effect=responses)
-    llm = MagicMock()
-    llm.bind_tools = MagicMock(return_value=bound)
-    llm.ainvoke = bound.ainvoke  # for JSON mode without tools
-    return llm
 
 
 async def _noop_handler(**kwargs: Any) -> dict[str, Any]:
@@ -402,3 +379,55 @@ def test_agent_run_stats_add() -> None:
     assert c.tool_calls == 3
     assert c.validation_retries == 1
     assert c.fallback_used is True
+
+
+# ---------------------------------------------------------------------------
+# Tool._invoke
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_success_has_no_error() -> None:
+    tool = _make_tool()
+    outcome = await tool._invoke({"name": "foo", "parent_id": None})
+    assert outcome.handler_error is None
+    data = json.loads(outcome.content)
+    assert data["name"] == "foo"
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_invalid_args_is_not_a_handler_error() -> None:
+    tool = _make_tool()
+    outcome = await tool._invoke({"parent_id": "x"})  # 'name' missing
+    assert outcome.handler_error is None
+    assert "Invalid arguments" in outcome.content
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_handler_exception_is_captured() -> None:
+    async def _failing(**kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    tool = Tool(name="boom_tool", description=".", parameters=ToolArgs, handler=_failing)
+    outcome = await tool._invoke({"name": "x"})
+    assert isinstance(outcome.handler_error, RuntimeError)
+    assert "boom" in outcome.content
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_non_mapping_args_returns_invalid() -> None:
+    """Double-encoded JSON args arrive as a str — must not crash the loop."""
+    tool = _make_tool()
+    outcome = await tool._invoke("not a dict")  # type: ignore[arg-type]
+    assert outcome.handler_error is None
+    assert "Invalid arguments" in outcome.content
+    assert "expected a JSON object" in outcome.content
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_reserved_key_collision_returns_invalid() -> None:
+    """An arg named 'schema' collides with create_instance_safe's own parameter."""
+    tool = _make_tool()
+    outcome = await tool._invoke({"schema": "x", "name": "foo"})
+    assert outcome.handler_error is None
+    assert "Invalid arguments" in outcome.content

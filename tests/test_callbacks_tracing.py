@@ -1,0 +1,452 @@
+"""Tests for LangChain callback tracing (chain runs + tool events)."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+from uuid import UUID
+
+import pytest
+from langchain_core.callbacks import AsyncCallbackManager
+from langchain_core.callbacks.base import AsyncCallbackHandler
+from langchain_core.messages import HumanMessage
+from pydantic import BaseModel
+
+from saidex import (
+    IbanStr,
+    Tool,
+    extract_data,
+    extract_data_list,
+    extract_data_with_tools_sync,
+    run_extractor_agent,
+)
+from saidex._callbacks import _ChainRun, _ToolSpan
+from saidex.retry import RetryConfig
+from tests._mock_llm import make_llm as _llm
+from tests._mock_llm import make_response as _resp
+
+_NO_RETRY = RetryConfig(max_retries=0, retry_delays=[])
+
+
+class _Final(BaseModel):
+    result: str
+
+
+class _Args(BaseModel):
+    q: str
+
+
+class _Bank(BaseModel):
+    holder: str
+    iban: IbanStr
+
+
+class RecordingHandler(AsyncCallbackHandler):
+    """Async handler that records (event, payload) tuples and run-id linkage."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, Any]] = []
+        self.chain_run_id: UUID | None = None
+        self.tool_parents: list[UUID | None] = []
+
+    async def on_chain_start(
+        self,
+        serialized: Any,
+        inputs: Any,
+        *,
+        run_id: UUID,
+        parent_run_id: UUID | None = None,
+        **kw: Any,
+    ) -> None:
+        self.chain_run_id = run_id
+        self.events.append(("chain_start", kw.get("name") or (serialized or {}).get("name")))
+
+    async def on_chain_end(self, outputs: Any, **kw: Any) -> None:
+        self.events.append(("chain_end", outputs))
+
+    async def on_chain_error(self, error: BaseException, **kw: Any) -> None:
+        self.events.append(("chain_error", error))
+
+    async def on_tool_start(
+        self,
+        serialized: Any,
+        input_str: str,
+        *,
+        run_id: UUID,
+        parent_run_id: UUID | None = None,
+        **kw: Any,
+    ) -> None:
+        self.tool_parents.append(parent_run_id)
+        self.events.append(("tool_start", (serialized or {}).get("name"), input_str))
+
+    async def on_tool_end(self, output: Any, **kw: Any) -> None:
+        self.events.append(("tool_end", output))
+
+    async def on_tool_error(self, error: BaseException, **kw: Any) -> None:
+        self.events.append(("tool_error", error))
+
+
+@pytest.mark.asyncio
+async def test_chain_run_emits_nested_tool_and_chain_events() -> None:
+    rec = RecordingHandler()
+    trace = await _ChainRun.start([rec], name="saidex.test", inputs={"schema": "X"})
+
+    assert trace.child_callbacks() is not None
+
+    async with trace.tool_span("do_thing", {"a": 1}) as span:
+        span.record_output("ok")
+
+    await trace.end({"success": True})
+
+    names = [e[0] for e in rec.events]
+    assert names == ["chain_start", "tool_start", "tool_end", "chain_end"]
+    assert rec.events[0] == ("chain_start", "saidex.test")
+    assert rec.events[1] == ("tool_start", "do_thing", '{"a": 1}')
+    assert rec.events[2] == ("tool_end", "ok")
+    # Tool span nests under the chain run.
+    assert rec.tool_parents == [rec.chain_run_id]
+
+
+@pytest.mark.asyncio
+async def test_chain_run_reports_tool_error() -> None:
+    rec = RecordingHandler()
+    trace = await _ChainRun.start([rec], name="saidex.test", inputs={})
+    boom = RuntimeError("kaboom")
+
+    async with trace.tool_span("do_thing", {}) as span:
+        span.record_error(boom)
+
+    await trace.end({})
+    assert ("tool_error", boom) in rec.events
+    assert not any(e[0] == "tool_end" for e in rec.events)
+
+
+@pytest.mark.asyncio
+async def test_chain_run_is_noop_without_callbacks() -> None:
+    for cb in (None, []):
+        trace = await _ChainRun.start(cb, name="saidex.test", inputs={})
+        assert trace.child_callbacks() is None
+        async with trace.tool_span("x", {}) as span:  # must not raise
+            span.record_output("y")
+        await trace.end({"success": True})  # must not raise
+        await trace.error(RuntimeError("x"))  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_module_suppresses_callback_errors(caplog: pytest.LogCaptureFixture) -> None:
+    """The module's own try/except swallows callback errors and logs them.
+
+    ``raise_error = True`` forces langchain-core to re-raise past its internal
+    catch, so the exception reaches _callbacks.py's own suppression layer
+    (langchain's default swallow would let this test pass even with our
+    try/except removed).
+    """
+
+    class RaisingHandler(AsyncCallbackHandler):
+        raise_error = True  # re-raise past langchain's default internal swallow
+
+        async def on_tool_start(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("tool_start boom")
+
+        async def on_chain_end(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("chain_end boom")
+
+    trace = await _ChainRun.start([RaisingHandler()], name="saidex.test", inputs={})
+    # Chain started (no on_chain_start override), so the child manager exists.
+    assert trace.child_callbacks() is not None
+
+    with caplog.at_level(logging.ERROR, logger="saidex._callbacks"):
+        async with trace.tool_span("x", {}) as span:  # on_tool_start raises into our except
+            span.record_output("y")
+        await trace.end({})  # on_chain_end raises into our except
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "saidex._callbacks"]
+    assert any("suppressed" in m for m in messages)  # proves OUR except ran
+
+
+@pytest.mark.asyncio
+async def test_toolspan_and_error_suppress_raising_run(caplog: pytest.LogCaptureFixture) -> None:
+    """_ToolSpan._finish and _ChainRun.error swallow a run whose callbacks raise."""
+
+    class RaisingRun:
+        async def on_tool_end(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("tool_end boom")
+
+        async def on_chain_error(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("chain_error boom")
+
+    with caplog.at_level(logging.ERROR, logger="saidex._callbacks"):
+        span = _ToolSpan(RaisingRun())  # type: ignore[arg-type]
+        span.record_output("y")
+        await span._finish()  # must not raise
+
+        trace = _ChainRun(RaisingRun(), None)  # type: ignore[arg-type]
+        await trace.error(RuntimeError("x"))  # must not raise
+
+    messages = [r.getMessage() for r in caplog.records if r.name == "saidex._callbacks"]
+    assert any("suppressed" in m for m in messages)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_wraps_generations_in_chain_run() -> None:
+    rec = RecordingHandler()
+    llm = _llm([_resp([{"name": "_Final", "args": {"result": "done"}, "id": "c1"}])])
+
+    result, _ = await run_extractor_agent(
+        llm, _Final, [], tools=[], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None and result.result == "done"
+    names = [e[0] for e in rec.events]
+    assert names[0] == "chain_start"
+    assert rec.events[0] == ("chain_start", "saidex.agent_loop")
+    assert names[-1] == "chain_end"
+    end_outputs = rec.events[-1][1]
+    assert end_outputs["success"] is True
+    assert "iterations" in end_outputs and "tool_calls" in end_outputs
+    # Generations are wired to nest: ainvoke received the chain run's CHILD
+    # manager (not the raw callbacks list, which would trace un-nested).
+    config_callbacks = llm.ainvoke.call_args.kwargs["config"]["callbacks"]
+    assert isinstance(config_callbacks, AsyncCallbackManager)
+    assert config_callbacks.parent_run_id == rec.chain_run_id
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_emits_tool_span() -> None:
+    rec = RecordingHandler()
+
+    async def handler(q: str) -> dict[str, Any]:
+        return {"answer": q.upper()}
+
+    tool = Tool(name="lookup", description="d", parameters=_Args, handler=handler)
+    llm = _llm(
+        [
+            _resp([{"name": "lookup", "args": {"q": "hi"}, "id": "c1"}]),
+            _resp([{"name": "_Final", "args": {"result": "done"}, "id": "c2"}]),
+        ]
+    )
+
+    result, stats = await run_extractor_agent(
+        llm, _Final, [], tools=[tool], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None
+    names = [e[0] for e in rec.events]
+    assert names == ["chain_start", "tool_start", "tool_end", "chain_end"]
+    assert rec.events[1] == ("tool_start", "lookup", '{"q": "hi"}')
+    assert rec.tool_parents == [rec.chain_run_id]  # nested under the loop
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_handler_crash_emits_tool_error() -> None:
+    rec = RecordingHandler()
+
+    async def handler(q: str) -> dict[str, Any]:
+        raise RuntimeError("handler down")
+
+    tool = Tool(name="lookup", description="d", parameters=_Args, handler=handler)
+    llm = _llm(
+        [
+            _resp([{"name": "lookup", "args": {"q": "hi"}, "id": "c1"}]),
+            _resp([{"name": "_Final", "args": {"result": "recovered"}, "id": "c2"}]),
+        ]
+    )
+
+    result, _ = await run_extractor_agent(
+        llm, _Final, [], tools=[tool], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    # Loop still completes despite the crashing handler.
+    assert result is not None and result.result == "recovered"
+    assert any(e[0] == "tool_error" for e in rec.events)
+    assert not any(e[0] == "tool_end" for e in rec.events)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_unknown_tool_emits_tool_end() -> None:
+    rec = RecordingHandler()
+    llm = _llm(
+        [
+            _resp([{"name": "ghost", "args": {"q": "x"}, "id": "c1"}]),
+            _resp([{"name": "_Final", "args": {"result": "ok"}, "id": "c2"}]),
+        ]
+    )
+
+    result, _ = await run_extractor_agent(
+        llm, _Final, [], tools=[], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None
+    tool_ends = [e for e in rec.events if e[0] == "tool_end"]
+    assert tool_ends and "Unknown tool 'ghost'" in tool_ends[0][1]
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_no_callbacks_still_works() -> None:
+    async def handler(q: str) -> dict[str, Any]:
+        return {"answer": q}
+
+    tool = Tool(name="lookup", description="d", parameters=_Args, handler=handler)
+    llm = _llm(
+        [
+            _resp([{"name": "lookup", "args": {"q": "hi"}, "id": "c1"}]),
+            _resp([{"name": "_Final", "args": {"result": "done"}, "id": "c2"}]),
+        ]
+    )
+    result, _ = await run_extractor_agent(llm, _Final, [], tools=[tool], retry_config=_NO_RETRY)
+    assert result is not None and result.result == "done"
+
+
+@pytest.mark.asyncio
+async def test_extract_data_wraps_retries_in_one_chain_run() -> None:
+    rec = RecordingHandler()
+    # First attempt: bad IBAN → validation retry. Second: valid.
+    r1 = _resp([{"name": "_Bank", "args": {"holder": "ACME", "iban": "not-an-iban"}, "id": "a"}])
+    r2 = _resp(
+        [{"name": "_Bank", "args": {"holder": "ACME", "iban": "DE89370400440532013000"}, "id": "b"}]
+    )
+    llm = _llm([r1, r2])
+
+    result, stats = await extract_data(
+        llm, _Bank, [HumanMessage(content="pay ACME")], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None
+    starts = [e for e in rec.events if e[0] == "chain_start"]
+    ends = [e for e in rec.events if e[0] == "chain_end"]
+    assert starts == [("chain_start", "saidex.extract_data")]  # exactly one chain run
+    assert len(ends) == 1
+    assert ends[0][1]["success"] is True
+    assert ends[0][1]["total_retries"] == stats.total_retries
+
+
+@pytest.mark.asyncio
+async def test_extract_data_list_uses_single_chain_run() -> None:
+    rec = RecordingHandler()
+    llm = _llm([_resp([{"name": "_FinalList", "args": {"items": [{"result": "a"}]}, "id": "x"}])])
+
+    items, _ = await extract_data_list(
+        llm, _Final, [HumanMessage(content="list them")], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert items is not None and len(items) == 1
+    starts = [e for e in rec.events if e[0] == "chain_start"]
+    assert starts == [("chain_start", "saidex.extract_data_list")]  # not the inner extract_data
+
+
+def test_sync_wrapper_fires_callbacks() -> None:
+    rec = RecordingHandler()
+    llm = _llm([_resp([{"name": "_Final", "args": {"result": "done"}, "id": "c1"}])])
+
+    result, _ = extract_data_with_tools_sync(
+        llm, _Final, "do it", tools=[], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None
+    names = [e[0] for e in rec.events]
+    assert names[0] == "chain_start" and names[-1] == "chain_end"
+
+
+# ---------------------------------------------------------------------------
+# Span lifecycle under cancellation and in-flight failures
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancellation_closes_chain_span_extract_data() -> None:
+    """A task cancellation must close the chain span, not leak it open."""
+    rec = RecordingHandler()
+    llm = _llm([asyncio.CancelledError("cancelled mid-flight")])
+
+    with pytest.raises(asyncio.CancelledError):
+        await extract_data(
+            llm, _Final, [HumanMessage(content="x")], callbacks=[rec], retry_config=_NO_RETRY
+        )
+
+    assert rec.events[-1][0] == "chain_error"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_closes_chain_span_agent_loop() -> None:
+    rec = RecordingHandler()
+    llm = _llm([asyncio.CancelledError("cancelled mid-flight")])
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_extractor_agent(
+            llm, _Final, [], tools=[], callbacks=[rec], retry_config=_NO_RETRY
+        )
+
+    assert rec.events[-1][0] == "chain_error"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_closes_chain_span_extract_data_list() -> None:
+    rec = RecordingHandler()
+    llm = _llm([asyncio.CancelledError("cancelled mid-flight")])
+
+    with pytest.raises(asyncio.CancelledError):
+        await extract_data_list(
+            llm, _Final, [HumanMessage(content="x")], callbacks=[rec], retry_config=_NO_RETRY
+        )
+
+    # Exactly one chain_error: the borrowed inner trace must not double-close.
+    assert [e[0] for e in rec.events if e[0] == "chain_error"] == ["chain_error"]
+    assert rec.events[-1][0] == "chain_error"
+
+
+@pytest.mark.asyncio
+async def test_tool_span_reports_inflight_exception_as_tool_error() -> None:
+    """An exception escaping the span body must close it as an error, never as
+    a false-success ``on_tool_end`` with empty output."""
+    rec = RecordingHandler()
+    trace = await _ChainRun.start([rec], name="saidex.test", inputs={})
+
+    with pytest.raises(RuntimeError, match="in-flight"):
+        async with trace.tool_span("x", {}):
+            raise RuntimeError("in-flight boom")
+
+    assert any(e[0] == "tool_error" for e in rec.events)
+    assert not any(e[0] == "tool_end" for e in rec.events)
+
+
+@pytest.mark.asyncio
+async def test_start_failure_degrades_to_unnested_tracing() -> None:
+    """A handler crashing ``on_chain_start`` must not silently disable ALL
+    tracing for the run — LLM/tool events still reach the other handlers."""
+
+    class BadStart(AsyncCallbackHandler):
+        raise_error = True  # re-raise past langchain's default internal swallow
+
+        async def on_chain_start(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("start boom")
+
+    rec = RecordingHandler()
+    trace = await _ChainRun.start([rec, BadStart()], name="saidex.test", inputs={})
+
+    # Degraded, not dark: the configured manager still forwards events.
+    assert trace.child_callbacks() is not None
+
+    async with trace.tool_span("x", {"a": 1}) as span:
+        span.record_output("y")
+    await trace.end({"success": True})  # no chain run was opened → no-op
+
+    assert any(e[0] == "tool_start" for e in rec.events)
+    assert any(e[0] == "tool_end" for e in rec.events)
+    assert not any(e[0] == "chain_end" for e in rec.events)
+
+
+@pytest.mark.asyncio
+async def test_tool_span_falls_back_to_str_for_unserializable_args() -> None:
+    """Args that json.dumps cannot serialise degrade to str(), keeping the span."""
+    rec = RecordingHandler()
+    trace = await _ChainRun.start([rec], name="saidex.test", inputs={})
+    circular: dict[str, Any] = {}
+    circular["self"] = circular  # json.dumps raises ValueError even with default=str
+
+    async with trace.tool_span("x", circular) as span:
+        span.record_output("ok")
+    await trace.end({})
+
+    tool_starts = [e for e in rec.events if e[0] == "tool_start"]
+    assert tool_starts and tool_starts[0][2] == str(circular)
