@@ -9,9 +9,10 @@ from uuid import UUID
 
 import pytest
 from langchain_core.callbacks.base import AsyncCallbackHandler
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from saidex import Tool, run_extractor_agent
+from saidex import IbanStr, Tool, extract_data, extract_data_list, run_extractor_agent
 from saidex._callbacks import _ChainRun, _ToolSpan
 from saidex.retry import RetryConfig
 
@@ -35,6 +36,20 @@ def _resp(tool_calls: list[dict[str, Any]] | None = None) -> MagicMock:
 
 
 def _llm(responses: list[MagicMock]) -> MagicMock:
+    bound = MagicMock()
+    bound.ainvoke = AsyncMock(side_effect=responses)
+    llm = MagicMock()
+    llm.bind_tools = MagicMock(return_value=bound)
+    llm.ainvoke = bound.ainvoke
+    return llm
+
+
+class _Bank(BaseModel):
+    holder: str
+    iban: IbanStr
+
+
+def _plain_llm(responses: list[MagicMock]) -> MagicMock:
     bound = MagicMock()
     bound.ainvoke = AsyncMock(side_effect=responses)
     llm = MagicMock()
@@ -295,3 +310,46 @@ async def test_agent_loop_no_callbacks_still_works() -> None:
     )
     result, _ = await run_extractor_agent(llm, _Final, [], tools=[tool], retry_config=_NO_RETRY)
     assert result is not None and result.result == "done"
+
+
+@pytest.mark.asyncio
+async def test_extract_data_wraps_retries_in_one_chain_run() -> None:
+    rec = RecordingHandler()
+    # First attempt: bad IBAN → validation retry. Second: valid.
+    r1 = _resp([{"name": "_Bank", "args": {"holder": "ACME", "iban": "not-an-iban"}, "id": "a"}])
+    r2 = _resp(
+        [{"name": "_Bank", "args": {"holder": "ACME", "iban": "DE89370400440532013000"}, "id": "b"}]
+    )
+    llm = _plain_llm([r1, r2])
+
+    result, stats = await extract_data(
+        llm, _Bank, [HumanMessage(content="pay ACME")], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None
+    starts = [e for e in rec.events if e[0] == "chain_start"]
+    ends = [e for e in rec.events if e[0] == "chain_end"]
+    assert starts == [("chain_start", "saidex.extract_data")]  # exactly one chain run
+    assert len(ends) == 1
+    assert ends[0][1]["success"] is True
+    assert ends[0][1]["total_retries"] == stats.total_retries
+
+
+@pytest.mark.asyncio
+async def test_extract_data_list_uses_single_chain_run() -> None:
+    rec = RecordingHandler()
+    llm = _plain_llm(
+        [_resp([{"name": "_FinalList", "args": {"items": [{"result": "a"}]}, "id": "x"}])]
+    )
+    # Container tool name is "<schema>List"; patch response name accordingly.
+    llm.bind_tools().ainvoke.side_effect = [
+        _resp([{"name": "_FinalList", "args": {"items": [{"result": "a"}]}, "id": "x"}])
+    ]
+
+    items, _ = await extract_data_list(
+        llm, _Final, [HumanMessage(content="list them")], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert items is not None and len(items) == 1
+    starts = [e for e in rec.events if e[0] == "chain_start"]
+    assert starts == [("chain_start", "saidex.extract_data_list")]  # not the inner extract_data
