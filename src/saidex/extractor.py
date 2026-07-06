@@ -9,6 +9,7 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from json_repair import repair_json
@@ -211,8 +212,11 @@ async def extract_data(
             :class:`~saidex.models.ExtractionEvent`.  Exceptions it raises are
             logged and suppressed so they cannot break the extraction.
         capture_source_text: When ``True``, the human-turn text of *messages* is
-            stored on ``stats.source_text`` and passed to *on_complete*.  Off by
-            default to avoid retaining potentially sensitive input.
+            stored on ``stats.source_text``, passed to *on_complete*, and included
+            in the chain-run trace inputs delivered to any attached *callbacks*
+            (e.g. a Langfuse/LangSmith handler).  Off by default to avoid
+            retaining — or exporting to a tracing backend — potentially
+            sensitive input.
         validator: Optional external validation callable (sync or async).  After
             the model passes Pydantic validation it is handed to *validator*,
             which accepts it by returning ``None`` or rejects it by returning a
@@ -261,11 +265,9 @@ async def extract_data(
         else await _ChainRun.start(
             callbacks,
             name="saidex.extract_data",
-            inputs={
-                "schema": schema.__name__,
-                "mode": mode.value,
-                **({"text": grounding_source} if capture_source_text else {}),
-            },
+            inputs=_trace_inputs(
+                schema.__name__, mode.value, grounding_source, capture_source_text
+            ),
         )
     )
     owns_trace = _trace is None
@@ -401,7 +403,9 @@ async def extract_data(
                 field_issues=tuple(primary.field_issues),
             ),
         )
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException so a task cancellation (asyncio.CancelledError) still
+        # closes the chain span instead of leaking it open in the tracer.
         if owns_trace:
             await trace.error(exc)
         raise
@@ -444,7 +448,8 @@ async def extract_data_from_text(
         retry_config: Network-level retry configuration.
         on_complete: Optional async completion hook — see :func:`extract_data`.
         capture_source_text: When ``True``, *text* is stored on
-            ``stats.source_text`` and passed to *on_complete*.
+            ``stats.source_text``, passed to *on_complete*, and included in the
+            trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable — see :func:`extract_data`.
 
     Returns:
@@ -558,7 +563,8 @@ async def extract_data_list(
         on_complete: Optional async completion hook — see :func:`extract_data`.
             Fires once with the list result and the item schema name.
         capture_source_text: When ``True``, the human-turn text is stored on
-            ``stats.source_text`` and passed to *on_complete*.
+            ``stats.source_text``, passed to *on_complete*, and included in the
+            trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable run on **each** extracted
             item (sync or async).  Any item it rejects re-enters the shared retry
             loop with a per-item message (e.g. ``items -> 2: …``) surfaced to the
@@ -596,15 +602,13 @@ async def extract_data_list(
 
         container_validator = _validate_each_item
 
-    grounding_source = _source_text_from_messages(list(messages))
+    # Computed lazily: the list-level source text only feeds the trace inputs
+    # (the inner extract_data derives its own copy for grounding).
+    grounding_source = _source_text_from_messages(messages) if capture_source_text else ""
     trace = await _ChainRun.start(
         callbacks,
         name="saidex.extract_data_list",
-        inputs={
-            "schema": schema.__name__,
-            "mode": mode.value,
-            **({"text": grounding_source} if capture_source_text else {}),
-        },
+        inputs=_trace_inputs(schema.__name__, mode.value, grounding_source, capture_source_text),
     )
     try:
         # The inner call must not fire the hook or notify observers: it would
@@ -646,7 +650,9 @@ async def extract_data_list(
         )
         await trace.end(_extract_outputs(items, stats))
         return items, stats
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException so a task cancellation (asyncio.CancelledError) still
+        # closes the chain span instead of leaking it open in the tracer.
         await trace.error(exc)
         raise
 
@@ -690,7 +696,8 @@ async def extract_data_list_from_text(
         retry_config: Network-level retry configuration.
         on_complete: Optional async completion hook — see :func:`extract_data`.
         capture_source_text: When ``True``, *text* is stored on
-            ``stats.source_text`` and passed to *on_complete*.
+            ``stats.source_text``, passed to *on_complete*, and included in the
+            trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable run on each item — see
             :func:`extract_data_list`.
 
@@ -783,7 +790,8 @@ async def extract_data_with_tools(
         retry_config: Network-level retry configuration.
         on_complete: Optional async completion hook — see :func:`extract_data`.
         capture_source_text: When ``True``, *text* is stored on
-            ``stats.source_text`` and passed to *on_complete*.
+            ``stats.source_text``, passed to *on_complete*, and included in the
+            trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable applied to the final
             answer (sync or async).  A rejection keeps the agent loop running
             with the message surfaced to the model — see :func:`extract_data`.
@@ -860,7 +868,8 @@ async def run_extractor_agent(
     Args:
         on_complete: Optional async completion hook — see :func:`extract_data`.
         capture_source_text: When ``True``, the human-turn text of *messages* is
-            stored on ``stats.source_text`` and passed to *on_complete*.
+            stored on ``stats.source_text``, passed to *on_complete*, and included
+            in the trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable applied to the final
             answer — see :func:`extract_data_with_tools`.
 
@@ -875,12 +884,13 @@ async def run_extractor_agent(
     trace = await _ChainRun.start(
         callbacks,
         name="saidex.agent_loop",
-        inputs={
-            "schema": schema.__name__,
-            "mode": final_answer_mode.value,
-            "tools": [t.name for t in tools],
-            **({"text": grounding_source} if capture_source_text else {}),
-        },
+        inputs=_trace_inputs(
+            schema.__name__,
+            final_answer_mode.value,
+            grounding_source,
+            capture_source_text,
+            tools=[t.name for t in tools],
+        ),
     )
 
     async def _finish(
@@ -980,7 +990,9 @@ async def run_extractor_agent(
             primary_stats.iterations,
         )
         return await _finish(None, primary_stats)
-    except Exception as exc:
+    except BaseException as exc:
+        # BaseException so a task cancellation (asyncio.CancelledError) still
+        # closes the chain span instead of leaking it open in the tracer.
         await trace.error(exc)
         raise
 
@@ -990,34 +1002,55 @@ async def run_extractor_agent(
 # ---------------------------------------------------------------------------
 
 
-def _agent_outputs(result: Any, stats: ExtractorRunStats) -> dict[str, Any]:
-    """Chain-run outputs for the agent loop: the result plus run-level metrics."""
+def _trace_inputs(
+    schema_name: str,
+    mode_value: str,
+    grounding_source: str,
+    capture_source_text: bool,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Chain-run inputs shared by every extraction entry point.
+
+    The raw source text is included only when the caller opted in via
+    ``capture_source_text`` — the same privacy gate that governs
+    ``stats.source_text``.
+    """
+    inputs: dict[str, Any] = {"schema": schema_name, "mode": mode_value, **extra}
+    if capture_source_text:
+        inputs["text"] = grounding_source
+    return inputs
+
+
+def _common_outputs(result: Any, stats: ExtractDataStats | ExtractorRunStats) -> dict[str, Any]:
+    """Chain-run output fields shared by both stats types."""
     return {
         "result": result,
         "success": stats.success,
         "failure_reason": stats.failure_reason,
-        "iterations": stats.iterations,
-        "tool_calls": stats.tool_calls,
-        "validation_retries": stats.validation_retries,
         "fallback_used": stats.fallback_used,
         "problem_fields": list(stats.problem_fields),
         "format_errors": stats.format_errors,
     }
 
 
+def _agent_outputs(result: Any, stats: ExtractorRunStats) -> dict[str, Any]:
+    """Chain-run outputs for the agent loop: the result plus run-level metrics."""
+    return {
+        **_common_outputs(result, stats),
+        "iterations": stats.iterations,
+        "tool_calls": stats.tool_calls,
+        "validation_retries": stats.validation_retries,
+    }
+
+
 def _extract_outputs(result: Any, stats: ExtractDataStats) -> dict[str, Any]:
     """Chain-run outputs for extract_data / extract_data_list: result + metrics."""
     return {
-        "result": result,
-        "success": stats.success,
-        "failure_reason": stats.failure_reason,
+        **_common_outputs(result, stats),
         "total_retries": stats.total_retries,
         "primary_retries": stats.primary_retries,
         "fallback_retries": stats.fallback_retries,
-        "fallback_used": stats.fallback_used,
         "item_count": stats.item_count,
-        "problem_fields": list(stats.problem_fields),
-        "format_errors": stats.format_errors,
     }
 
 
@@ -1080,15 +1113,8 @@ async def _run_extractor_agent_with_model(
     while iterations < max_iterations:
         # ── LLM invocation with network-level retries ─────────────────────
         try:
-
-            async def _invoke() -> Any:
-                child = trace.child_callbacks()
-                if child is not None:
-                    return await llm.ainvoke(messages, config={"callbacks": child})
-                return await llm.ainvoke(messages)
-
             invoke_result = await with_retry(
-                operation=_invoke,
+                operation=partial(trace.invoke_llm, llm, messages),
                 config=retry_config,
                 operation_name=f"agent_loop({model_label})",
             )
@@ -1485,15 +1511,8 @@ async def _try_with_model(
     while remaining > 0:
         # --- LLM invocation with network-level retries ---
         try:
-
-            async def _invoke() -> Any:
-                child = trace.child_callbacks()
-                if child is not None:
-                    return await llm.ainvoke(messages, config={"callbacks": child})
-                return await llm.ainvoke(messages)
-
             invoke_result = await with_retry(
-                operation=_invoke,
+                operation=partial(trace.invoke_llm, llm, messages),
                 config=retry_config,
                 operation_name=f"structured_output({model_label})",
             )
