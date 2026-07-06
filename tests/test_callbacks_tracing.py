@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+from langchain_core.callbacks import AsyncCallbackManager
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
@@ -22,6 +23,8 @@ from saidex import (
 )
 from saidex._callbacks import _ChainRun, _ToolSpan
 from saidex.retry import RetryConfig
+from tests._mock_llm import make_llm as _llm
+from tests._mock_llm import make_response as _resp
 
 _NO_RETRY = RetryConfig(max_retries=0, retry_delays=[])
 
@@ -32,23 +35,6 @@ class _Final(BaseModel):
 
 class _Args(BaseModel):
     q: str
-
-
-def _resp(tool_calls: list[dict[str, Any]] | None = None) -> MagicMock:
-    r = MagicMock()
-    r.tool_calls = tool_calls or []
-    r.invalid_tool_calls = []
-    r.content = ""
-    return r
-
-
-def _llm(responses: list[MagicMock]) -> MagicMock:
-    bound = MagicMock()
-    bound.ainvoke = AsyncMock(side_effect=responses)
-    llm = MagicMock()
-    llm.bind_tools = MagicMock(return_value=bound)
-    llm.ainvoke = bound.ainvoke
-    return llm
 
 
 class _Bank(BaseModel):
@@ -219,9 +205,11 @@ async def test_agent_loop_wraps_generations_in_chain_run() -> None:
     end_outputs = rec.events[-1][1]
     assert end_outputs["success"] is True
     assert "iterations" in end_outputs and "tool_calls" in end_outputs
-    # Generations are wired to nest: the child manager was passed to ainvoke.
-    call = llm.ainvoke.call_args
-    assert call.kwargs["config"]["callbacks"] is not None
+    # Generations are wired to nest: ainvoke received the chain run's CHILD
+    # manager (not the raw callbacks list, which would trace un-nested).
+    config_callbacks = llm.ainvoke.call_args.kwargs["config"]["callbacks"]
+    assert isinstance(config_callbacks, AsyncCallbackManager)
+    assert config_callbacks.parent_run_id == rec.chain_run_id
 
 
 @pytest.mark.asyncio
@@ -358,3 +346,107 @@ def test_sync_wrapper_fires_callbacks() -> None:
     assert result is not None
     names = [e[0] for e in rec.events]
     assert names[0] == "chain_start" and names[-1] == "chain_end"
+
+
+# ---------------------------------------------------------------------------
+# Span lifecycle under cancellation and in-flight failures
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancellation_closes_chain_span_extract_data() -> None:
+    """A task cancellation must close the chain span, not leak it open."""
+    rec = RecordingHandler()
+    llm = _llm([asyncio.CancelledError("cancelled mid-flight")])
+
+    with pytest.raises(asyncio.CancelledError):
+        await extract_data(
+            llm, _Final, [HumanMessage(content="x")], callbacks=[rec], retry_config=_NO_RETRY
+        )
+
+    assert rec.events[-1][0] == "chain_error"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_closes_chain_span_agent_loop() -> None:
+    rec = RecordingHandler()
+    llm = _llm([asyncio.CancelledError("cancelled mid-flight")])
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_extractor_agent(
+            llm, _Final, [], tools=[], callbacks=[rec], retry_config=_NO_RETRY
+        )
+
+    assert rec.events[-1][0] == "chain_error"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_closes_chain_span_extract_data_list() -> None:
+    rec = RecordingHandler()
+    llm = _llm([asyncio.CancelledError("cancelled mid-flight")])
+
+    with pytest.raises(asyncio.CancelledError):
+        await extract_data_list(
+            llm, _Final, [HumanMessage(content="x")], callbacks=[rec], retry_config=_NO_RETRY
+        )
+
+    # Exactly one chain_error: the borrowed inner trace must not double-close.
+    assert [e[0] for e in rec.events if e[0] == "chain_error"] == ["chain_error"]
+    assert rec.events[-1][0] == "chain_error"
+
+
+@pytest.mark.asyncio
+async def test_tool_span_reports_inflight_exception_as_tool_error() -> None:
+    """An exception escaping the span body must close it as an error, never as
+    a false-success ``on_tool_end`` with empty output."""
+    rec = RecordingHandler()
+    trace = await _ChainRun.start([rec], name="saidex.test", inputs={})
+
+    with pytest.raises(RuntimeError, match="in-flight"):
+        async with trace.tool_span("x", {}):
+            raise RuntimeError("in-flight boom")
+
+    assert any(e[0] == "tool_error" for e in rec.events)
+    assert not any(e[0] == "tool_end" for e in rec.events)
+
+
+@pytest.mark.asyncio
+async def test_start_failure_degrades_to_unnested_tracing() -> None:
+    """A handler crashing ``on_chain_start`` must not silently disable ALL
+    tracing for the run — LLM/tool events still reach the other handlers."""
+
+    class BadStart(AsyncCallbackHandler):
+        raise_error = True  # re-raise past langchain's default internal swallow
+
+        async def on_chain_start(self, *a: Any, **k: Any) -> None:
+            raise RuntimeError("start boom")
+
+    rec = RecordingHandler()
+    trace = await _ChainRun.start([rec, BadStart()], name="saidex.test", inputs={})
+
+    # Degraded, not dark: the configured manager still forwards events.
+    assert trace.child_callbacks() is not None
+
+    async with trace.tool_span("x", {"a": 1}) as span:
+        span.record_output("y")
+    await trace.end({"success": True})  # no chain run was opened → no-op
+
+    assert any(e[0] == "tool_start" for e in rec.events)
+    assert any(e[0] == "tool_end" for e in rec.events)
+    assert not any(e[0] == "chain_end" for e in rec.events)
+
+
+@pytest.mark.asyncio
+async def test_tool_span_falls_back_to_str_for_unserializable_args() -> None:
+    """Args that json.dumps cannot serialise degrade to str(), keeping the span."""
+    rec = RecordingHandler()
+    trace = await _ChainRun.start([rec], name="saidex.test", inputs={})
+    circular: dict[str, Any] = {}
+    circular["self"] = circular  # json.dumps raises ValueError even with default=str
+
+    async with trace.tool_span("x", circular) as span:
+        span.record_output("ok")
+    await trace.end({})
+
+    tool_starts = [e for e in rec.events if e[0] == "tool_start"]
+    assert tool_starts and tool_starts[0][2] == str(circular)

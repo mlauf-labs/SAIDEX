@@ -27,6 +27,15 @@ result, stats = await extract_data(
 )
 ```
 
+**What reaches the handlers:** the chain-run span closes with the validated
+result and run metrics as its outputs — the same data the handler already sees
+inside the LLM generations, packaged once per extraction. The raw source text
+is **not** part of the trace unless you opt in with `capture_source_text=True`,
+which then also includes it in the span's inputs. If your handler exports to an
+external backend, enable that flag deliberately. (The `collect_stats` sink
+below stays PII-light regardless — it never stores messages, results, or
+source text.)
+
 ---
 
 ## Collecting stats without threading signatures
