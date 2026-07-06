@@ -12,9 +12,22 @@
     "Import from saidex directly — the public API is fully exposed in saidex.__init__",
     "Use extract_data_from_text for simple text input, extract_data for chat history or multimodal content",
     "Use ExtractionMode.JSON for models that do not support tool calling",
-    "To reject hallucinated values, mark fields with Grounded() (Annotated marker) or GroundedField() so the extracted value is verified against the source text"
+    "To reject hallucinated values, mark fields with Grounded() (Annotated marker) or GroundedField() so the extracted value is verified against the source text",
+    "Pass LangChain callback handlers via callbacks= to trace runs: each extraction becomes one chain-run span with nested LLM generations and, in the agent loop, per-tool spans; enable capture_source_text=True only if exporting the input text to the tracing backend is acceptable"
   ],
   "previousVersions": [
+    {
+      "tag": "v0.5.0",
+      "title": "version 0.5.0"
+    },
+    {
+      "tag": "v0.4.0",
+      "title": "version 0.4.0"
+    },
+    {
+      "tag": "v0.3.0",
+      "title": "version 0.3.0"
+    },
     {
       "tag": "v0.2.0",
       "title": "version 0.2.0"
