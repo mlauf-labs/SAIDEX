@@ -1398,6 +1398,10 @@ variables, which the Langfuse client picks up automatically:</p>
 public functions (<code>extract_data</code>, <code>extract_data_from_text</code>,
 <code>extract_data_with_tools</code>, <code>run_extractor_agent</code>). Every LLM call SAIDEX makes is then
 recorded automatically.</p>
+<p>Each extraction is wrapped in a single enclosing span (<code>saidex.extract_data</code>,
+<code>saidex.extract_data_list</code>, or <code>saidex.agent_loop</code>) so retries and — in the agent
+loop — tool executions nest under one logical run instead of appearing side by
+side.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span> <span class="nn">asyncio</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">from</span> <span class="nn">langchain_openai</span> <span class="kn">import</span> <span class="n">ChatOpenAI</span>
@@ -1550,9 +1554,13 @@ trace.</p>
 <a id="__codelineno-5-54" name="__codelineno-5-54" href="#__codelineno-5-54"></a><span class="k">if</span> <span class="vm">__name__</span> <span class="o">==</span> <span class="s2">&quot;__main__&quot;</span><span class="p">:</span>
 <a id="__codelineno-5-55" name="__codelineno-5-55" href="#__codelineno-5-55"></a>    <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">main</span><span class="p">())</span>
 </code></pre></div>
-<p><strong>What the trace shows:</strong> one trace spanning the whole loop. You can follow the
-sequence — model decides to call <code>get_order_status</code>, the tool result comes back,
-the model calls the <code>TicketResolution</code> final-answer tool — and reconcile it with
+<p><strong>What the trace shows:</strong> one <code>saidex.agent_loop</code> span for the whole loop. Under
+it sit each tool-deciding LLM generation <strong>and</strong> a dedicated span for every tool
+your model calls — <code>get_order_status</code> appears as its own <code>on_tool_start</code> /
+<code>on_tool_end</code> span with the arguments as input and the tool result as output. If
+a tool handler raises, its span is marked as an error (<code>on_tool_error</code>) while the
+loop keeps running. The final-answer schema call is not a tool span — it is the
+loop's output, attached to the <code>saidex.agent_loop</code> span. Reconcile the tree with
 <code>stats.iterations</code> and <code>stats.tool_calls</code>.</p>
 <hr />
 <h2 id="session-user-and-tags">Session, user, and tags<a class="headerlink" href="#session-user-and-tags" title="Permanent link">&para;</a></h2>

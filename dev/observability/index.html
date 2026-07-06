@@ -1596,7 +1596,12 @@
 <h2 id="callbacks">Callbacks<a class="headerlink" href="#callbacks" title="Permanent link">&para;</a></h2>
 <p>Both <code>extract_data_from_text</code> and <code>extract_data</code> accept a <code>callbacks</code>
 parameter.  Pass any list of LangChain <code>BaseCallbackHandler</code> instances to
-get automatic tracing of every LLM call — including retry attempts.</p>
+get automatic tracing.  SAIDEX wraps each extraction in one enclosing chain-run
+span (<code>saidex.extract_data</code>, <code>saidex.extract_data_list</code>, or <code>saidex.agent_loop</code>)
+and nests every LLM call — including retry attempts — under it.  In the agent
+loop, each helper-tool execution additionally fires <code>on_tool_start</code> /
+<code>on_tool_end</code> (or <code>on_tool_error</code> when the handler raises), so tools appear as
+their own spans:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>    <span class="n">llm</span><span class="p">,</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>    <span class="n">MySchema</span><span class="p">,</span>

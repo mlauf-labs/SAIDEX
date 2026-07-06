@@ -729,6 +729,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Observability">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tracing-tool-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tracing tool calls
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1307,6 +1335,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#observability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Observability
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Observability">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#tracing-tool-calls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tracing tool calls
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1691,6 +1747,14 @@ event loop:</p>
 as the async versions, delegating via <code>asyncio.run</code>. They must <strong>not</strong> be called
 from within a running event loop — if one is detected they raise a clear
 <code>RuntimeError</code>. See <a href="../observability/#async-and-sync-usage">Observability → Async and sync usage</a>.</p>
+<hr />
+<h2 id="observability">Observability<a class="headerlink" href="#observability" title="Permanent link">&para;</a></h2>
+<h3 id="tracing-tool-calls">Tracing tool calls<a class="headerlink" href="#tracing-tool-calls" title="Permanent link">&para;</a></h3>
+<p>When you pass <code>callbacks=[...]</code>, the agent loop is wrapped in a single
+<code>saidex.agent_loop</code> span and <strong>every helper-tool execution is traced</strong> as its own
+<code>on_tool_start</code> / <code>on_tool_end</code> span (or <code>on_tool_error</code> if the handler raises),
+nested under the loop alongside the LLM generations. See
+<a href="../langfuse-tracing/#3-the-agent-loop">Langfuse Tracing</a> for a full walkthrough.</p>
 <hr />
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
