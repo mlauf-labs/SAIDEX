@@ -19,6 +19,7 @@ from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field, create_model
 
+from ._callbacks import _ChainRun
 from .grounding import collect_field_check_issues
 from .models import (
     ExtractDataStats,
@@ -157,6 +158,9 @@ async def extract_data(
     # Private: suppresses observer dispatch for the internal container
     # sub-extraction inside extract_data_list. Not part of the public API.
     _notify_observers: bool = True,
+    # Private: reuses a parent chain run (from extract_data_list) instead of
+    # opening a new one. Not part of the public API.
+    _trace: _ChainRun | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a LangChain message list.
 
@@ -251,6 +255,21 @@ async def extract_data(
         mode.value,
     )
 
+    trace = (
+        _trace
+        if _trace is not None
+        else await _ChainRun.start(
+            callbacks,
+            name="saidex.extract_data",
+            inputs={
+                "schema": schema.__name__,
+                "mode": mode.value,
+                **({"text": grounding_source} if capture_source_text else {}),
+            },
+        )
+    )
+    owns_trace = _trace is None
+
     async def _finish(
         result: MODEL_T | None, stats: ExtractDataStats
     ) -> tuple[MODEL_T | None, ExtractDataStats]:
@@ -268,117 +287,124 @@ async def extract_data(
             ),
             dispatch=_notify_observers,
         )
+        if owns_trace:
+            await trace.end(_extract_outputs(result, stats))
         return result, stats
 
-    primary = await _try_with_model(
-        llm_model=llm_model,
-        schema=schema,
-        messages=list(original_messages),
-        callbacks=callbacks,
-        max_retries=max_primary_retries,
-        model_label="primary",
-        retry_config=effective_retry_config,
-        mode=mode,
-        validator=validator,
-        source_text=grounding_source,
-    )
-
-    if primary.instance is not None:
-        return await _finish(
-            primary.instance,
-            ExtractDataStats(
-                primary_retries=primary.retries,
-                success=True,
-                schema_name=schema.__name__,
-                format_errors=primary.format_errors,
-                field_issues=tuple(primary.field_issues),
-            ),
-        )
-
-    if fallback_llm_model is not None:
-        logger.info(
-            "Primary model exhausted %d retries for %s — switching to fallback.",
-            primary.retries,
-            schema.__name__,
-        )
-        fallback_messages = list(original_messages)
-        fallback_messages.append(
-            HumanMessage(
-                content=(
-                    f"A previous attempt to produce structured output for "
-                    f"'{schema.__name__}' failed after {primary.retries} retries. "
-                    f"Please try again carefully, ensuring your response strictly "
-                    f"follows the required JSON schema."
-                )
-            )
-        )
-
-        fallback = await _try_with_model(
-            llm_model=fallback_llm_model,
+    try:
+        primary = await _try_with_model(
+            llm_model=llm_model,
             schema=schema,
-            messages=fallback_messages,
-            callbacks=callbacks,
-            max_retries=max_fallback_retries,
-            model_label="fallback",
+            messages=list(original_messages),
+            trace=trace,
+            max_retries=max_primary_retries,
+            model_label="primary",
             retry_config=effective_retry_config,
             mode=mode,
             validator=validator,
             source_text=grounding_source,
         )
 
-        combined_issues = (*primary.field_issues, *fallback.field_issues)
-        combined_format_errors = primary.format_errors + fallback.format_errors
-
-        if fallback.instance is not None:
-            logger.info("Fallback model succeeded for %s.", schema.__name__)
+        if primary.instance is not None:
             return await _finish(
-                fallback.instance,
+                primary.instance,
+                ExtractDataStats(
+                    primary_retries=primary.retries,
+                    success=True,
+                    schema_name=schema.__name__,
+                    format_errors=primary.format_errors,
+                    field_issues=tuple(primary.field_issues),
+                ),
+            )
+
+        if fallback_llm_model is not None:
+            logger.info(
+                "Primary model exhausted %d retries for %s — switching to fallback.",
+                primary.retries,
+                schema.__name__,
+            )
+            fallback_messages = list(original_messages)
+            fallback_messages.append(
+                HumanMessage(
+                    content=(
+                        f"A previous attempt to produce structured output for "
+                        f"'{schema.__name__}' failed after {primary.retries} retries. "
+                        f"Please try again carefully, ensuring your response strictly "
+                        f"follows the required JSON schema."
+                    )
+                )
+            )
+
+            fallback = await _try_with_model(
+                llm_model=fallback_llm_model,
+                schema=schema,
+                messages=fallback_messages,
+                trace=trace,
+                max_retries=max_fallback_retries,
+                model_label="fallback",
+                retry_config=effective_retry_config,
+                mode=mode,
+                validator=validator,
+                source_text=grounding_source,
+            )
+
+            combined_issues = (*primary.field_issues, *fallback.field_issues)
+            combined_format_errors = primary.format_errors + fallback.format_errors
+
+            if fallback.instance is not None:
+                logger.info("Fallback model succeeded for %s.", schema.__name__)
+                return await _finish(
+                    fallback.instance,
+                    ExtractDataStats(
+                        primary_retries=primary.retries,
+                        fallback_retries=fallback.retries,
+                        fallback_used=True,
+                        success=True,
+                        schema_name=schema.__name__,
+                        format_errors=combined_format_errors,
+                        field_issues=combined_issues,
+                    ),
+                )
+
+            logger.error(
+                "Both primary and fallback models failed for %s (%d + %d = %d total retries).",
+                schema.__name__,
+                primary.retries,
+                fallback.retries,
+                primary.retries + fallback.retries,
+            )
+            return await _finish(
+                None,
                 ExtractDataStats(
                     primary_retries=primary.retries,
                     fallback_retries=fallback.retries,
                     fallback_used=True,
-                    success=True,
                     schema_name=schema.__name__,
+                    failure_reason=fallback.failure_reason or primary.failure_reason,
                     format_errors=combined_format_errors,
                     field_issues=combined_issues,
                 ),
             )
 
         logger.error(
-            "Both primary and fallback models failed for %s (%d + %d = %d total retries).",
+            "Structured output failed for %s after %d retries (no fallback configured).",
             schema.__name__,
             primary.retries,
-            fallback.retries,
-            primary.retries + fallback.retries,
         )
         return await _finish(
             None,
             ExtractDataStats(
                 primary_retries=primary.retries,
-                fallback_retries=fallback.retries,
-                fallback_used=True,
                 schema_name=schema.__name__,
-                failure_reason=fallback.failure_reason or primary.failure_reason,
-                format_errors=combined_format_errors,
-                field_issues=combined_issues,
+                failure_reason=primary.failure_reason,
+                format_errors=primary.format_errors,
+                field_issues=tuple(primary.field_issues),
             ),
         )
-
-    logger.error(
-        "Structured output failed for %s after %d retries (no fallback configured).",
-        schema.__name__,
-        primary.retries,
-    )
-    return await _finish(
-        None,
-        ExtractDataStats(
-            primary_retries=primary.retries,
-            schema_name=schema.__name__,
-            failure_reason=primary.failure_reason,
-            format_errors=primary.format_errors,
-            field_issues=tuple(primary.field_issues),
-        ),
-    )
+    except Exception as exc:
+        if owns_trace:
+            await trace.error(exc)
+        raise
 
 
 async def extract_data_from_text(
@@ -570,42 +596,59 @@ async def extract_data_list(
 
         container_validator = _validate_each_item
 
-    # The inner call must not fire the hook or notify observers: it would report
-    # the internal ``…List`` container and the wrapper instance instead of the
-    # list result.
-    result, stats = await extract_data(
-        llm_model=llm_model,
-        schema=container,
-        messages=messages,
-        mode=mode,
-        callbacks=callbacks,
-        fallback_llm_model=fallback_llm_model,
-        max_primary_retries=max_primary_retries,
-        max_fallback_retries=max_fallback_retries,
-        retry_config=retry_config,
-        capture_source_text=capture_source_text,
-        validator=container_validator,
-        _notify_observers=False,
+    grounding_source = _source_text_from_messages(list(messages))
+    trace = await _ChainRun.start(
+        callbacks,
+        name="saidex.extract_data_list",
+        inputs={
+            "schema": schema.__name__,
+            "mode": mode.value,
+            **({"text": grounding_source} if capture_source_text else {}),
+        },
     )
-    # Report the item schema name (not the internal ``…List`` container) so the
-    # stats group under the schema the caller actually passed.
-    item_issues = tuple(replace(i, schema_name=schema.__name__) for i in stats.field_issues)
-    stats = replace(stats, schema_name=schema.__name__, field_issues=item_issues)
-    items: list[MODEL_T] | None = None if result is None else cast(Any, result).items
-    if items is not None:
-        stats = replace(stats, item_count=len(items))
+    try:
+        # The inner call must not fire the hook or notify observers: it would
+        # report the internal ``…List`` container and the wrapper instance
+        # instead of the list result. It also reuses this trace instead of
+        # opening its own, so the batch shows a single chain run.
+        result, stats = await extract_data(
+            llm_model=llm_model,
+            schema=container,
+            messages=messages,
+            mode=mode,
+            callbacks=None,
+            fallback_llm_model=fallback_llm_model,
+            max_primary_retries=max_primary_retries,
+            max_fallback_retries=max_fallback_retries,
+            retry_config=retry_config,
+            capture_source_text=capture_source_text,
+            validator=container_validator,
+            _notify_observers=False,
+            _trace=trace,
+        )
+        # Report the item schema name (not the internal ``…List`` container) so
+        # the stats group under the schema the caller actually passed.
+        item_issues = tuple(replace(i, schema_name=schema.__name__) for i in stats.field_issues)
+        stats = replace(stats, schema_name=schema.__name__, field_issues=item_issues)
+        items: list[MODEL_T] | None = None if result is None else cast(Any, result).items
+        if items is not None:
+            stats = replace(stats, item_count=len(items))
 
-    await _emit_completion(
-        on_complete,
-        ExtractionEvent(
-            schema_name=schema.__name__,
-            result=cast("BaseModel | list[BaseModel] | None", items),
-            stats=stats,
-            messages=list(messages),
-            source_text=stats.source_text,
-        ),
-    )
-    return items, stats
+        await _emit_completion(
+            on_complete,
+            ExtractionEvent(
+                schema_name=schema.__name__,
+                result=cast("BaseModel | list[BaseModel] | None", items),
+                stats=stats,
+                messages=list(messages),
+                source_text=stats.source_text,
+            ),
+        )
+        await trace.end(_extract_outputs(items, stats))
+        return items, stats
+    except Exception as exc:
+        await trace.error(exc)
+        raise
 
 
 async def extract_data_list_from_text(
@@ -829,6 +872,17 @@ async def run_extractor_agent(
     original_messages = list(messages)
     grounding_source = _source_text_from_messages(original_messages)
 
+    trace = await _ChainRun.start(
+        callbacks,
+        name="saidex.agent_loop",
+        inputs={
+            "schema": schema.__name__,
+            "mode": final_answer_mode.value,
+            "tools": [t.name for t in tools],
+            **({"text": grounding_source} if capture_source_text else {}),
+        },
+    )
+
     async def _finish(
         result: MODEL_T | None, stats: ExtractorRunStats
     ) -> tuple[MODEL_T | None, ExtractorRunStats]:
@@ -845,88 +899,126 @@ async def run_extractor_agent(
                 source_text=source_text,
             ),
         )
+        await trace.end(_agent_outputs(result, stats))
         return result, stats
 
-    result, primary_stats = await _run_extractor_agent_with_model(
-        llm_model=llm_model,
-        schema=schema,
-        messages=list(original_messages),
-        tools=tools,
-        final_answer_mode=final_answer_mode,
-        callbacks=callbacks,
-        max_iterations=max_iterations,
-        max_validation_retries=max_validation_retries,
-        model_label="primary",
-        retry_config=effective_retry_config,
-        validator=validator,
-        source_text=grounding_source,
-    )
-
-    if result is not None:
-        return await _finish(result, primary_stats)
-
-    if fallback_llm_model is not None:
-        logger.info(
-            "Primary model exhausted budget for agent loop (%s) — switching to fallback.",
-            schema.__name__,
-        )
-        fallback_messages = list(original_messages)
-        fallback_messages.append(
-            HumanMessage(
-                content=(
-                    f"A previous attempt to complete the task for '{schema.__name__}' "
-                    f"did not produce a valid final answer after {primary_stats.iterations} "
-                    f"iterations. Please try again carefully."
-                )
-            )
-        )
-        result, fallback_stats = await _run_extractor_agent_with_model(
-            llm_model=fallback_llm_model,
+    try:
+        result, primary_stats = await _run_extractor_agent_with_model(
+            llm_model=llm_model,
             schema=schema,
-            messages=fallback_messages,
+            messages=list(original_messages),
             tools=tools,
             final_answer_mode=final_answer_mode,
-            callbacks=callbacks,
+            trace=trace,
             max_iterations=max_iterations,
             max_validation_retries=max_validation_retries,
-            model_label="fallback",
+            model_label="primary",
             retry_config=effective_retry_config,
             validator=validator,
             source_text=grounding_source,
         )
-        succeeded = result is not None
-        combined = ExtractorRunStats(
-            iterations=primary_stats.iterations + fallback_stats.iterations,
-            tool_calls=primary_stats.tool_calls + fallback_stats.tool_calls,
-            validation_retries=primary_stats.validation_retries + fallback_stats.validation_retries,
-            fallback_used=True,
-            success=succeeded,
-            schema_name=schema.__name__,
-            failure_reason=None if succeeded else fallback_stats.failure_reason,
-            format_errors=primary_stats.format_errors + fallback_stats.format_errors,
-            field_issues=(*primary_stats.field_issues, *fallback_stats.field_issues),
-        )
-        if succeeded:
-            logger.info("Fallback model succeeded for agent loop (%s).", schema.__name__)
-        else:
-            logger.error(
-                "Both models failed for agent loop (%s). Total iterations: %d.",
-                schema.__name__,
-                combined.iterations,
-            )
-        return await _finish(result, combined)
 
-    logger.error(
-        "Agent loop failed for %s after %d iterations (no fallback configured).",
-        schema.__name__,
-        primary_stats.iterations,
-    )
-    return await _finish(None, primary_stats)
+        if result is not None:
+            return await _finish(result, primary_stats)
+
+        if fallback_llm_model is not None:
+            logger.info(
+                "Primary model exhausted budget for agent loop (%s) — switching to fallback.",
+                schema.__name__,
+            )
+            fallback_messages = list(original_messages)
+            fallback_messages.append(
+                HumanMessage(
+                    content=(
+                        f"A previous attempt to complete the task for '{schema.__name__}' "
+                        f"did not produce a valid final answer after {primary_stats.iterations} "
+                        f"iterations. Please try again carefully."
+                    )
+                )
+            )
+            result, fallback_stats = await _run_extractor_agent_with_model(
+                llm_model=fallback_llm_model,
+                schema=schema,
+                messages=fallback_messages,
+                tools=tools,
+                final_answer_mode=final_answer_mode,
+                trace=trace,
+                max_iterations=max_iterations,
+                max_validation_retries=max_validation_retries,
+                model_label="fallback",
+                retry_config=effective_retry_config,
+                validator=validator,
+                source_text=grounding_source,
+            )
+            succeeded = result is not None
+            combined = ExtractorRunStats(
+                iterations=primary_stats.iterations + fallback_stats.iterations,
+                tool_calls=primary_stats.tool_calls + fallback_stats.tool_calls,
+                validation_retries=(
+                    primary_stats.validation_retries + fallback_stats.validation_retries
+                ),
+                fallback_used=True,
+                success=succeeded,
+                schema_name=schema.__name__,
+                failure_reason=None if succeeded else fallback_stats.failure_reason,
+                format_errors=primary_stats.format_errors + fallback_stats.format_errors,
+                field_issues=(*primary_stats.field_issues, *fallback_stats.field_issues),
+            )
+            if succeeded:
+                logger.info("Fallback model succeeded for agent loop (%s).", schema.__name__)
+            else:
+                logger.error(
+                    "Both models failed for agent loop (%s). Total iterations: %d.",
+                    schema.__name__,
+                    combined.iterations,
+                )
+            return await _finish(result, combined)
+
+        logger.error(
+            "Agent loop failed for %s after %d iterations (no fallback configured).",
+            schema.__name__,
+            primary_stats.iterations,
+        )
+        return await _finish(None, primary_stats)
+    except Exception as exc:
+        await trace.error(exc)
+        raise
 
 
 # ---------------------------------------------------------------------------
 # Internal implementation
 # ---------------------------------------------------------------------------
+
+
+def _agent_outputs(result: Any, stats: ExtractorRunStats) -> dict[str, Any]:
+    """Chain-run outputs for the agent loop: the result plus run-level metrics."""
+    return {
+        "result": result,
+        "success": stats.success,
+        "failure_reason": stats.failure_reason,
+        "iterations": stats.iterations,
+        "tool_calls": stats.tool_calls,
+        "validation_retries": stats.validation_retries,
+        "fallback_used": stats.fallback_used,
+        "problem_fields": list(stats.problem_fields),
+        "format_errors": stats.format_errors,
+    }
+
+
+def _extract_outputs(result: Any, stats: ExtractDataStats) -> dict[str, Any]:
+    """Chain-run outputs for extract_data / extract_data_list: result + metrics."""
+    return {
+        "result": result,
+        "success": stats.success,
+        "failure_reason": stats.failure_reason,
+        "total_retries": stats.total_retries,
+        "primary_retries": stats.primary_retries,
+        "fallback_retries": stats.fallback_retries,
+        "fallback_used": stats.fallback_used,
+        "item_count": stats.item_count,
+        "problem_fields": list(stats.problem_fields),
+        "format_errors": stats.format_errors,
+    }
 
 
 async def _run_extractor_agent_with_model(
@@ -935,7 +1027,7 @@ async def _run_extractor_agent_with_model(
     messages: list[BaseMessage],
     tools: list[Tool],
     final_answer_mode: ExtractionMode,
-    callbacks: list[Any] | None,
+    trace: _ChainRun,
     max_iterations: int,
     max_validation_retries: int,
     model_label: str,
@@ -990,8 +1082,9 @@ async def _run_extractor_agent_with_model(
         try:
 
             async def _invoke() -> Any:
-                if callbacks:
-                    return await llm.ainvoke(messages, config={"callbacks": callbacks})
+                child = trace.child_callbacks()
+                if child is not None:
+                    return await llm.ainvoke(messages, config={"callbacks": child})
                 return await llm.ainvoke(messages)
 
             invoke_result = await with_retry(
@@ -1278,18 +1371,23 @@ async def _run_extractor_agent_with_model(
                 tool_obj = tool_by_name.get(tc_name)
                 if tool_obj is None:
                     logger.warning("%s: agent loop called unknown tool '%s'", model_label, tc_name)
+                    unknown_msg = (
+                        f"Unknown tool '{tc_name}'. Available tools: {', '.join(tool_by_name)}."
+                    )
+                    async with trace.tool_span(tc_name, tc_args) as span:
+                        span.record_output(unknown_msg)
                     tool_result_messages.append(
-                        ToolMessage(
-                            content=(
-                                f"Unknown tool '{tc_name}'. "
-                                f"Available tools: {', '.join(tool_by_name)}."
-                            ),
-                            tool_call_id=tc_id,
-                        )
+                        ToolMessage(content=unknown_msg, tool_call_id=tc_id)
                     )
                     continue
 
-                result_str = await tool_obj.execute(tc_args)
+                async with trace.tool_span(tc_name, tc_args) as span:
+                    outcome = await tool_obj._invoke(tc_args)
+                    if outcome.handler_error is not None:
+                        span.record_error(outcome.handler_error)
+                    else:
+                        span.record_output(outcome.content)
+                    result_str = outcome.content
                 logger.debug(
                     "%s: agent loop tool '%s' → %s", model_label, tc_name, result_str[:120]
                 )
@@ -1348,7 +1446,7 @@ async def _try_with_model(
     llm_model: Any,
     schema: type[MODEL_T],
     messages: list[BaseMessage],
-    callbacks: list[Any] | None,
+    trace: _ChainRun,
     max_retries: int,
     model_label: str,
     retry_config: RetryConfig,
@@ -1389,8 +1487,9 @@ async def _try_with_model(
         try:
 
             async def _invoke() -> Any:
-                if callbacks:
-                    return await llm.ainvoke(messages, config={"callbacks": callbacks})
+                child = trace.child_callbacks()
+                if child is not None:
+                    return await llm.ainvoke(messages, config={"callbacks": child})
                 return await llm.ainvoke(messages)
 
             invoke_result = await with_retry(

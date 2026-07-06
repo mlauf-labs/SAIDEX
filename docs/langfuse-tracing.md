@@ -74,6 +74,11 @@ public functions (`extract_data`, `extract_data_from_text`,
 `extract_data_with_tools`, `run_extractor_agent`). Every LLM call SAIDEX makes is then
 recorded automatically.
 
+Each extraction is wrapped in a single enclosing span (`saidex.extract_data`,
+`saidex.extract_data_list`, or `saidex.agent_loop`) so retries and — in the agent
+loop — tool executions nest under one logical run instead of appearing side by
+side.
+
 ```python
 import asyncio
 
@@ -240,9 +245,13 @@ if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-**What the trace shows:** one trace spanning the whole loop. You can follow the
-sequence — model decides to call `get_order_status`, the tool result comes back,
-the model calls the `TicketResolution` final-answer tool — and reconcile it with
+**What the trace shows:** one `saidex.agent_loop` span for the whole loop. Under
+it sit each tool-deciding LLM generation **and** a dedicated span for every tool
+your model calls — `get_order_status` appears as its own `on_tool_start` /
+`on_tool_end` span with the arguments as input and the tool result as output. If
+a tool handler raises, its span is marked as an error (`on_tool_error`) while the
+loop keeps running. The final-answer schema call is not a tool span — it is the
+loop's output, attached to the `saidex.agent_loop` span. Reconcile the tree with
 `stats.iterations` and `stats.tool_calls`.
 
 ---

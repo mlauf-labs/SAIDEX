@@ -402,3 +402,36 @@ def test_agent_run_stats_add() -> None:
     assert c.tool_calls == 3
     assert c.validation_retries == 1
     assert c.fallback_used is True
+
+
+# ---------------------------------------------------------------------------
+# Tool._invoke
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_success_has_no_error() -> None:
+    tool = _make_tool()
+    outcome = await tool._invoke({"name": "foo", "parent_id": None})
+    assert outcome.handler_error is None
+    data = json.loads(outcome.content)
+    assert data["name"] == "foo"
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_invalid_args_is_not_a_handler_error() -> None:
+    tool = _make_tool()
+    outcome = await tool._invoke({"parent_id": "x"})  # 'name' missing
+    assert outcome.handler_error is None
+    assert "Invalid arguments" in outcome.content
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_handler_exception_is_captured() -> None:
+    async def _failing(**kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("boom")
+
+    tool = Tool(name="boom_tool", description=".", parameters=ToolArgs, handler=_failing)
+    outcome = await tool._invoke({"name": "x"})
+    assert isinstance(outcome.handler_error, RuntimeError)
+    assert "boom" in outcome.content

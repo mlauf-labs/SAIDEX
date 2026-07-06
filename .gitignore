@@ -67,3 +67,7 @@ benchmarks/results/
 .env
 .env.*
 secrets.toml
+
+# Superpowers working artifacts (specs, plans, SDD scratch) — not tracked
+docs/superpowers/
+.superpowers/
