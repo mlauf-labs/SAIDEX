@@ -69,15 +69,25 @@ Langfuse(
 
 ## 1. A single extraction
 
-Attach the handler via the `callbacks` parameter — accepted by **all four**
-public functions (`extract_data`, `extract_data_from_text`,
-`extract_data_with_tools`, `run_extractor_agent`). Every LLM call SAIDEX makes is then
-recorded automatically.
+Attach the handler via the `callbacks` parameter — accepted by **every**
+public extraction function (`extract_data`, `extract_data_from_text`,
+`extract_data_list`, `extract_data_list_from_text`, `extract_data_with_tools`,
+`run_extractor_agent`, and their `*_sync` wrappers). Every LLM call SAIDEX
+makes is then recorded automatically.
 
 Each extraction is wrapped in a single enclosing span (`saidex.extract_data`,
 `saidex.extract_data_list`, or `saidex.agent_loop`) so retries and — in the agent
 loop — tool executions nest under one logical run instead of appearing side by
 side.
+
+!!! note "What the spans contain"
+    The enclosing span's **output** carries the validated result plus run
+    metrics (`success`, retries, `problem_fields`, …) — the same values a
+    tracer already sees inside the LLM generations. The span's **input**
+    contains only the schema name and mode by default; the raw source text is
+    included **only** when you opt in with `capture_source_text=True`. Enable
+    that flag deliberately when a tracing handler is attached — it exports the
+    full input text to the tracing backend.
 
 ```python
 import asyncio
@@ -171,11 +181,13 @@ async def main() -> None:
     get_client().flush()
 ```
 
-**What the trace shows:** the root trace now contains **N+1 generations** for
-`N` retries. The validation error message that triggered each retry appears as
-the *input* of the following generation — so you can read, span by span, exactly
-what the model was asked to fix. `stats.total_retries` matches the number of
-extra generations in the trace.
+**What the trace shows:** one `saidex.extract_data` span containing **N+1
+generations** for `N` retries. The validation error message that triggered each
+retry appears as the *input* of the following generation — so you can read,
+span by span, exactly what the model was asked to fix. The span's output
+carries the retry metrics: `stats.total_retries` matches both the
+`total_retries` value there and the number of extra generations nested under
+the span.
 
 ---
 
