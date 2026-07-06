@@ -96,7 +96,20 @@ class Tool:
         """
         from .utils import create_instance_safe  # local import to avoid circular deps
 
-        args_model, error_text = create_instance_safe(self.parameters, **raw_args)
+        # LLM tool-call args are not guaranteed to be a mapping (double-encoded
+        # JSON parses to a str) and may collide with the callee's own parameter
+        # names — both would raise at the ``**`` boundary and crash the whole
+        # agent loop instead of feeding the model a correctable error.
+        if not isinstance(raw_args, dict):
+            return _ToolOutcome(
+                f"Invalid arguments for tool '{self.name}': expected a JSON object, "
+                f"got {type(raw_args).__name__}.",
+                None,
+            )
+        try:
+            args_model, error_text = create_instance_safe(self.parameters, **raw_args)
+        except TypeError as exc:
+            return _ToolOutcome(f"Invalid arguments for tool '{self.name}': {exc}", None)
         if error_text or args_model is None:
             return _ToolOutcome(f"Invalid arguments for tool '{self.name}': {error_text}", None)
 
