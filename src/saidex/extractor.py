@@ -1313,18 +1313,23 @@ async def _run_extractor_agent_with_model(
                 tool_obj = tool_by_name.get(tc_name)
                 if tool_obj is None:
                     logger.warning("%s: agent loop called unknown tool '%s'", model_label, tc_name)
+                    unknown_msg = (
+                        f"Unknown tool '{tc_name}'. Available tools: {', '.join(tool_by_name)}."
+                    )
+                    async with trace.tool_span(tc_name, tc_args) as span:
+                        span.record_output(unknown_msg)
                     tool_result_messages.append(
-                        ToolMessage(
-                            content=(
-                                f"Unknown tool '{tc_name}'. "
-                                f"Available tools: {', '.join(tool_by_name)}."
-                            ),
-                            tool_call_id=tc_id,
-                        )
+                        ToolMessage(content=unknown_msg, tool_call_id=tc_id)
                     )
                     continue
 
-                result_str = await tool_obj.execute(tc_args)
+                async with trace.tool_span(tc_name, tc_args) as span:
+                    outcome = await tool_obj._invoke(tc_args)
+                    if outcome.handler_error is not None:
+                        span.record_error(outcome.handler_error)
+                    else:
+                        span.record_output(outcome.content)
+                    result_str = outcome.content
                 logger.debug(
                     "%s: agent loop tool '%s' → %s", model_label, tc_name, result_str[:120]
                 )

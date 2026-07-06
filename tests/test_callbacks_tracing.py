@@ -11,7 +11,7 @@ import pytest
 from langchain_core.callbacks.base import AsyncCallbackHandler
 from pydantic import BaseModel
 
-from saidex import run_extractor_agent
+from saidex import Tool, run_extractor_agent
 from saidex._callbacks import _ChainRun, _ToolSpan
 from saidex.retry import RetryConfig
 
@@ -209,3 +209,89 @@ async def test_agent_loop_wraps_generations_in_chain_run() -> None:
     # Generations are wired to nest: the child manager was passed to ainvoke.
     call = llm.ainvoke.call_args
     assert call.kwargs["config"]["callbacks"] is not None
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_emits_tool_span() -> None:
+    rec = RecordingHandler()
+
+    async def handler(q: str) -> dict[str, Any]:
+        return {"answer": q.upper()}
+
+    tool = Tool(name="lookup", description="d", parameters=_Args, handler=handler)
+    llm = _llm(
+        [
+            _resp([{"name": "lookup", "args": {"q": "hi"}, "id": "c1"}]),
+            _resp([{"name": "_Final", "args": {"result": "done"}, "id": "c2"}]),
+        ]
+    )
+
+    result, stats = await run_extractor_agent(
+        llm, _Final, [], tools=[tool], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None
+    names = [e[0] for e in rec.events]
+    assert names == ["chain_start", "tool_start", "tool_end", "chain_end"]
+    assert rec.events[1] == ("tool_start", "lookup", '{"q": "hi"}')
+    assert rec.tool_parents == [rec.chain_run_id]  # nested under the loop
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_handler_crash_emits_tool_error() -> None:
+    rec = RecordingHandler()
+
+    async def handler(q: str) -> dict[str, Any]:
+        raise RuntimeError("handler down")
+
+    tool = Tool(name="lookup", description="d", parameters=_Args, handler=handler)
+    llm = _llm(
+        [
+            _resp([{"name": "lookup", "args": {"q": "hi"}, "id": "c1"}]),
+            _resp([{"name": "_Final", "args": {"result": "recovered"}, "id": "c2"}]),
+        ]
+    )
+
+    result, _ = await run_extractor_agent(
+        llm, _Final, [], tools=[tool], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    # Loop still completes despite the crashing handler.
+    assert result is not None and result.result == "recovered"
+    assert any(e[0] == "tool_error" for e in rec.events)
+    assert not any(e[0] == "tool_end" for e in rec.events)
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_unknown_tool_emits_tool_end() -> None:
+    rec = RecordingHandler()
+    llm = _llm(
+        [
+            _resp([{"name": "ghost", "args": {"q": "x"}, "id": "c1"}]),
+            _resp([{"name": "_Final", "args": {"result": "ok"}, "id": "c2"}]),
+        ]
+    )
+
+    result, _ = await run_extractor_agent(
+        llm, _Final, [], tools=[], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None
+    tool_ends = [e for e in rec.events if e[0] == "tool_end"]
+    assert tool_ends and "Unknown tool 'ghost'" in tool_ends[0][1]
+
+
+@pytest.mark.asyncio
+async def test_agent_loop_no_callbacks_still_works() -> None:
+    async def handler(q: str) -> dict[str, Any]:
+        return {"answer": q}
+
+    tool = Tool(name="lookup", description="d", parameters=_Args, handler=handler)
+    llm = _llm(
+        [
+            _resp([{"name": "lookup", "args": {"q": "hi"}, "id": "c1"}]),
+            _resp([{"name": "_Final", "args": {"result": "done"}, "id": "c2"}]),
+        ]
+    )
+    result, _ = await run_extractor_agent(llm, _Final, [], tools=[tool], retry_config=_NO_RETRY)
+    assert result is not None and result.result == "done"
