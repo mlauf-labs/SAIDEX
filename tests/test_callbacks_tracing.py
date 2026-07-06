@@ -12,7 +12,14 @@ from langchain_core.callbacks.base import AsyncCallbackHandler
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
-from saidex import IbanStr, Tool, extract_data, extract_data_list, run_extractor_agent
+from saidex import (
+    IbanStr,
+    Tool,
+    extract_data,
+    extract_data_list,
+    extract_data_with_tools_sync,
+    run_extractor_agent,
+)
 from saidex._callbacks import _ChainRun, _ToolSpan
 from saidex.retry import RetryConfig
 
@@ -47,15 +54,6 @@ def _llm(responses: list[MagicMock]) -> MagicMock:
 class _Bank(BaseModel):
     holder: str
     iban: IbanStr
-
-
-def _plain_llm(responses: list[MagicMock]) -> MagicMock:
-    bound = MagicMock()
-    bound.ainvoke = AsyncMock(side_effect=responses)
-    llm = MagicMock()
-    llm.bind_tools = MagicMock(return_value=bound)
-    llm.ainvoke = bound.ainvoke
-    return llm
 
 
 class RecordingHandler(AsyncCallbackHandler):
@@ -320,7 +318,7 @@ async def test_extract_data_wraps_retries_in_one_chain_run() -> None:
     r2 = _resp(
         [{"name": "_Bank", "args": {"holder": "ACME", "iban": "DE89370400440532013000"}, "id": "b"}]
     )
-    llm = _plain_llm([r1, r2])
+    llm = _llm([r1, r2])
 
     result, stats = await extract_data(
         llm, _Bank, [HumanMessage(content="pay ACME")], callbacks=[rec], retry_config=_NO_RETRY
@@ -338,13 +336,7 @@ async def test_extract_data_wraps_retries_in_one_chain_run() -> None:
 @pytest.mark.asyncio
 async def test_extract_data_list_uses_single_chain_run() -> None:
     rec = RecordingHandler()
-    llm = _plain_llm(
-        [_resp([{"name": "_FinalList", "args": {"items": [{"result": "a"}]}, "id": "x"}])]
-    )
-    # Container tool name is "<schema>List"; patch response name accordingly.
-    llm.bind_tools().ainvoke.side_effect = [
-        _resp([{"name": "_FinalList", "args": {"items": [{"result": "a"}]}, "id": "x"}])
-    ]
+    llm = _llm([_resp([{"name": "_FinalList", "args": {"items": [{"result": "a"}]}, "id": "x"}])])
 
     items, _ = await extract_data_list(
         llm, _Final, [HumanMessage(content="list them")], callbacks=[rec], retry_config=_NO_RETRY
@@ -353,3 +345,16 @@ async def test_extract_data_list_uses_single_chain_run() -> None:
     assert items is not None and len(items) == 1
     starts = [e for e in rec.events if e[0] == "chain_start"]
     assert starts == [("chain_start", "saidex.extract_data_list")]  # not the inner extract_data
+
+
+def test_sync_wrapper_fires_callbacks() -> None:
+    rec = RecordingHandler()
+    llm = _llm([_resp([{"name": "_Final", "args": {"result": "done"}, "id": "c1"}])])
+
+    result, _ = extract_data_with_tools_sync(
+        llm, _Final, "do it", tools=[], callbacks=[rec], retry_config=_NO_RETRY
+    )
+
+    assert result is not None
+    names = [e[0] for e in rec.events]
+    assert names[0] == "chain_start" and names[-1] == "chain_end"

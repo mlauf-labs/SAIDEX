@@ -266,6 +266,18 @@ from within a running event loop — if one is detected they raise a clear
 
 ---
 
+## Observability
+
+### Tracing tool calls
+
+When you pass `callbacks=[...]`, the agent loop is wrapped in a single
+`saidex.agent_loop` span and **every helper-tool execution is traced** as its own
+`on_tool_start` / `on_tool_end` span (or `on_tool_error` if the handler raises),
+nested under the loop alongside the LLM generations. See
+[Langfuse Tracing](langfuse-tracing.md#3-the-agent-loop) for a full walkthrough.
+
+---
+
 ## See also
 
 - [Extraction](extraction.md) — single-shot extraction without tools

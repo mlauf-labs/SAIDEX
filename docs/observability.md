@@ -11,7 +11,12 @@ This document covers tracing, callbacks, logging, the standalone
 
 Both `extract_data_from_text` and `extract_data` accept a `callbacks`
 parameter.  Pass any list of LangChain `BaseCallbackHandler` instances to
-get automatic tracing of every LLM call — including retry attempts.
+get automatic tracing.  SAIDEX wraps each extraction in one enclosing chain-run
+span (`saidex.extract_data`, `saidex.extract_data_list`, or `saidex.agent_loop`)
+and nests every LLM call — including retry attempts — under it.  In the agent
+loop, each helper-tool execution additionally fires `on_tool_start` /
+`on_tool_end` (or `on_tool_error` when the handler raises), so tools appear as
+their own spans:
 
 ```python
 result, stats = await extract_data(
