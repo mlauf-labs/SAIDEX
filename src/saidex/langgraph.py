@@ -35,7 +35,8 @@ from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as _as_tool
 
 from .extractor import _strip_code_fences, _strip_thinking_tags, extract_data
-from .models import ExtractionMode, FieldIssue
+from .models import ExtractionMode, FieldIssue, ToolCallStats, ToolNodeEvent, ToolNodeStats
+from .observability import dispatch_tool_node_event
 from .retry import RetryConfig
 from .sync import _run_sync
 from .utils import create_instance_with_issues
@@ -356,6 +357,26 @@ class SaidexToolNode(Runnable[Any, Any]):
             )
             if call_id is not None
         }
+
+        stats = ToolNodeStats(
+            calls=tuple(
+                ToolCallStats(
+                    tool_name=str(plan.call.get("name") or ""),
+                    tool_call_id=plan.call.get("id"),
+                    outcome=plan.outcome,
+                    repaired=plan.repaired,
+                    prevalidated=plan.prevalidated,
+                    correction_retries=plan.correction_retries,
+                    field_issues=plan.issues,
+                )
+                for plan in plans
+            )
+        )
+        # self.name is always a str (the constructor defaults it to "tools"),
+        # but Runnable.name is typed str | None on the base class — the `or`
+        # satisfies mypy without weakening the runtime guarantee.
+        await dispatch_tool_node_event(ToolNodeEvent(node_name=self.name or "tools", stats=stats))
+
         return _merge_output(inner_output, extra, shape, self._messages_key, order)
 
     async def _correct_plan(self, plan: _CallPlan, callbacks: Callbacks) -> None:
@@ -406,6 +427,22 @@ class SaidexToolNode(Runnable[Any, Any]):
                 callbacks=callbacks,
                 _notify_observers=False,
             )
+            plan.correction_retries = stats.primary_retries
+            if instance is None:
+                logger.warning(
+                    "SaidexToolNode: correction cycle failed for tool call %r (id=%r)",
+                    name,
+                    plan.call.get("id"),
+                )
+                return
+            # exclude_unset=True reports only what the correction model actually
+            # supplied, not schema defaults it never touched — the tool then
+            # sees the same shape of args a well-formed call would have
+            # produced. Stays inside this try: a tool schema with a custom
+            # serializer can raise here too, and that must degrade to the
+            # feedback policy exactly like an extract_data failure — not
+            # crash the node.
+            corrected_args = instance.model_dump(exclude_unset=True)
         except Exception as exc:
             # extract_data degrades most failures to (None, stats) internally,
             # but a model that rejects tool binding outright (e.g. bind_tools
@@ -423,18 +460,7 @@ class SaidexToolNode(Runnable[Any, Any]):
                 exc,
             )
             return
-        plan.correction_retries = stats.primary_retries
-        if instance is None:
-            logger.warning(
-                "SaidexToolNode: correction cycle failed for tool call %r (id=%r)",
-                name,
-                plan.call.get("id"),
-            )
-            return
-        # exclude_unset=True reports only what the correction model actually
-        # supplied, not schema defaults it never touched — the tool then sees
-        # the same shape of args a well-formed call would have produced.
-        plan.call["args"] = instance.model_dump(exclude_unset=True)
+        plan.call["args"] = corrected_args
         # Deliberately NOT plan.repaired = True: that flag means
         # "deterministically recovered from invalid_tool_calls" (see
         # ToolCallStats.repaired) — an LLM correction is a distinct outcome

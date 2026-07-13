@@ -268,8 +268,10 @@ class ToolCallStats:
             provider did not assign one (some ``invalid_tool_calls`` entries).
         outcome: What ultimately happened — ``"executed"`` (ran, possibly after
             deterministic repair), ``"corrected"`` (ran after an LLM correction
-            cycle) or ``"feedback"`` (not run; a corrective ``ToolMessage`` was
-            emitted instead).
+            cycle), ``"feedback"`` (not run; a corrective ``ToolMessage`` was
+            emitted instead) or ``"dropped"`` (not run and not answered — the
+            call carried no ``tool_call_id`` at all, so no ``ToolMessage``
+            could be produced for it either).
         repaired: Whether the call was deterministically recovered from
             ``invalid_tool_calls`` (think-tag stripping / json-repair).
         prevalidated: Whether the args were validated against the tool's

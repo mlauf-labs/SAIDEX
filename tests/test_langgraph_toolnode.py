@@ -14,12 +14,12 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from langchain_core.tools import InjectedToolCallId, tool  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
-from langgraph.prebuilt import ToolNode  # noqa: E402
+from langgraph.prebuilt import InjectedState, ToolNode  # noqa: E402
 from langgraph.runtime import Runtime  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from saidex import on_extraction  # noqa: E402
+from saidex import ToolNodeStats, collect_stats, on_extraction, on_tool_node  # noqa: E402
 from saidex.langgraph import SaidexToolNode, ToolCallValidationError  # noqa: E402
 from tests._mock_llm import make_llm, make_response  # noqa: E402
 
@@ -1136,3 +1136,174 @@ async def test_empty_string_id_tool_calls_entry_dropped_not_executed_not_retaine
     updated = _ai_of(result)
     assert updated is not None
     assert updated.tool_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Stats, events, Command/InjectedState, callbacks (Task 8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stats_collected_via_collect_stats() -> None:
+    state = {
+        "messages": [
+            _ai(
+                [
+                    _call("add", {"a": 1, "b": 2}, "ok-1"),
+                    _call("add", {"a": "bad", "b": 2}, "bad-1"),
+                ],
+                invalid=[_invalid("add", '{"a": 1, "b": 1', "rep-1")],
+            )
+        ]
+    }
+    async with collect_stats() as sink:
+        await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert len(sink) == 1
+    stats = sink.all()[0]
+    assert isinstance(stats, ToolNodeStats)
+    assert stats.executed_count == 2  # ok-1 + repaired rep-1
+    assert stats.feedback_count == 1
+    assert stats.repaired_count == 1
+    assert stats.field_issues[0].field_path == "a"
+
+
+@pytest.mark.asyncio
+async def test_on_tool_node_fires_and_correction_emits_no_extraction_event() -> None:
+    tool_events: list[Any] = []
+    extraction_events: list[Any] = []
+    sub_tool = on_tool_node(tool_events.append)
+    sub_extract = on_extraction(extraction_events.append)
+    try:
+        node = SaidexToolNode(
+            [add],
+            on_invalid="correct",
+            correction_model=_correction_llm([{"a": 5, "b": 2}]),
+        )
+        await node.ainvoke(
+            {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]},
+            runtime=_NO_GRAPH_RUNTIME,
+        )
+    finally:
+        sub_tool.unsubscribe()
+        sub_extract.unsubscribe()
+
+    assert len(tool_events) == 1
+    assert tool_events[0].node_name == "tools"
+    assert tool_events[0].stats.corrected_count == 1
+    assert tool_events[0].stats.calls[0].correction_retries == 0
+    assert extraction_events == []  # _notify_observers=False keeps corrections silent
+
+
+@pytest.mark.asyncio
+async def test_raise_policy_emits_no_event() -> None:
+    """The raise policy exits _arun before the stats-dispatch point — no
+    ToolNodeEvent may fire on that path."""
+    tool_events: list[Any] = []
+    sub_tool = on_tool_node(tool_events.append)
+    state = {
+        "messages": [
+            _ai(
+                [
+                    _call("add", {"a": 1, "b": 2}, "ok-1"),
+                    _call("add", {"a": "bad", "b": 2}, "bad-1"),
+                ]
+            )
+        ]
+    }
+    try:
+        with pytest.raises(ToolCallValidationError):
+            await SaidexToolNode([add], on_invalid="raise").ainvoke(
+                state, runtime=_NO_GRAPH_RUNTIME
+            )
+    finally:
+        sub_tool.unsubscribe()
+    assert tool_events == []
+
+
+@pytest.mark.asyncio
+async def test_dropped_idless_call_reported_with_dropped_outcome() -> None:
+    """An id-less call is neither executed nor answered — the stats must say
+    so honestly rather than defaulting to "executed" or "feedback"."""
+    state = {
+        "messages": [
+            _ai(
+                [{"name": "add", "args": {"a": 1, "b": 2}, "id": None, "type": "tool_call"}],
+                msg_id="ai-1",
+            )
+        ]
+    }
+    async with collect_stats() as sink:
+        await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    stats = sink.all()[0]
+    assert isinstance(stats, ToolNodeStats)
+    assert len(stats.calls) == 1
+    assert stats.calls[0].outcome == "dropped"
+    assert stats.calls[0].tool_call_id is None
+
+
+@pytest.mark.asyncio
+async def test_command_returning_tool_passes_through() -> None:
+    # A Command update must carry a matching ToolMessage for its own call id
+    # (langgraph's ToolNode._validate_tool_command enforces this whenever the
+    # Command has no parent graph) — mirrors the existing `move` fixture.
+    @tool
+    def handoff(target: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command[Any]:
+        """Hand off control to another agent."""
+        return Command(
+            update={
+                "messages": [
+                    ToolMessage(content=f"handed off to {target}", tool_call_id=tool_call_id)
+                ]
+            },
+            goto=target,
+        )
+
+    state = {"messages": [_ai([_call("handoff", {"target": "agent_b"}, "c1")])]}
+    result = await SaidexToolNode([handoff]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    stock = await ToolNode([handoff]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert type(result) is type(stock)
+
+
+@pytest.mark.asyncio
+async def test_injected_state_arg_is_not_validated_as_missing() -> None:
+    @tool
+    def report(prefix: str, state: Annotated[dict[str, Any], InjectedState]) -> str:
+        """Render a report prefix with the message count."""
+        return f"{prefix}:{len(state['messages'])}"
+
+    # args contain ONLY the visible parameter; InjectedState must not appear missing
+    state = {"messages": [_ai([_call("report", {"prefix": "n"}, "c1")])]}
+    result = await SaidexToolNode([report]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status != "error"
+    assert tool_message.content == "n:1"
+
+
+@pytest.mark.asyncio
+async def test_callbacks_see_tool_span_and_correction_llm() -> None:
+    class Recorder(BaseCallbackHandler):
+        def __init__(self) -> None:
+            self.tool_starts: list[str] = []
+            self.chain_starts: list[str] = []
+
+        def on_tool_start(self, serialized: dict[str, Any], input_str: str, **kw: Any) -> None:
+            self.tool_starts.append(serialized.get("name", ""))
+
+        def on_chain_start(self, serialized: dict[str, Any], inputs: Any, **kw: Any) -> None:
+            self.chain_starts.append((serialized or {}).get("name", ""))
+
+    recorder = Recorder()
+    node = SaidexToolNode(
+        [add],
+        on_invalid="correct",
+        correction_model=_correction_llm([{"a": 5, "b": 2}]),
+    )
+    await node.ainvoke(
+        {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]},
+        config={"callbacks": [recorder]},
+        runtime=_NO_GRAPH_RUNTIME,
+    )
+    assert "add" in recorder.tool_starts  # inner ToolNode span reached the handler
+    assert any("extract_data" in name for name in recorder.chain_starts)  # correction chain
