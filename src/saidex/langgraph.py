@@ -68,6 +68,15 @@ class _CallPlan:
     executable: bool = False
     outcome: str = ""
     correction_retries: int = 0
+    #: False when the call carries no ``id`` at all. A ``ToolMessage`` requires
+    #: a ``tool_call_id``, so an id-less call has no way to be answered — it
+    #: must not get a fabricated-id feedback message, and must be dropped (not
+    #: kept as an orphaned malformed entry) when sanitizing.
+    answerable: bool = True
+    #: True when the call has an id but no ``name`` — it CAN be answered (the
+    #: id is real), but no tool name may be fabricated into the feedback
+    #: message or the sanitized history.
+    missing_name: bool = False
 
 
 class ToolCallValidationError(Exception):
@@ -96,6 +105,29 @@ class SaidexToolNode(Runnable[Any, Any]):
     outputs as the stock node, so it replaces it with a one-line change::
 
         graph.add_node("tools", SaidexToolNode(tools))
+
+    **Malformed ``invalid_tool_calls`` entries with a missing ``id``/``name``.**
+    LangChain's ``ToolCall``/``InvalidToolCall`` type both ``id`` and ``name``
+    as optional (``str | None``), so a provider can in principle emit an entry
+    carrying neither, or an id without a name. Because a ``ToolMessage``
+    *requires* a real ``tool_call_id``, the two situations are handled
+    differently:
+
+    - **Has an ``id``, no ``name``:** the call CAN be answered. A feedback
+      ``ToolMessage`` is emitted with the real ``tool_call_id`` and no
+      fabricated ``name`` (never invented) explaining that the call carried no
+      tool name and must be re-issued with one. The raw entry is kept in the
+      sanitized message's ``invalid_tool_calls`` so it still matches that
+      feedback message.
+    - **No ``id`` at all:** the call CANNOT be answered — there is no
+      ``tool_call_id`` to construct a ``ToolMessage`` with, so none is
+      emitted. A ``logging.Logger.warning`` records the drop. When
+      ``sanitize_messages`` is enabled, the entry is removed from the
+      sanitized ``AIMessage`` so history carries neither an orphaned tool
+      result nor an unanswerable malformed call. With
+      ``sanitize_messages=False`` the entry is left exactly as the model
+      produced it, matching stock ``ToolNode`` behavior — that is the caller's
+      choice.
 
     Args:
         tools: The tools available for execution — ``BaseTool`` instances or
@@ -221,9 +253,11 @@ class SaidexToolNode(Runnable[Any, Any]):
         for plan in plans:
             if plan.executable:
                 plan.outcome = "executed"
-            else:
+            elif plan.answerable:
                 plan.outcome = "feedback"
                 feedback.append(self._feedback_message(plan))
+            else:
+                plan.outcome = "dropped"
 
         executable_calls = [plan.call for plan in plans if plan.executable]
         inner_output: Any = None
@@ -265,28 +299,34 @@ class SaidexToolNode(Runnable[Any, Any]):
         for entry in message.invalid_tool_calls:
             raw = entry.get("args") or ""
             name = entry.get("name")
+            entry_id = entry.get("id")
             repaired_args = (
                 _repair_raw_args(
                     raw,
                     strip_thinking=self._strip_thinking,
                     use_json_repair=self._json_repair,
                 )
-                if name
+                if name and entry_id
                 else None
             )
             if repaired_args is None:
                 plans.append(
                     _CallPlan(
                         call={
-                            "name": name or "unknown",
+                            "name": name or "",
                             "args": {},
-                            "id": entry.get("id"),
+                            "id": entry_id,
                             "type": "tool_call",
                         },
                         from_invalid=True,
                         raw_entry=dict(entry),
                         raw_args=raw,
                         recoverable=False,
+                        # An id but no name CAN be answered (real tool_call_id
+                        # to respond to); no id means there is nothing to
+                        # respond to at all — see the general id check below,
+                        # which also covers this without duplicating it here.
+                        missing_name=bool(entry_id) and not name,
                         error_text=str(entry.get("error") or "malformed tool call"),
                     )
                 )
@@ -296,7 +336,7 @@ class SaidexToolNode(Runnable[Any, Any]):
                     call={
                         "name": name,
                         "args": repaired_args,
-                        "id": entry.get("id"),
+                        "id": entry_id,
                         "type": "tool_call",
                     },
                     from_invalid=True,
@@ -307,11 +347,27 @@ class SaidexToolNode(Runnable[Any, Any]):
             )
 
         for plan in plans:
+            if plan.call.get("id") is None:
+                # A ToolMessage requires a tool_call_id, so an id-less call
+                # (from either tool_calls or invalid_tool_calls — both allow
+                # id: str | None) has no way to be answered. Do not fabricate
+                # an empty-id ToolMessage; the sanitizer drops the entry (see
+                # _sanitize_message) so history carries neither an orphan
+                # result nor an unanswerable malformed call.
+                logger.warning(
+                    "SaidexToolNode: dropping a tool call with no id (name=%r); "
+                    "a ToolMessage cannot be produced without a tool_call_id, "
+                    "so this call will not be executed, answered, or retained "
+                    "in sanitized history",
+                    plan.call.get("name"),
+                )
+                plan.answerable = False
+                plan.recoverable = False
+                continue
             if not plan.recoverable:
                 continue
-            tool = self._tools_by_name.get(plan.call["name"])
-            schema = getattr(tool, "tool_call_schema", None) if tool is not None else None
-            if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+            schema = self._pydantic_schema_for(plan.call["name"])
+            if schema is None:
                 # Unknown tool or non-Pydantic schema: the executor's own
                 # validation and error handling stay authoritative.
                 plan.executable = True
@@ -320,7 +376,11 @@ class SaidexToolNode(Runnable[Any, Any]):
             plan.prevalidated = True
             try:
                 _, issues, error_text = create_instance_with_issues(schema, **plan.call["args"])
-            except Exception as exc:  # e.g. non-mapping args
+            except TypeError as exc:
+                # Only a malformed-args TypeError (non-mapping args, or a dict
+                # with non-string keys) is something a model can be asked to
+                # correct. Anything else is a genuine bug and must propagate
+                # rather than being laundered into model-facing feedback.
                 issues, error_text = [], f"arguments not valid: {exc}"
             if error_text is None:
                 plan.executable = True
@@ -329,14 +389,41 @@ class SaidexToolNode(Runnable[Any, Any]):
                 plan.error_text = error_text
         return plans
 
+    def _pydantic_schema_for(self, name: str) -> type[BaseModel] | None:
+        """Return tool *name*'s Pydantic args schema, or ``None`` if unknown/non-Pydantic."""
+        tool = self._tools_by_name.get(name)
+        schema = getattr(tool, "tool_call_schema", None) if tool is not None else None
+        if isinstance(schema, type) and issubclass(schema, BaseModel):
+            return schema
+        return None
+
     def _feedback_message(self, plan: _CallPlan) -> ToolMessage:
-        """Build the corrective ``ToolMessage`` for an invalid call."""
+        """Build the corrective ``ToolMessage`` for an invalid call.
+
+        Only called for *answerable* plans (``plan.answerable`` is True), which
+        guarantees ``plan.call["id"]`` is a real id — see ``_CallPlan.answerable``.
+        An id-less call cannot be answered at all and never reaches here.
+        """
+        call_id = plan.call["id"]
+        if plan.missing_name:
+            # The id is real but no tool name was ever provided, so there is
+            # nothing to fabricate a ``name`` from — omit it rather than
+            # inventing a placeholder that would misrepresent history.
+            content = (
+                "Your tool call carried no tool name and could not be "
+                "identified, so it was NOT executed.\n"
+                f"Provider error: {plan.error_text}\n"
+                f"Raw arguments received:\n{(plan.raw_args or '')[:500]}\n"
+                "Call the tool again, including a valid tool name."
+            )
+            return ToolMessage(content=content, tool_call_id=call_id, status="error")
+
         name = plan.call["name"]
         if not plan.recoverable:
-            tool = self._tools_by_name.get(name)
+            schema = self._pydantic_schema_for(name)
             schema_hint = ""
-            if tool is not None and isinstance(getattr(tool, "tool_call_schema", None), type):
-                fields = ", ".join(tool.tool_call_schema.model_fields)  # type: ignore[union-attr]
+            if schema is not None:
+                fields = ", ".join(schema.model_fields)
                 schema_hint = f"\nExpected arguments for '{name}': {fields}."
             content = (
                 f"The arguments of your call to tool '{name}' could not be parsed "
@@ -356,23 +443,40 @@ class SaidexToolNode(Runnable[Any, Any]):
         return ToolMessage(
             content=content,
             name=name,
-            tool_call_id=plan.call.get("id") or "",
+            tool_call_id=call_id,
             status="error",
         )
 
     def _sanitize_message(self, message: AIMessage, plans: list[_CallPlan]) -> AIMessage | None:
-        """Return an updated ``AIMessage`` when repair/correction changed calls."""
+        """Return an updated ``AIMessage`` only when its calls actually changed.
+
+        Rebuilds the ``tool_calls``/``invalid_tool_calls`` the message would
+        carry after repair/validation and compares them structurally against
+        the original — an id-less invalid entry is dropped entirely (nothing
+        can answer it, see ``_CallPlan.answerable``), while every other
+        from-invalid, non-executable entry keeps its raw form so it still
+        matches the feedback ``ToolMessage`` that answered it. Returning
+        ``None`` when nothing actually differs avoids emitting an inert copy
+        (same content, new identity) — e.g. when the only thing that happened
+        was repairing an entry into a dict that is still schema-invalid, so
+        its raw, unrepaired form ends up right back in ``invalid_tool_calls``.
+        """
         if not self._sanitize_messages or message.id is None:
-            return None
-        if not any(plan.repaired or plan.outcome == "corrected" for plan in plans):
             return None
         tool_calls = [plan.call for plan in plans if not plan.from_invalid]
         tool_calls += [plan.call for plan in plans if plan.from_invalid and plan.executable]
         invalid_tool_calls = [
             plan.raw_entry
             for plan in plans
-            if plan.from_invalid and not plan.executable and plan.raw_entry is not None
+            if plan.from_invalid
+            and not plan.executable
+            and plan.answerable
+            and plan.raw_entry is not None
         ]
+        if tool_calls == list(message.tool_calls) and invalid_tool_calls == list(
+            message.invalid_tool_calls
+        ):
+            return None
         return message.model_copy(
             update={"tool_calls": tool_calls, "invalid_tool_calls": invalid_tool_calls}
         )
@@ -447,7 +551,7 @@ def _repair_raw_args(
         return None
     try:
         parsed: Any = json.loads(text)
-    except (ValueError, json.JSONDecodeError):
+    except ValueError:  # json.JSONDecodeError is a ValueError subclass
         if not use_json_repair:
             return None
         parsed = repair_json(text, return_objects=True)
@@ -497,6 +601,18 @@ def _order_tool_messages(messages: list[BaseMessage], order: dict[str, int]) -> 
     return [message for _, message in sorted(enumerate(messages), key=key)]
 
 
+def _extra_update(
+    extra_messages: list[BaseMessage], shape: str, messages_key: str, order: dict[str, int]
+) -> Any:
+    """Order policy messages into original call order, then shape them to match
+    the caller's input (bare list vs. ``{messages_key: [...]}``) — the same
+    convention stock ``ToolNode._combine_tool_outputs`` uses for the
+    non-``Command`` outputs it mixes into a ``Command``-bearing list.
+    """
+    ordered = _order_tool_messages(list(extra_messages), order)
+    return ordered if shape == "list" else {messages_key: ordered}
+
+
 def _merge_output(
     inner_output: Any,
     extra_messages: list[BaseMessage],
@@ -507,8 +623,9 @@ def _merge_output(
     """Combine the inner node's output with policy messages, mirroring shape.
 
     ``Command`` objects (and any other non-message elements the inner node
-    returns) are passed through unchanged; policy messages are grouped into a
-    ``{messages_key: [...]}`` update in that case.
+    returns) are passed through unchanged; policy messages are ordered and
+    shaped via :func:`_extra_update` in that case, so the original-call-order
+    guarantee and the list/dict input shape both survive a ``Command`` return.
     """
     if inner_output is None:
         merged: list[BaseMessage] = _order_tool_messages(list(extra_messages), order)
@@ -520,8 +637,8 @@ def _merge_output(
         if all(isinstance(element, BaseMessage) for element in inner_output):
             return _order_tool_messages([*inner_output, *extra_messages], order)
         if extra_messages:
-            return [*inner_output, {messages_key: extra_messages}]
+            return [*inner_output, _extra_update(extra_messages, shape, messages_key, order)]
         return inner_output
     if extra_messages:
-        return [inner_output, {messages_key: extra_messages}]
+        return [inner_output, _extra_update(extra_messages, shape, messages_key, order)]
     return inner_output

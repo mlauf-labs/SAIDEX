@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 import pytest
 
 pytest.importorskip("langgraph")
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage  # noqa: E402
-from langchain_core.tools import tool  # noqa: E402
+from langchain_core.tools import InjectedToolCallId, tool  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
 from langgraph.prebuilt import ToolNode  # noqa: E402
 from langgraph.runtime import Runtime  # noqa: E402
+from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from saidex.langgraph import SaidexToolNode  # noqa: E402
@@ -53,6 +54,29 @@ def greet(name: str) -> str:
     """Greet a person by name."""
     EXECUTED.append(f"greet:{name}")
     return f"Hello {name}"
+
+
+@tool
+def lookup_table(schema: str, table: str) -> str:
+    """Look up a table by schema and table name (regression: field named 'schema')."""
+    EXECUTED.append(f"lookup_table:{schema}.{table}")
+    return f"{schema}.{table}"
+
+
+@tool
+def move(to: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command[None]:
+    """Move to a location, returning a Command state update instead of a plain result."""
+    EXECUTED.append(f"move:{to}")
+    return Command(
+        update={"messages": [ToolMessage(content=f"moved to {to}", tool_call_id=tool_call_id)]}
+    )
+
+
+@tool
+def move_list_state(to: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command[None]:
+    """Like ``move`` but returns a list-shaped Command.update for list-shape state."""
+    EXECUTED.append(f"move_list_state:{to}")
+    return Command(update=[ToolMessage(content=f"moved to {to}", tool_call_id=tool_call_id)])
 
 
 @pytest.fixture(autouse=True)
@@ -252,6 +276,23 @@ async def test_unknown_tool_passes_through_to_stock_error() -> None:
     assert "not a valid tool" in str(tool_message.content)
 
 
+@pytest.mark.asyncio
+async def test_tool_arg_named_schema_executes_normally() -> None:
+    """Regression: a tool arg named 'schema' must not collide with the schema
+    parameter of create_instance_with_issues during pre-validation (see
+    saidex.utils.create_instance_with_issues)."""
+    state = {"messages": [_ai([_call("lookup_table", {"schema": "public", "table": "t"}, "c1")])]}
+    ours = await SaidexToolNode([lookup_table]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    stock = await ToolNode([lookup_table]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    ours_tm = _tool_messages(ours)
+    stock_tm = _tool_messages(stock)
+    assert len(ours_tm) == 1
+    assert ours_tm[0].status != "error"
+    assert ours_tm[0].content == stock_tm[0].content == "public.t"
+    assert EXECUTED == ["lookup_table:public.t", "lookup_table:public.t"]
+
+
 # ---------------------------------------------------------------------------
 # Graph-embedded execution (real Pregel-injected runtime, no runtime= kwarg)
 # ---------------------------------------------------------------------------
@@ -319,6 +360,28 @@ def _invalid(name: str, raw_args: str, call_id: str) -> dict[str, Any]:
     }
 
 
+def _invalid_no_id(name: str, raw_args: str) -> dict[str, Any]:
+    """An invalid_tool_calls entry with no id — LangChain types id as str | None."""
+    return {
+        "name": name,
+        "args": raw_args,
+        "id": None,
+        "error": "Malformed args",
+        "type": "invalid_tool_call",
+    }
+
+
+def _invalid_no_name(raw_args: str, call_id: str) -> dict[str, Any]:
+    """An invalid_tool_calls entry with an id but no name — also str | None in LangChain."""
+    return {
+        "name": None,
+        "args": raw_args,
+        "id": call_id,
+        "error": "Malformed args",
+        "type": "invalid_tool_call",
+    }
+
+
 def _ai_of(result: Any) -> AIMessage | None:
     messages = result["messages"] if isinstance(result, dict) else result
     for m in messages:
@@ -357,6 +420,36 @@ async def test_repair_flags_can_be_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_strip_thinking_disabled_leaves_think_tags_unparseable() -> None:
+    # With json_repair also disabled, disabling strip_thinking is the only
+    # thing standing between a parseable and an unparseable payload here:
+    # json.loads('<think>...</think>{...}') always fails, so the <think>
+    # block must actually be stripped first for this to recover.
+    raw = '<think>let me compute</think>{"a": 2, "b": 3}'
+    state = {"messages": [_ai(invalid=[_invalid("add", raw, "c1")])]}
+    node = SaidexToolNode([add], strip_thinking=False, json_repair=False)
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert "could not be parsed" in str(tool_message.content)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_non_dict_json_args_fall_through_to_feedback() -> None:
+    # Valid JSON that parses to a list (not a dict) must not be treated as an
+    # args mapping — _repair_raw_args returns None and the call falls through
+    # to feedback rather than being spread as **args.
+    state = {"messages": [_ai(invalid=[_invalid("add", "[1, 2, 3]", "c1")])]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert tool_message.tool_call_id == "c1"
+    assert "could not be parsed" in str(tool_message.content)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
 async def test_validation_failure_yields_structured_feedback() -> None:
     state = {"messages": [_ai([_call("add", {"a": "notanint", "b": 2}, "c1")])]}
     result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
@@ -379,6 +472,9 @@ async def test_unrecoverable_invalid_gets_feedback_with_schema_summary() -> None
     assert tool_message.tool_call_id == "c1"
     assert "could not be parsed" in str(tool_message.content)
     assert "add" in str(tool_message.content)
+    # Pin the actual schema_hint block, not just the "add" substring that the
+    # surrounding sentences already contain regardless of the field list.
+    assert "Expected arguments for 'add': a, b." in str(tool_message.content)
 
 
 @pytest.mark.asyncio
@@ -457,3 +553,249 @@ async def test_sanitize_skipped_without_message_id() -> None:
     result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
     assert _ai_of(result) is None
     assert _tool_messages(result)[0].content == "5"
+
+
+# ---------------------------------------------------------------------------
+# id-less / name-less invalid_tool_calls entries (review Finding 2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_invalid_call_with_id_no_name_gets_feedback_without_fabricated_name() -> None:
+    state = {"messages": [_ai(invalid=[_invalid_no_name("garbage", "c1")])]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.tool_call_id == "c1"
+    assert tool_message.status == "error"
+    assert tool_message.name is None
+    assert "no tool name" in str(tool_message.content).lower()
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_sanitize_keeps_raw_entry_for_id_no_name_call() -> None:
+    # Paired with a genuinely recovered call so sanitize actually rebuilds the
+    # message (see Minor 8): the id-no-name entry's raw form must survive
+    # unmodified in invalid_tool_calls so it keeps matching the feedback
+    # ToolMessage that answered it.
+    state = {
+        "messages": [
+            _ai(
+                invalid=[
+                    _invalid("add", '{"a": 2, "b": 3}', "c-good"),
+                    _invalid_no_name("garbage", "c-no-name"),
+                ],
+                msg_id="ai-1",
+            )
+        ]
+    }
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    feedback = next(m for m in _tool_messages(result) if m.tool_call_id == "c-no-name")
+    assert feedback.status == "error"
+    assert feedback.name is None
+
+    updated = _ai_of(result)
+    assert updated is not None
+    assert [c["id"] for c in updated.invalid_tool_calls] == ["c-no-name"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_call_with_no_id_produces_no_orphan_tool_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No id => no way to answer it: no ToolMessage, no fabricated empty id."""
+    caplog.set_level("WARNING", logger="saidex.langgraph")
+    state = {"messages": [_ai(invalid=[_invalid_no_id("add", "garbage")], msg_id="ai-1")]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result) == []
+    assert EXECUTED == []
+    assert any("no id" in record.message.lower() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_sanitize_drops_no_id_entry_leaving_no_unanswered_call() -> None:
+    """No orphan ToolMessage AND no leftover unanswerable entry in history."""
+    state = {"messages": [_ai(invalid=[_invalid_no_id("add", "garbage")], msg_id="ai-1")]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result) == []
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.invalid_tool_calls == []
+    assert updated.tool_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Graph-embedded exercise of the repair/sanitize path (review Finding 3)
+# ---------------------------------------------------------------------------
+
+
+def _agent_node_invalid_call(_state: MessagesState) -> dict[str, list[BaseMessage]]:
+    """Agent step that emits a malformed (invalid) tool call needing repair."""
+    raw = '<think>let me compute</think>{"a": 2, "b": 3}'
+    return {
+        "messages": [
+            _ai(invalid=[_invalid("add", raw, "graph-inv-1")], msg_id="graph-ai-invalid"),
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_graph_embedded_repairs_and_replaces_ai_message_in_final_state() -> None:
+    """The load-bearing new behavior (_substitute_message + sanitized AIMessage
+    REPLACED via add_messages by id) is only real when exercised inside a
+    compiled graph, where add_messages actually runs. Deliberately does NOT
+    pass runtime= — see the module-level note on _NO_GRAPH_RUNTIME."""
+    graph: StateGraph[Any, Any, Any, Any] = StateGraph(MessagesState)
+    graph.add_node("agent", _agent_node_invalid_call)
+    graph.add_node("tools", SaidexToolNode([add]))
+    graph.add_edge(START, "agent")
+    graph.add_edge("agent", "tools")
+    graph.add_edge("tools", END)
+    app = graph.compile()
+
+    result = await app.ainvoke({"messages": [HumanMessage(content="please add")]})
+
+    ai_messages = [m for m in result["messages"] if isinstance(m, AIMessage)]
+    assert len(ai_messages) == 1, "sanitized AIMessage must replace, not duplicate, the original"
+    final_ai = ai_messages[0]
+    assert final_ai.id == "graph-ai-invalid"
+    assert final_ai.invalid_tool_calls == []
+    assert len(final_ai.tool_calls) == 1
+    assert final_ai.tool_calls[0]["args"] == {"a": 2, "b": 3}
+    assert final_ai.tool_calls[0]["id"] == "graph-inv-1"
+
+    tool_messages = _tool_messages(result["messages"])
+    assert len(tool_messages) == 1
+    assert tool_messages[0].tool_call_id == "graph-inv-1"
+    assert tool_messages[0].content == "5"
+    assert EXECUTED == ["add:2+3"]
+
+
+# ---------------------------------------------------------------------------
+# Untested sanitize branch: repaired into a dict that is still schema-invalid
+# (review Finding 4 + Minor 8)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_sanitize_keeps_raw_entry_when_repaired_but_still_schema_invalid() -> None:
+    # '{"a": "not_an_int", "b": 3' repairs to a syntactically-valid dict
+    # ({"a": "not_an_int", "b": 3}) that still fails the tool's schema (a must
+    # be an int) — the genuine "repaired=True AND from_invalid and not
+    # executable" branch, distinct from test_sanitize_keeps_feedback_calls_
+    # untouched (whose repaired entry is schema-valid and gets promoted).
+    state = {
+        "messages": [
+            _ai(
+                invalid=[
+                    _invalid("add", '{"a": 5, "b": 5', "c-recovered"),
+                    _invalid("add", '{"a": "not_an_int", "b": 3', "c-bad-schema"),
+                ],
+                msg_id="ai-9",
+            )
+        ]
+    }
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    feedback = next(m for m in _tool_messages(result) if m.tool_call_id == "c-bad-schema")
+    assert feedback.status == "error"
+    assert "TYPE ERRORS" in str(feedback.content)
+
+    recovered = next(m for m in _tool_messages(result) if m.tool_call_id == "c-recovered")
+    assert recovered.content == "10"
+    assert EXECUTED == ["add:5+5"]
+
+    updated = _ai_of(result)
+    assert updated is not None
+    assert [c["id"] for c in updated.invalid_tool_calls] == ["c-bad-schema"]
+    assert [c["id"] for c in updated.tool_calls] == ["c-recovered"]
+
+
+@pytest.mark.asyncio
+async def test_no_sanitized_message_when_only_change_is_still_invalid_after_repair() -> None:
+    """Minor 8: repairing an entry into a dict that is still schema-invalid,
+    with nothing else in the batch, must not emit an inert AIMessage copy
+    (same tool_calls/invalid_tool_calls content as the original, new identity)."""
+    state = {
+        "messages": [
+            _ai(invalid=[_invalid("add", '{"a": "not_an_int", "b": 3', "c1")], msg_id="ai-1")
+        ]
+    }
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _ai_of(result) is None
+    feedback = _tool_messages(result)[0]
+    assert feedback.tool_call_id == "c1"
+    assert feedback.status == "error"
+    assert EXECUTED == []
+
+
+# ---------------------------------------------------------------------------
+# Command-returning tool mixed with feedback messages (review Minor 7)
+# ---------------------------------------------------------------------------
+#
+# Once a tool returns a Command, stock ToolNode._combine_tool_outputs stops
+# returning a flat list of BaseMessage and instead returns a list mixing the
+# Command with a {messages_key: [...]} (dict input) or [...] (list input)
+# entry per non-Command output. _merge_output's non-message branch must keep
+# ordering our own feedback/sanitize extras and must shape them the same way
+# (bare list vs. {messages_key: [...]}) rather than always wrapping in a dict.
+
+
+@pytest.mark.asyncio
+async def test_command_tool_mixed_with_feedback_respects_dict_shape() -> None:
+    state = {
+        "messages": [
+            _ai(
+                [
+                    _call("move", {"to": "x"}, "c1"),
+                    _call("add", {"a": "bad", "b": 2}, "c2"),
+                ]
+            )
+        ]
+    }
+    result = await SaidexToolNode([add, move]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert isinstance(result, list)
+    commands = [e for e in result if isinstance(e, Command)]
+    assert len(commands) == 1
+    assert commands[0].update["messages"][0].tool_call_id == "c1"
+
+    dict_updates = [e for e in result if isinstance(e, dict)]
+    assert len(dict_updates) == 1
+    feedback_messages = dict_updates[0]["messages"]
+    assert len(feedback_messages) == 1
+    assert feedback_messages[0].tool_call_id == "c2"
+    assert feedback_messages[0].status == "error"
+    assert EXECUTED == ["move:x"]
+
+
+@pytest.mark.asyncio
+async def test_command_tool_mixed_with_feedback_respects_list_shape() -> None:
+    messages = [
+        _ai(
+            [
+                _call("move_list_state", {"to": "x"}, "c1"),
+                _call("add", {"a": "bad", "b": 2}, "c2"),
+            ]
+        )
+    ]
+    result = await SaidexToolNode([add, move_list_state]).ainvoke(
+        messages, runtime=_NO_GRAPH_RUNTIME
+    )
+
+    assert isinstance(result, list)
+    commands = [e for e in result if isinstance(e, Command)]
+    assert len(commands) == 1
+    # No dict entries at all: extras must be shaped as a bare list, matching
+    # the list-shaped input, not wrapped in a {messages_key: [...]} dict.
+    assert not any(isinstance(e, dict) for e in result)
+    list_updates = [e for e in result if isinstance(e, list)]
+    assert len(list_updates) == 1
+    assert list_updates[0][0].tool_call_id == "c2"
+    assert list_updates[0][0].status == "error"
+    assert EXECUTED == ["move_list_state:x"]
