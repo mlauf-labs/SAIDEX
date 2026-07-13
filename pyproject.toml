@@ -42,6 +42,7 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.0.0"]
 rrule = ["python-dateutil>=2.8.2"]
+langgraph = ["langgraph>=1.0.0"]
 benchmarks = ["langchain-openai>=0.1.0", "Pillow>=10.0"]
 
 [project.urls]
@@ -121,4 +122,6 @@ dev = [
     "commitizen>=4.16.3",
     # Exercises the optional saidex[rrule] extra in the test suite.
     "python-dateutil>=2.8.2",
+    # Exercises the optional saidex[langgraph] extra in the test suite.
+    "langgraph>=1.0.0",
 ]
