@@ -130,3 +130,20 @@ async def test_failing_tool_node_listener_is_suppressed() -> None:
         sub_bad.unsubscribe()
         sub_ok.unsubscribe()
     assert len(received) == 1
+
+
+@pytest.mark.asyncio
+async def test_failing_sink_does_not_break_dispatch_or_other_sinks() -> None:
+    def _boom(event: object) -> None:
+        raise RuntimeError("sink recording must never break the tool-node run")
+
+    async with collect_stats() as outer:
+        outer._record = _boom  # force the outer sink to raise on record
+        async with collect_stats() as inner:
+            # Must not raise despite the outer sink's _record blowing up.
+            await dispatch_tool_node_event(_event())
+
+    # The healthy inner sink still recorded its event ...
+    assert len(inner) == 1
+    # ... and the (poisoned) outer sink was skipped rather than crashing dispatch.
+    assert len(outer) == 0

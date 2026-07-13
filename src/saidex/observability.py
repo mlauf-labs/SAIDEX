@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import logging
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextvars import ContextVar, Token
 from typing import TYPE_CHECKING, Any
 
@@ -196,6 +196,48 @@ def on_tool_node(callback: ToolNodeListener) -> Subscription:
     return Subscription(callback, _tool_node_listeners)
 
 
+async def _dispatch(
+    event: ExtractionEvent | ToolNodeEvent,
+    listeners: Sequence[Any],
+    listener_label: str,
+) -> None:
+    """Notify every active sink and the given listener registry of a completed run.
+
+    Shared by :func:`dispatch_to_observers` and :func:`dispatch_tool_node_event`.
+    Returns immediately when neither a sink nor a listener is active, so
+    inactive observers add no measurable overhead.  A failing observer is
+    isolated: its exception is logged with a traceback and swallowed so it
+    neither breaks the run nor stops the remaining observers from being
+    notified.
+
+    Args:
+        event: The completed run's event (extraction or tool-node).
+        listeners: The listener registry to notify — callers pass
+            ``_global_listeners`` or ``_tool_node_listeners`` so routing stays
+            enforced by which registry is supplied, not by logic here.
+        listener_label: Name used in the suppressed-exception log message
+            (e.g. ``"on_extraction"`` or ``"on_tool_node"``), keeping the two
+            dispatch paths' log lines distinguishable.
+    """
+    sinks = _active_sinks.get()
+    if not sinks and not listeners:
+        return
+    for sink in sinks:
+        try:
+            sink._record(event)
+        except Exception as exc:  # noqa: BLE001 — observers must not break the run
+            logger.error("stats sink failed to record and was skipped: %s", exc, exc_info=True)
+    for listener in tuple(listeners):
+        try:
+            outcome = listener(event)
+            if inspect.isawaitable(outcome):
+                await outcome
+        except Exception as exc:  # noqa: BLE001 — observers must not break the run
+            logger.error(
+                "%s listener raised and was suppressed: %s", listener_label, exc, exc_info=True
+            )
+
+
 async def dispatch_to_observers(event: ExtractionEvent) -> None:
     """Notify every active sink and global listener of a completed extraction.
 
@@ -208,21 +250,7 @@ async def dispatch_to_observers(event: ExtractionEvent) -> None:
     Args:
         event: The completed extraction's event.
     """
-    sinks = _active_sinks.get()
-    if not sinks and not _global_listeners:
-        return
-    for sink in sinks:
-        try:
-            sink._record(event)
-        except Exception as exc:  # noqa: BLE001 — observers must not break the run
-            logger.error("stats sink failed to record and was skipped: %s", exc, exc_info=True)
-    for listener in tuple(_global_listeners):
-        try:
-            outcome = listener(event)
-            if inspect.isawaitable(outcome):
-                await outcome
-        except Exception as exc:  # noqa: BLE001 — observers must not break the run
-            logger.error("on_extraction listener raised and was suppressed: %s", exc, exc_info=True)
+    await _dispatch(event, _global_listeners, "on_extraction")
 
 
 async def dispatch_tool_node_event(event: ToolNodeEvent) -> None:
@@ -235,18 +263,4 @@ async def dispatch_tool_node_event(event: ToolNodeEvent) -> None:
     Args:
         event: The completed node invocation's event.
     """
-    sinks = _active_sinks.get()
-    if not sinks and not _tool_node_listeners:
-        return
-    for sink in sinks:
-        try:
-            sink._record(event)
-        except Exception as exc:  # noqa: BLE001 — observers must not break the run
-            logger.error("stats sink failed to record and was skipped: %s", exc, exc_info=True)
-    for listener in tuple(_tool_node_listeners):
-        try:
-            outcome = listener(event)
-            if inspect.isawaitable(outcome):
-                await outcome
-        except Exception as exc:  # noqa: BLE001 — observers must not break the run
-            logger.error("on_tool_node listener raised and was suppressed: %s", exc, exc_info=True)
+    await _dispatch(event, _tool_node_listeners, "on_tool_node")
