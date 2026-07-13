@@ -323,6 +323,26 @@
   
 
       
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../langgraph-toolnode/" class="md-tabs__link">
+          
+  
+  
+  Integrations
+
+        </a>
+      </li>
+    
+  
+
+      
     </ul>
   </div>
 </nav>
@@ -800,6 +820,17 @@
     <span class="md-ellipsis">
       
         Global listener — on_extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-node-events-langgraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool-node events (LangGraph)
       
     </span>
   </a>
@@ -1304,6 +1335,93 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Integrations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../langgraph-toolnode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LangGraph ToolNode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -1358,6 +1476,17 @@
     <span class="md-ellipsis">
       
         Global listener — on_extraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tool-node-events-langgraph" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool-node events (LangGraph)
       
     </span>
   </a>
@@ -1675,6 +1804,12 @@ text). The callback may be sync or async:</p>
 method, or on exit when used as a context manager (<code>with on_extraction(cb): ...</code>).
 A listener that raises is logged and ignored — it can never break the extraction
 it observes.</p>
+<h3 id="tool-node-events-langgraph">Tool-node events (LangGraph)<a class="headerlink" href="#tool-node-events-langgraph" title="Permanent link">&para;</a></h3>
+<p>When you use <a href="../langgraph-toolnode/"><code>SaidexToolNode</code></a>, each node invocation
+emits a <code>ToolNodeEvent</code>. Active <code>collect_stats()</code> sinks record its
+<code>ToolNodeStats</code> alongside extraction stats, and <code>on_tool_node()</code> registers a
+process-wide listener — the tool-node counterpart to <code>on_extraction()</code>
+(extraction listeners do not receive tool-node events).</p>
 <hr />
 <h2 id="langfuse">Langfuse<a class="headerlink" href="#langfuse" title="Permanent link">&para;</a></h2>
 <p><a href="https://langfuse.com">Langfuse</a> provides open-source LLM observability with

@@ -321,6 +321,26 @@
   
 
       
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="langgraph-toolnode/" class="md-tabs__link">
+          
+  
+  
+  Integrations
+
+        </a>
+      </li>
+    
+  
+
+      
     </ul>
   </div>
 </nav>
@@ -1097,6 +1117,93 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Integrations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="langgraph-toolnode/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LangGraph ToolNode
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -1245,6 +1352,10 @@
 <td><strong><a href="observability/">Observability</a></strong></td>
 <td>Callbacks, Langfuse, LangSmith, logging, async/sync</td>
 </tr>
+<tr>
+<td><strong><a href="langgraph-toolnode/">LangGraph: SaidexToolNode</a></strong></td>
+<td>Drop-in <code>ToolNode</code> replacement that repairs, validates and corrects agentic tool calls</td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -1310,6 +1421,10 @@
 <td><a href="../examples/15_openai_compatible_gateway.py"><code>15_openai_compatible_gateway.py</code></a></td>
 <td><code>ToolCallConfig</code>: tool calling against gateways that reject OpenAI-only flags</td>
 </tr>
+<tr>
+<td><a href="../examples/16_langgraph_toolnode.py"><code>16_langgraph_toolnode.py</code></a></td>
+<td><code>SaidexToolNode</code>: validated tool calling in a LangGraph agent</td>
+</tr>
 </tbody>
 </table>
 <hr />
@@ -1331,6 +1446,7 @@
 <li>…extract data from images → <a href="images/">Image Extraction</a></li>
 <li>…add tracing with Langfuse or LangSmith → <a href="observability/">Observability</a></li>
 <li>…call the library from synchronous code → <a href="observability/#sync-usage">Observability — Sync usage</a></li>
+<li>…validate and correct tool calls in a LangGraph agent → <a href="langgraph-toolnode/">LangGraph: SaidexToolNode</a></li>
 </ul>
 
 
