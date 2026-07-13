@@ -36,6 +36,15 @@ ExtractionListener = Callable[["ExtractionEvent"], "Awaitable[None] | None"]
 #: receives the completed :class:`~saidex.models.ToolNodeEvent`.
 ToolNodeListener = Callable[["ToolNodeEvent"], "Awaitable[None] | None"]
 
+#: Either kind of listener callback a :class:`Subscription` can wrap. A plain
+#: ``Callable[[ExtractionEvent | ToolNodeEvent], ...]`` would NOT type-check
+#: here: Callable parameters are contravariant, so a function typed to accept
+#: only ``ExtractionEvent`` (what :func:`on_extraction` actually passes) is
+#: not a valid substitute for one that must accept the union — mypy rejects
+#: it. A union of the two specific listener types is what both call sites
+#: actually pass, so that is what this models.
+_SubscriptionCallback = ExtractionListener | ToolNodeListener
+
 
 class StatsSink:
     """Collects the stats of every extraction or tool-node run inside a
@@ -134,8 +143,12 @@ class Subscription:
     listener is removed on block exit).
     """
 
-    def __init__(self, callback: Any, registry: list[Any] | None = None) -> None:
-        self._callback = callback
+    def __init__(
+        self,
+        callback: _SubscriptionCallback,
+        registry: list[ExtractionListener] | list[ToolNodeListener] | None = None,
+    ) -> None:
+        self._callback: _SubscriptionCallback = callback
         self._registry: list[Any] = _global_listeners if registry is None else registry
         self._active = True
 
