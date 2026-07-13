@@ -183,6 +183,18 @@ class SaidexToolNode(Runnable[Any, Any]):
     transport level either: it degrades straight to the ``"feedback"``
     policy for that call rather than crashing the node.
 
+    **Send-API fan-out payloads bypass the pipeline entirely.** LangGraph's
+    ``Send("tools", tool_call)`` fan-out delivers either a bare
+    ``list[ToolCall]`` or a ``ToolCallWithContext`` dict — both carry one
+    already-extracted ``ToolCall`` with no surrounding ``AIMessage`` to
+    repair, validate, correct or sanitize. These two shapes are detected up
+    front (see :func:`_is_send_api_payload`) and delegated straight to the
+    internal stock ``ToolNode`` with ``config``/``kwargs`` passed through
+    unmodified; the result is returned unchanged. No ``ToolNodeEvent`` is
+    emitted on this path — no ``_CallPlan`` ever exists to report, consistent
+    with "we did not process any call" (the same convention the ``"raise"``
+    policy's fail-fast path follows).
+
     Args:
         tools: The tools available for execution — ``BaseTool`` instances or
             plain callables, exactly as accepted by the stock ``ToolNode``.
@@ -310,6 +322,12 @@ class SaidexToolNode(Runnable[Any, Any]):
     # ------------------------------------------------------------------
 
     async def _arun(self, input: Any, config: RunnableConfig | None, **kwargs: Any) -> Any:
+        if _is_send_api_payload(input):
+            # No AIMessage exists in either shape — nothing to repair, validate
+            # or sanitize — so this is a pure pass-through. See the class
+            # docstring's "Send-API fan-out payloads" note for the stats
+            # decision (no ToolNodeEvent on this path).
+            return await self._inner.ainvoke(input, config, **kwargs)
         messages, shape = _extract_messages(input, self._messages_key)
         ai_message, ai_index = _last_ai_message(messages)
         plans = self._plan_calls(ai_message)
@@ -713,6 +731,25 @@ def _build_registry(
             continue
         registry[base.name] = base
     return registry
+
+
+def _is_send_api_payload(input: Any) -> bool:
+    """True for LangGraph's Send-API fan-out shapes (``Send("tools", tool_call)``).
+
+    Detected with the exact predicates stock ``ToolNode._parse_input`` uses
+    (langgraph's ``prebuilt/tool_node.py``): a bare ``list[ToolCall]`` — its
+    last element is a dict tagged ``type: "tool_call"`` — or a
+    ``ToolCallWithContext`` dict tagged ``__type: "tool_call_with_context"``.
+    Both carry a single already-extracted ``ToolCall`` with no surrounding
+    ``AIMessage``, so there is nothing for SaidexToolNode's repair/validate/
+    correct/sanitize pipeline to do — callers delegate straight to the stock
+    executor instead. Mirrors stock's own guard against an empty list ending
+    up here: an empty list is not this shape and falls through to the normal
+    message-list handling in :func:`_extract_messages`.
+    """
+    if isinstance(input, list) and input and isinstance(input[-1], dict):
+        return input[-1].get("type") == "tool_call"
+    return isinstance(input, dict) and input.get("__type") == "tool_call_with_context"
 
 
 def _finalized_outcome(outcome: ToolCallOutcome | Literal[""]) -> ToolCallOutcome:

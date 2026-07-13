@@ -315,6 +315,85 @@ async def test_tool_arg_named_schema_executes_normally() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Send-API fan-out payloads (Finding 1): no AIMessage exists in either shape,
+# so these must pass straight through to the stock executor unchanged rather
+# than crash trying to find one. Parity is computed against the stock
+# ToolNode at test time, not hand-written expectations.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_api_bare_tool_call_list_matches_stock() -> None:
+    """A bare list[ToolCall] (Send("tools", tool_call) fan-out) must be
+    delegated straight through, same as stock ToolNode._parse_input's
+    ``isinstance(input[-1], dict) and input[-1].get("type") == "tool_call"``
+    detection."""
+    payload = [_call("add", {"a": 2, "b": 3}, "send-1")]
+    ours = await SaidexToolNode([add]).ainvoke(payload, runtime=_NO_GRAPH_RUNTIME)
+    stock = await ToolNode([add]).ainvoke(payload, runtime=_NO_GRAPH_RUNTIME)
+    assert ours == stock
+    assert _tool_messages(ours)[0].content == "5"
+    # Both `ours` and `stock` above executed the tool once each.
+    assert EXECUTED == ["add:2+3", "add:2+3"]
+
+
+@pytest.mark.asyncio
+async def test_send_api_tool_call_with_context_matches_stock() -> None:
+    """A ToolCallWithContext dict (Send API with extra state context), tagged
+    ``__type: "tool_call_with_context"`` per stock ToolNode._parse_input, must
+    also be delegated straight through."""
+    payload = {
+        "__type": "tool_call_with_context",
+        "tool_call": _call("add", {"a": 4, "b": 5}, "send-2"),
+        "state": {},
+    }
+    ours = await SaidexToolNode([add]).ainvoke(payload, runtime=_NO_GRAPH_RUNTIME)
+    stock = await ToolNode([add]).ainvoke(payload, runtime=_NO_GRAPH_RUNTIME)
+    assert ours == stock
+    assert _tool_messages(ours)[0].content == "9"
+    # Both `ours` and `stock` above executed the tool once each.
+    assert EXECUTED == ["add:4+5", "add:4+5"]
+
+
+@pytest.mark.asyncio
+async def test_send_api_payload_emits_no_tool_node_event() -> None:
+    """Documented stats decision (class docstring, Finding 1): no
+    _CallPlans ever exist on this path, so no ToolNodeEvent is emitted —
+    mirroring the "raise" policy's fail-fast path."""
+    tool_events: list[Any] = []
+    sub = on_tool_node(tool_events.append)
+    try:
+        payload = [_call("add", {"a": 1, "b": 1}, "send-3")]
+        await SaidexToolNode([add]).ainvoke(payload, runtime=_NO_GRAPH_RUNTIME)
+    finally:
+        sub.unsubscribe()
+    assert tool_events == []
+
+
+@pytest.mark.asyncio
+async def test_send_api_payload_config_callbacks_reach_inner_tool() -> None:
+    """config must reach the inner node exactly as given on this path too —
+    same load-bearing guarantee as the normal AIMessage path (see the
+    module-level note on _NO_GRAPH_RUNTIME and config forwarding)."""
+
+    class _ToolStartRecorder(BaseCallbackHandler):
+        def __init__(self) -> None:
+            self.tool_starts: list[str] = []
+
+        def on_tool_start(self, serialized: dict[str, Any], input_str: str, **kw: Any) -> None:
+            self.tool_starts.append(serialized.get("name", ""))
+
+    handler = _ToolStartRecorder()
+    payload = [_call("add", {"a": 6, "b": 7}, "send-4")]
+    result = await SaidexToolNode([add]).ainvoke(
+        payload, config={"callbacks": [handler]}, runtime=_NO_GRAPH_RUNTIME
+    )
+    assert _tool_messages(result)[0].content == "13"
+    assert "add" in handler.tool_starts
+    assert EXECUTED == ["add:6+7"]
+
+
+# ---------------------------------------------------------------------------
 # Graph-embedded execution (real Pregel-injected runtime, no runtime= kwarg)
 # ---------------------------------------------------------------------------
 #

@@ -138,6 +138,16 @@ SAIDEX sync API.
 layer earlier (the chat-model integration) and cannot be recovered by any tool
 node.
 
+**Send-API fan-out payloads are passed straight through.** When tool calls are
+dispatched with LangGraph's `Send("tools", tool_call)` — a bare `list[ToolCall]`
+or a `ToolCallWithContext` dict — there is no `AIMessage` in the payload to
+repair, validate, correct or sanitize: each `Send` already carries one
+extracted tool call. `SaidexToolNode` detects both shapes up front and
+delegates the call unchanged to the internal stock `ToolNode`, so its output
+matches the stock node exactly on this path. No `ToolNodeEvent` is emitted for
+these invocations either, since no calls were actually processed by the
+pipeline.
+
 ---
 
 ## Related
