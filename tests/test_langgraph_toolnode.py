@@ -436,16 +436,39 @@ async def test_strip_thinking_disabled_leaves_think_tags_unparseable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_strip_thinking_alone_recovers_think_tag_payload() -> None:
+    # The missing control for test_strip_thinking_disabled_leaves_think_tags_
+    # unparseable (review Finding 4): that test flips strip_thinking AND
+    # json_repair together, so it never isolates which flag matters. Here
+    # json_repair is disabled and strip_thinking is the only thing enabled —
+    # if the payload still recovers, stripping (not repair) did the work.
+    raw = '<think>let me compute</think>{"a": 2, "b": 3}'
+    state = {"messages": [_ai(invalid=[_invalid("add", raw, "c1")])]}
+    node = SaidexToolNode([add], strip_thinking=True, json_repair=False)
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.content == "5"
+    assert tool_message.tool_call_id == "c1"
+    assert EXECUTED == ["add:2+3"]
+
+
+@pytest.mark.asyncio
 async def test_non_dict_json_args_fall_through_to_feedback() -> None:
     # Valid JSON that parses to a list (not a dict) must not be treated as an
     # args mapping — _repair_raw_args returns None and the call falls through
-    # to feedback rather than being spread as **args.
+    # to feedback rather than being spread as **args. The feedback wording
+    # must not claim the JSON itself failed to parse (misleading here: "[1, 2,
+    # 3]" parses fine, it just isn't an object) — it must say arguments have
+    # to be a single JSON object and that a list/scalar is not acceptable
+    # (review Finding 3).
     state = {"messages": [_ai(invalid=[_invalid("add", "[1, 2, 3]", "c1")])]}
     result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
     tool_message = _tool_messages(result)[0]
     assert tool_message.status == "error"
     assert tool_message.tool_call_id == "c1"
-    assert "could not be parsed" in str(tool_message.content)
+    content = str(tool_message.content)
+    assert "single JSON object" in content
+    assert "list" in content.lower()
     assert EXECUTED == []
 
 
@@ -626,6 +649,71 @@ async def test_sanitize_drops_no_id_entry_leaving_no_unanswered_call() -> None:
     assert updated is not None
     assert updated.invalid_tool_calls == []
     assert updated.tool_calls == []
+
+
+# ---------------------------------------------------------------------------
+# id-less entries on the tool_calls side, and id="" (second review Findings 1+2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_id_less_tool_calls_entry_dropped_not_executed_not_retained(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Blocker (Finding 1): LangChain types ``id`` as ``str | None`` on
+    ``ToolCall`` too, not only on ``InvalidToolCall`` — so an id-less entry
+    can arrive directly in ``tool_calls``.
+    test_sanitize_drops_no_id_entry_leaving_no_unanswered_call above only
+    covers the ``invalid_tool_calls`` side; before this fix, an id-less
+    ``tool_calls`` entry was correctly never executed/answered but was still
+    copied back into the sanitized AIMessage's ``tool_calls`` — a call the
+    node itself guarantees nothing will ever answer, contradicting its own
+    docstring and warning text."""
+    caplog.set_level("WARNING", logger="saidex.langgraph")
+    state = {
+        "messages": [
+            _ai(
+                [{"name": "add", "args": {"a": 1, "b": 2}, "id": None, "type": "tool_call"}],
+                msg_id="ai-1",
+            )
+        ]
+    }
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result) == []
+    assert EXECUTED == []
+    assert any("no id" in record.message.lower() for record in caplog.records)
+
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_call_with_empty_string_id_treated_as_no_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Minor (Finding 2): the repair gate used truthiness (``if name and
+    entry_id``) while the drop check used identity (``is None``), so
+    ``id=""`` slipped past both — never repaired even though the payload
+    below is trivially repairable, then reached ``_feedback_message`` as an
+    orphan ``ToolMessage(tool_call_id="")`` answering no real call. Normalizing
+    ``entry_id = entry.get("id") or None`` at construction makes "" agree with
+    "no id" everywhere, so this call is now dropped like any other id-less
+    entry: no repair attempt, no ToolMessage, no sanitized-history entry."""
+    caplog.set_level("WARNING", logger="saidex.langgraph")
+    raw = '<think>let me compute</think>{"a": 2, "b": 3}'
+    state = {"messages": [_ai(invalid=[_invalid("add", raw, "")], msg_id="ai-1")]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result) == []
+    assert EXECUTED == []
+    assert any("no id" in record.message.lower() for record in caplog.records)
+
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.tool_calls == []
+    assert updated.invalid_tool_calls == []
 
 
 # ---------------------------------------------------------------------------

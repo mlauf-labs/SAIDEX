@@ -106,28 +106,46 @@ class SaidexToolNode(Runnable[Any, Any]):
 
         graph.add_node("tools", SaidexToolNode(tools))
 
-    **Malformed ``invalid_tool_calls`` entries with a missing ``id``/``name``.**
-    LangChain's ``ToolCall``/``InvalidToolCall`` type both ``id`` and ``name``
-    as optional (``str | None``), so a provider can in principle emit an entry
-    carrying neither, or an id without a name. Because a ``ToolMessage``
-    *requires* a real ``tool_call_id``, the two situations are handled
-    differently:
+    **Malformed entries with a missing ``id``/``name``.** LangChain types
+    ``id`` as optional (``str | None``) on *both* ``ToolCall`` (the
+    ``tool_calls`` list) and ``InvalidToolCall`` (``invalid_tool_calls``), and
+    types ``name`` as optional only on ``InvalidToolCall``. So a provider can
+    in principle emit a call — well-formed or malformed — carrying no id at
+    all, or a malformed entry carrying an id but no name. Because a
+    ``ToolMessage`` *requires* a real ``tool_call_id``, the two situations are
+    handled differently:
 
-    - **Has an ``id``, no ``name``:** the call CAN be answered. A feedback
-      ``ToolMessage`` is emitted with the real ``tool_call_id`` and no
-      fabricated ``name`` (never invented) explaining that the call carried no
-      tool name and must be re-issued with one. The raw entry is kept in the
-      sanitized message's ``invalid_tool_calls`` so it still matches that
-      feedback message.
-    - **No ``id`` at all:** the call CANNOT be answered — there is no
-      ``tool_call_id`` to construct a ``ToolMessage`` with, so none is
-      emitted. A ``logging.Logger.warning`` records the drop. When
-      ``sanitize_messages`` is enabled, the entry is removed from the
-      sanitized ``AIMessage`` so history carries neither an orphaned tool
-      result nor an unanswerable malformed call. With
-      ``sanitize_messages=False`` the entry is left exactly as the model
-      produced it, matching stock ``ToolNode`` behavior — that is the caller's
-      choice.
+    - **Has an ``id``, no ``name`` (``invalid_tool_calls`` only):** the call
+      CAN be answered. A feedback ``ToolMessage`` is emitted with the real
+      ``tool_call_id`` and no fabricated ``name`` (never invented) explaining
+      that the call carried no tool name and must be re-issued with one. The
+      raw entry is kept in the sanitized message's ``invalid_tool_calls`` so
+      it still matches that feedback message.
+    - **No ``id`` at all (``tool_calls`` or ``invalid_tool_calls``):** the
+      call CANNOT be answered — there is no ``tool_call_id`` to construct a
+      ``ToolMessage`` with, so none is emitted, and the call is not executed
+      either (executing it would still leave it unanswered). A
+      ``logging.Logger.warning`` records the drop. When ``sanitize_messages``
+      is enabled, the entry is removed from the sanitized ``AIMessage``'s
+      ``tool_calls``/``invalid_tool_calls`` (whichever it came from) so
+      history carries neither an orphaned tool result nor an unanswerable
+      call. With ``sanitize_messages=False`` the entry is left exactly as the
+      model produced it, matching stock ``ToolNode`` behavior — that is the
+      caller's choice.
+
+    **A tool's schema validator raises an unexpected exception type.**
+    Pre-validation only treats ``ValueError``/``AssertionError`` raised inside
+    a Pydantic ``@field_validator``/``@model_validator(mode="before")`` as a
+    correctable validation failure (Pydantic itself only converts those two
+    into a ``ValidationError``). If such a validator raises anything else —
+    e.g. a bare ``KeyError`` — that is a bug in the tool's schema, not a
+    correctable model mistake, and is intentionally allowed to propagate out
+    of the whole node rather than being laundered into a ``ToolMessage``
+    feedback the model can't meaningfully act on. Stock ``ToolNode``'s
+    ``handle_tool_errors`` would instead turn it into an error result for
+    just that one call — write validators that only raise
+    ``ValueError``/``AssertionError`` if that softer, per-call behavior is
+    required.
 
     Args:
         tools: The tools available for execution — ``BaseTool`` instances or
@@ -299,7 +317,13 @@ class SaidexToolNode(Runnable[Any, Any]):
         for entry in message.invalid_tool_calls:
             raw = entry.get("args") or ""
             name = entry.get("name")
-            entry_id = entry.get("id")
+            # Normalized once here so the repair gate below (truthiness) and
+            # the id-less drop check further down (identity, `is None`) agree
+            # on what "no id" means — an un-normalized "" would pass the
+            # identity check but fail the truthiness check, reaching
+            # _feedback_message as ToolMessage(tool_call_id="") for an id
+            # that plan.answerable never actually flags as answerable-but-not.
+            entry_id = entry.get("id") or None
             repaired_args = (
                 _repair_raw_args(
                     raw,
@@ -427,7 +451,9 @@ class SaidexToolNode(Runnable[Any, Any]):
                 schema_hint = f"\nExpected arguments for '{name}': {fields}."
             content = (
                 f"The arguments of your call to tool '{name}' could not be parsed "
-                f"as JSON and the call was NOT executed.\n"
+                f"as a single JSON object and the call was NOT executed. Arguments "
+                f"must be a JSON object — a JSON list or a bare scalar value (e.g. "
+                f"a string or number) is not acceptable, even if it is valid JSON.\n"
                 f"Provider error: {plan.error_text}\n"
                 f"Raw arguments received:\n{(plan.raw_args or '')[:500]}\n"
                 f"{schema_hint}\n"
@@ -452,7 +478,8 @@ class SaidexToolNode(Runnable[Any, Any]):
 
         Rebuilds the ``tool_calls``/``invalid_tool_calls`` the message would
         carry after repair/validation and compares them structurally against
-        the original — an id-less invalid entry is dropped entirely (nothing
+        the original — an id-less entry, whether it originated in
+        ``tool_calls`` or ``invalid_tool_calls``, is dropped entirely (nothing
         can answer it, see ``_CallPlan.answerable``), while every other
         from-invalid, non-executable entry keeps its raw form so it still
         matches the feedback ``ToolMessage`` that answered it. Returning
@@ -463,7 +490,7 @@ class SaidexToolNode(Runnable[Any, Any]):
         """
         if not self._sanitize_messages or message.id is None:
             return None
-        tool_calls = [plan.call for plan in plans if not plan.from_invalid]
+        tool_calls = [plan.call for plan in plans if not plan.from_invalid and plan.answerable]
         tool_calls += [plan.call for plan in plans if plan.from_invalid and plan.executable]
         invalid_tool_calls = [
             plan.raw_entry

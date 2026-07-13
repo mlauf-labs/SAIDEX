@@ -37,6 +37,11 @@ class ToolArgs(BaseModel):
     parent_id: str | None = Field(default=None)
 
 
+class ToolArgsWithSchemaField(BaseModel):
+    name: str
+    schema: str
+
+
 def _tc(name: str, args: dict[str, Any], call_id: str = "call_1") -> dict[str, Any]:
     """Build a tool_call dict as LangChain returns them."""
     return {"name": name, "args": args, "id": call_id}
@@ -440,3 +445,27 @@ async def test_tool_invoke_arg_named_schema_no_longer_collides() -> None:
     data = json.loads(outcome.content)
     assert data["status"] == "ok"
     assert data["name"] == "foo"
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_declared_schema_field_flows_through() -> None:
+    """Sibling to test_tool_invoke_arg_named_schema_no_longer_collides (review
+    Finding 6): that test's ToolArgs does NOT declare a 'schema' field, so it
+    only proves pydantic's extra='ignore' silently drops an unknown key —
+    it never proves a genuinely declared 'schema' parameter actually reaches
+    the handler. Here ToolArgsWithSchemaField DOES declare 'schema', pinning
+    the real user-visible behavior: a tool whose args model has a 'schema'
+    field receives its value through Tool._invoke like any other field."""
+    tool = Tool(
+        name="lookup_table",
+        description="A test tool with a declared 'schema' field.",
+        parameters=ToolArgsWithSchemaField,
+        handler=_noop_handler,
+    )
+    outcome = await tool._invoke({"schema": "public", "name": "t"})
+    assert outcome.handler_error is None
+    assert "Invalid arguments" not in outcome.content
+    data = json.loads(outcome.content)
+    assert data["status"] == "ok"
+    assert data["schema"] == "public"
+    assert data["name"] == "t"

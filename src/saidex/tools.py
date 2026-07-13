@@ -97,9 +97,12 @@ class Tool:
         from .utils import create_instance_safe  # local import to avoid circular deps
 
         # LLM tool-call args are not guaranteed to be a mapping (double-encoded
-        # JSON parses to a str) and may collide with the callee's own parameter
-        # names — both would raise at the ``**`` boundary and crash the whole
-        # agent loop instead of feeding the model a correctable error.
+        # JSON parses to a str), which would raise at the ``**`` boundary and
+        # crash the whole agent loop instead of feeding the model a
+        # correctable error. create_instance_safe takes schema positional-only
+        # (see saidex.utils), so a field literally named 'schema' no longer
+        # collides with it; the TypeError guard below still covers the
+        # remaining raise-at-``**``-boundary case, args with non-string keys.
         if not isinstance(raw_args, dict):
             return _ToolOutcome(
                 f"Invalid arguments for tool '{self.name}': expected a JSON object, "
