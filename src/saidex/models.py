@@ -265,7 +265,11 @@ class ToolCallStats:
     Attributes:
         tool_name: Name of the tool the call targeted.
         tool_call_id: The call id from the model output, or ``None`` when the
-            provider did not assign one (some ``invalid_tool_calls`` entries).
+            provider did not assign one at all.  This can happen on entries
+            from either ``tool_calls`` or ``invalid_tool_calls`` (LangChain
+            types ``id`` as optional on both) — such a call cannot be answered
+            with a ``ToolMessage`` and is dropped rather than executed or
+            answered; see ``outcome="dropped"``.
         outcome: What ultimately happened — ``"executed"`` (ran, possibly after
             deterministic repair), ``"corrected"`` (ran after an LLM correction
             cycle), ``"feedback"`` (not run; a corrective ``ToolMessage`` was
@@ -275,9 +279,12 @@ class ToolCallStats:
         repaired: Whether the call was deterministically recovered from
             ``invalid_tool_calls`` (think-tag stripping / json-repair).
         prevalidated: Whether the args were validated against the tool's
-            Pydantic schema before execution.  ``False`` for unknown tool names
-            and tools with non-Pydantic (dict) schemas, which are passed through
-            to the executor unchanged.
+            Pydantic schema before execution.  ``False`` covers several
+            distinct cases with different consequences: an unknown tool name
+            or a tool with a non-Pydantic (dict) schema is passed through to
+            the executor unchanged, whereas an unrepairable malformed call or
+            a dropped id-less call is **not** passed through at all — see
+            ``outcome``.
         correction_retries: LLM attempts consumed by the correction cycle
             (``0`` unless ``on_invalid="correct"`` ran for this call).
         field_issues: Field-level validation problems observed before the

@@ -207,7 +207,8 @@ async def extract_data(
             :attr:`~saidex.ToolCallConfig.COMPATIBLE` for OpenAI-compatible
             gateways that reject those flags.  Ignored in
             :attr:`~saidex.ExtractionMode.JSON` mode.
-        callbacks: Optional LangChain callback handlers (or an existing callback manager).
+        callbacks: Optional LangChain callback handlers (or an existing callback
+            manager), e.g. for tracing with LangSmith or Langfuse.
         fallback_llm_model: Optional second model tried when the primary model
             fails all retries.  Typically a larger or more capable model.
         max_primary_retries: Maximum validation-retry attempts for the primary
