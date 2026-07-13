@@ -160,6 +160,16 @@ class SaidexToolNode(Runnable[Any, Any]):
     ``ValueError``/``AssertionError`` if that softer, per-call behavior is
     required.
 
+    **The correction cycle's retry budget is validation-only.**
+    ``max_correction_retries`` bounds LLM *validation* attempts, but
+    correction LLM calls do not perform network-level (transport) retries —
+    the cycle uses a zero-retry :class:`~saidex.retry.RetryConfig` so a
+    failing correction degrades deterministically instead of retrying
+    silently on top of its own retry budget. A transient provider error
+    (e.g. a 429) on a correction call therefore does not retry at the
+    transport level either: it degrades straight to the ``"feedback"``
+    policy for that call rather than crashing the node.
+
     Args:
         tools: The tools available for execution — ``BaseTool`` instances or
             plain callables, exactly as accepted by the stock ``ToolNode``.
@@ -385,16 +395,34 @@ class SaidexToolNode(Runnable[Any, Any]):
             + "Return the corrected tool arguments. Preserve the original intent; "
             "change only what is needed to satisfy the schema."
         )
-        instance, stats = await extract_data(
-            self._correction_model,
-            schema,
-            [HumanMessage(content=prompt)],
-            mode=self._correction_mode,
-            max_primary_retries=self._max_correction_retries,
-            retry_config=_NO_NETWORK_RETRY,
-            callbacks=callbacks,
-            _notify_observers=False,
-        )
+        try:
+            instance, stats = await extract_data(
+                self._correction_model,
+                schema,
+                [HumanMessage(content=prompt)],
+                mode=self._correction_mode,
+                max_primary_retries=self._max_correction_retries,
+                retry_config=_NO_NETWORK_RETRY,
+                callbacks=callbacks,
+                _notify_observers=False,
+            )
+        except Exception as exc:
+            # extract_data degrades most failures to (None, stats) internally,
+            # but a model that rejects tool binding outright (e.g. bind_tools
+            # raising NotImplementedError for a chat model without tool-calling
+            # support — exactly the case correction_mode=JSON exists for) is
+            # only guarded for TypeError inside extractor._try_with_model and
+            # otherwise propagates. A correction failure must never crash the
+            # node, so catch broadly here and fall through to the feedback
+            # policy — but Exception, not BaseException, so cancellation
+            # (asyncio.CancelledError) and KeyboardInterrupt still propagate.
+            logger.warning(
+                "SaidexToolNode: correction cycle raised for tool call %r (id=%r): %s",
+                name,
+                plan.call.get("id"),
+                exc,
+            )
+            return
         plan.correction_retries = stats.primary_retries
         if instance is None:
             logger.warning(

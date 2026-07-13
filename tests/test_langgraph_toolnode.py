@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from typing import Annotated, Any
+from unittest.mock import MagicMock
 
 import pytest
 
 pytest.importorskip("langgraph")
 
+from langchain_core.callbacks.base import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage  # noqa: E402
 from langchain_core.tools import InjectedToolCallId, tool  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
@@ -941,6 +943,10 @@ async def test_correct_policy_recovers_unparseable_invalid_call() -> None:
     updated = _ai_of(result)
     assert updated is not None
     assert updated.invalid_tool_calls == []
+    # Finding 4: the corrected args must actually land in tool_calls, not
+    # just vanish from invalid_tool_calls.
+    assert updated.tool_calls[0]["id"] == "c1"
+    assert updated.tool_calls[0]["args"] == {"a": 1, "b": 9}
 
 
 @pytest.mark.asyncio
@@ -967,6 +973,11 @@ async def test_correct_policy_skips_valid_calls() -> None:
     result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
     assert _tool_messages(result)[0].content == "7"
     correction.bind_tools.assert_not_called()
+    # Finding 3: bind_tools.assert_not_called() alone is only meaningful while
+    # correction_mode defaults to TOOL_CALLING — in JSON mode extract_data
+    # calls llm.ainvoke directly and that assertion would pass vacuously.
+    # Assert ainvoke was skipped too, so this test holds under either mode.
+    correction.ainvoke.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -988,6 +999,77 @@ async def test_correct_policy_does_not_emit_extraction_event() -> None:
     finally:
         sub.unsubscribe()
     assert events == []
+
+
+@pytest.mark.asyncio
+async def test_correct_policy_survives_bind_tools_raising_not_implemented() -> None:
+    """Blocker (Finding 1): BaseChatModel.bind_tools raises NotImplementedError
+    for chat models that don't support tool calling — exactly the case the
+    class docstring's correction_mode note anticipates ("use JSON for models
+    without tool calling"). With the default correction_mode=TOOL_CALLING and
+    such a model, extractor._bind_schema_tool's plain
+    ``llm_model.bind_tools(...)`` call is only guarded for TypeError inside
+    extractor._try_with_model, so NotImplementedError escapes _try_with_model,
+    is re-raised by extract_data's `except BaseException: raise`, and without
+    a try/except around the extract_data(...) call in _correct_plan would
+    propagate out of _correct_plan/_arun and kill the graph node — directly
+    contradicting "the graph must never crash because correction failed."
+    Must instead degrade to the normal feedback ToolMessage, execute nothing,
+    and never raise out of the node."""
+    correction = MagicMock()
+    correction.bind_tools = MagicMock(side_effect=NotImplementedError("no tool calling support"))
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
+    node = SaidexToolNode([add], on_invalid="correct", correction_model=correction)
+
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert tool_message.tool_call_id == "c1"
+    assert "was NOT executed" in str(tool_message.content)
+    assert EXECUTED == []
+
+
+class _RecordingCorrectionHandler(BaseCallbackHandler):
+    """Minimal sync handler recording chain-run events for Finding 2's test."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, Any]] = []
+
+    def on_chain_start(
+        self,
+        serialized: dict[str, Any],
+        inputs: dict[str, Any],
+        *,
+        run_id: Any,
+        parent_run_id: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        self.events.append(("chain_start", kwargs.get("name")))
+
+    def on_chain_end(self, outputs: Any, **kwargs: Any) -> None:
+        self.events.append(("chain_end", outputs))
+
+
+@pytest.mark.asyncio
+async def test_correct_policy_forwards_config_callbacks_to_correction_cycle() -> None:
+    """Minor (Finding 2): _correct_plan pulls callbacks off the node's
+    RunnableConfig and passes them to extract_data(callbacks=...) so
+    correction LLM calls nest under the node's tracing span (tracing/
+    Langfuse). Nothing previously asserted that wiring actually fires."""
+    handler = _RecordingCorrectionHandler()
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")], msg_id="ai-9")]}
+    node = SaidexToolNode(
+        [add],
+        on_invalid="correct",
+        correction_model=_correction_llm([{"a": 5, "b": 2}]),
+    )
+
+    result = await node.ainvoke(state, config={"callbacks": [handler]}, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result)[0].content == "7"
+    assert ("chain_start", "saidex.extract_data") in handler.events
+    assert any(name == "chain_end" for name, _ in handler.events)
 
 
 @pytest.mark.asyncio
