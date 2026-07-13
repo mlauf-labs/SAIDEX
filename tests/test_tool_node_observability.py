@@ -6,7 +6,18 @@ importable from core `saidex` without the extra installed.
 
 from __future__ import annotations
 
-from saidex import FieldIssue, ToolCallStats, ToolNodeEvent, ToolNodeStats
+import pytest
+
+from saidex import (
+    FieldIssue,
+    ToolCallStats,
+    ToolNodeEvent,
+    ToolNodeStats,
+    collect_stats,
+    on_extraction,
+    on_tool_node,
+)
+from saidex.observability import dispatch_tool_node_event
 
 # ---------------------------------------------------------------------------
 # Dataclass shape
@@ -55,3 +66,67 @@ def test_tool_node_event_carries_stats() -> None:
     event = ToolNodeEvent(node_name="tools", stats=stats)
     assert event.node_name == "tools"
     assert event.stats is stats
+
+
+# ---------------------------------------------------------------------------
+# Sink + listener plumbing
+# ---------------------------------------------------------------------------
+
+
+def _event() -> ToolNodeEvent:
+    return ToolNodeEvent(
+        node_name="tools",
+        stats=ToolNodeStats(
+            calls=(ToolCallStats(tool_name="add", tool_call_id="c1", outcome="executed"),)
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_collect_stats_captures_tool_node_stats() -> None:
+    async with collect_stats() as sink:
+        await dispatch_tool_node_event(_event())
+    assert len(sink) == 1
+    stats = sink.all()[0]
+    assert isinstance(stats, ToolNodeStats)
+    assert stats.executed_count == 1
+
+
+@pytest.mark.asyncio
+async def test_on_tool_node_listener_fires_and_unsubscribes() -> None:
+    received: list[ToolNodeEvent] = []
+    sub = on_tool_node(received.append)
+    try:
+        await dispatch_tool_node_event(_event())
+    finally:
+        sub.unsubscribe()
+    await dispatch_tool_node_event(_event())
+    assert len(received) == 1
+    assert received[0].node_name == "tools"
+
+
+@pytest.mark.asyncio
+async def test_on_extraction_listeners_do_not_receive_tool_events() -> None:
+    received: list[object] = []
+    sub = on_extraction(received.append)
+    try:
+        await dispatch_tool_node_event(_event())
+    finally:
+        sub.unsubscribe()
+    assert received == []
+
+
+@pytest.mark.asyncio
+async def test_failing_tool_node_listener_is_suppressed() -> None:
+    def boom(event: ToolNodeEvent) -> None:
+        raise RuntimeError("listener bug")
+
+    received: list[ToolNodeEvent] = []
+    sub_bad = on_tool_node(boom)
+    sub_ok = on_tool_node(received.append)
+    try:
+        await dispatch_tool_node_event(_event())
+    finally:
+        sub_bad.unsubscribe()
+        sub_ok.unsubscribe()
+    assert len(received) == 1
