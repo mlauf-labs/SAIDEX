@@ -42,6 +42,7 @@ Extract validated [Pydantic](https://docs.pydantic.dev/) models from LLM respons
 | Network errors / rate limits mid-call | Built-in configurable retry with exponential back-off |
 | Your model doesn't support tool calling | Switch to `ExtractionMode.JSON` — works with any chat model |
 | Debugging is hard | Structured `ExtractDataStats` return value — know exactly how many retries each phase needed |
+| LangGraph agents trip over malformed tool calls | Swap in `SaidexToolNode` — a drop-in `ToolNode` that repairs, validates and corrects tool calls before execution |
 
 ---
 
@@ -323,6 +324,33 @@ stats.tool_calls          # int  — helper-tool executions
 stats.validation_retries  # int  — final answers that failed validation
 stats.fallback_used       # bool — was the fallback model invoked?
 ```
+
+---
+
+## LangGraph integration — `SaidexToolNode`
+
+Building an agent with [LangGraph](https://langchain-ai.github.io/langgraph/)
+instead? `SaidexToolNode` is a drop-in replacement for `langgraph.prebuilt.ToolNode`
+that guarantees **every tool-call id receives exactly one `ToolMessage`** — the
+stock node silently ignores malformed tool calls, which leaves the next model
+turn with an unanswered tool-call id that OpenAI-compatible providers reject.
+
+```bash
+pip install "saidex[langgraph]"
+```
+
+```python
+from saidex.langgraph import SaidexToolNode
+
+graph.add_node("tools", SaidexToolNode(tools))   # instead of ToolNode(tools)
+```
+
+It repairs malformed JSON, validates arguments against each tool's Pydantic
+schema before execution, and — by policy — answers bad calls with structured
+field-level feedback, runs a bounded LLM correction cycle, or fails fast.
+
+> Full guide: [`docs/langgraph-toolnode.md`](docs/langgraph-toolnode.md) —
+> runnable example: [`examples/16_langgraph_toolnode.py`](examples/16_langgraph_toolnode.py)
 
 ---
 
