@@ -16,6 +16,7 @@ _MAX_RECEIVED_LEN = 120
 
 def create_instance_safe(
     schema: type[MODEL_T],
+    /,
     **data: Any,
 ) -> tuple[MODEL_T | None, str | None]:
     """Instantiate *schema* from *data* without raising on validation errors.
@@ -26,7 +27,9 @@ def create_instance_safe(
     LLM as correction guidance.
 
     Args:
-        schema: The Pydantic model class to instantiate.
+        schema: The Pydantic model class to instantiate. Positional-only so a
+            model field literally named ``schema`` can still be passed in
+            ``**data`` without colliding with this parameter.
         **data: Keyword arguments forwarded to the model constructor.
 
     Returns:
@@ -38,6 +41,7 @@ def create_instance_safe(
 
 def create_instance_with_issues(
     schema: type[MODEL_T],
+    /,
     **data: Any,
 ) -> tuple[MODEL_T | None, list[FieldIssue], str | None]:
     """Like :func:`create_instance_safe` but also return structured issues.
@@ -49,7 +53,9 @@ def create_instance_with_issues(
     the retry loop) sets the real attempt index.
 
     Args:
-        schema: The Pydantic model class to instantiate.
+        schema: The Pydantic model class to instantiate. Positional-only so a
+            model field literally named ``schema`` can still be passed in
+            ``**data`` without colliding with this parameter.
         **data: Keyword arguments forwarded to the model constructor.
 
     Returns:

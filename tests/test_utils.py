@@ -4,7 +4,7 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
-from saidex.utils import create_instance_safe
+from saidex.utils import create_instance_safe, create_instance_with_issues
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -43,6 +43,19 @@ class WithNested(BaseModel):
     items: list[Nested]
 
 
+class WithSchemaField(BaseModel):
+    """A model whose field is literally named ``schema`` (regression, issue: schema= collision).
+
+    Pydantic's "shadows an attribute in parent BaseModel" UserWarning is
+    expected and deliberately not fixed here — the shadowing is intentional
+    (real tools have "schema" args) and harmless; it is suppressed narrowly
+    in pyproject.toml's [tool.pytest.ini_options] filterwarnings.
+    """
+
+    schema: str
+    table: str
+
+
 # ---------------------------------------------------------------------------
 # Success cases
 # ---------------------------------------------------------------------------
@@ -78,6 +91,25 @@ def test_valid_with_constraints() -> None:
     instance, error = create_instance_safe(WithConstraints, score=50)
     assert instance is not None
     assert error is None
+
+
+def test_field_named_schema_via_create_instance_safe() -> None:
+    """A model field literally named 'schema' must not collide with the schema parameter."""
+    instance, error = create_instance_safe(WithSchemaField, schema="public", table="t")
+    assert error is None
+    assert instance is not None
+    assert instance.schema == "public"
+    assert instance.table == "t"
+
+
+def test_field_named_schema_via_create_instance_with_issues() -> None:
+    instance, issues, error = create_instance_with_issues(
+        WithSchemaField, schema="public", table="t"
+    )
+    assert error is None
+    assert issues == []
+    assert instance is not None
+    assert instance.schema == "public"
 
 
 # ---------------------------------------------------------------------------

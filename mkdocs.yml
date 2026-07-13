@@ -62,6 +62,8 @@ nav:
       - Validators: validators.md
       - External Validators: external-validators.md
       - Source Grounding: source-grounding.md
+  - Integrations:
+      - LangGraph ToolNode: langgraph-toolnode.md
 
 markdown_extensions:
   - pymdownx.highlight:

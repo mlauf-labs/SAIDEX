@@ -29,6 +29,7 @@ from langchain_core.callbacks import (
     AsyncCallbackManagerForChainRun,
     AsyncCallbackManagerForToolRun,
 )
+from langchain_core.callbacks.base import Callbacks
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ class _ChainRun:
     @classmethod
     async def start(
         cls,
-        callbacks: list[Any] | None,
+        callbacks: Callbacks,
         *,
         name: str,
         inputs: dict[str, Any],

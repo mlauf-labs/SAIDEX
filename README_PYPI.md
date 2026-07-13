@@ -60,6 +60,7 @@ asyncio.run(main())
 | **Agentic tool loop** | Give the LLM your own tools (lookups, API calls) — it calls them freely, then delivers a validated final answer |
 | **Multimodal** | Pass images via standard LangChain messages to any vision-capable model |
 | **LangChain-native** | Plugs into any LangChain chat model; supports callbacks (Langfuse, LangSmith, …) |
+| **LangGraph `SaidexToolNode`** | Drop-in `ToolNode` replacement (`pip install "saidex[langgraph]"`) that repairs, validates and corrects tool calls before execution |
 
 ## Links
 

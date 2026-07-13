@@ -14,7 +14,8 @@
     "Use ExtractionMode.JSON for models that do not support tool calling",
     "When a provider is behind an OpenAI-compatible gateway (Kimi/Moonshot, Qwen, DeepSeek) that rejects strict / forced tool_choice / parallel_tool_calls with an HTTP 400, pass tool_config=ToolCallConfig.COMPATIBLE — SAIDEX also relaxes those flags automatically once per attempt (disable with ToolCallConfig(auto_relax=False))",
     "To reject hallucinated values, mark fields with Grounded() (Annotated marker) or GroundedField() so the extracted value is verified against the source text",
-    "Pass LangChain callback handlers via callbacks= to trace runs: each extraction becomes one chain-run span with nested LLM generations and, in the agent loop, per-tool spans; enable capture_source_text=True only if exporting the input text to the tracing backend is acceptable"
+    "Pass LangChain callback handlers via callbacks= to trace runs: each extraction becomes one chain-run span with nested LLM generations and, in the agent loop, per-tool spans; enable capture_source_text=True only if exporting the input text to the tracing backend is acceptable",
+    "In LangGraph agents, use saidex.langgraph.SaidexToolNode (extra: saidex[langgraph]) as a drop-in for langgraph.prebuilt.ToolNode — it repairs invalid_tool_calls, validates args against the tool schema, and feeds structured errors back to the model"
   ],
   "previousVersions": [
     {
