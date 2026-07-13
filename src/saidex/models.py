@@ -258,6 +258,11 @@ class ExtractionEvent:
     source_text: str | None = None
 
 
+#: The four outcomes a SaidexToolNode-processed tool call can have. See
+#: :attr:`ToolCallStats.outcome` for what each value means.
+ToolCallOutcome = Literal["executed", "corrected", "feedback", "dropped"]
+
+
 @dataclass(frozen=True)
 class ToolCallStats:
     """Outcome of one tool call processed by a ``SaidexToolNode``.
@@ -293,7 +298,7 @@ class ToolCallStats:
 
     tool_name: str
     tool_call_id: str | None
-    outcome: str
+    outcome: ToolCallOutcome
     repaired: bool = False
     prevalidated: bool = True
     correction_retries: int = 0

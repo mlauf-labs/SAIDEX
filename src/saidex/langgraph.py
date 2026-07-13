@@ -35,7 +35,14 @@ from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as _as_tool
 
 from .extractor import _strip_code_fences, _strip_thinking_tags, extract_data
-from .models import ExtractionMode, FieldIssue, ToolCallStats, ToolNodeEvent, ToolNodeStats
+from .models import (
+    ExtractionMode,
+    FieldIssue,
+    ToolCallOutcome,
+    ToolCallStats,
+    ToolNodeEvent,
+    ToolNodeStats,
+)
 from .observability import dispatch_tool_node_event
 from .retry import RetryConfig
 from .sync import _run_sync
@@ -80,7 +87,12 @@ class _CallPlan:
     error_text: str | None = None
     issues: tuple[FieldIssue, ...] = ()
     executable: bool = False
-    outcome: str = ""
+    #: ``""`` is the pre-dispatch default; the dispatch loop in ``_arun``
+    #: finalizes every plan to one of the four real ``ToolCallOutcome``
+    #: values before stats are built — see ``_finalized_outcome``, which
+    #: turns that invariant into a type-checked narrowing at the point
+    #: ``ToolCallStats`` is constructed.
+    outcome: ToolCallOutcome | Literal[""] = ""
     correction_retries: int = 0
     #: False when the call carries no ``id`` at all. A ``ToolMessage`` requires
     #: a ``tool_call_id``, so an id-less call has no way to be answered — it
@@ -363,7 +375,7 @@ class SaidexToolNode(Runnable[Any, Any]):
                 ToolCallStats(
                     tool_name=str(plan.call.get("name") or ""),
                     tool_call_id=plan.call.get("id"),
-                    outcome=plan.outcome,
+                    outcome=_finalized_outcome(plan.outcome),
                     repaired=plan.repaired,
                     prevalidated=plan.prevalidated,
                     correction_retries=plan.correction_retries,
@@ -693,6 +705,21 @@ def _build_registry(
             continue
         registry[base.name] = base
     return registry
+
+
+def _finalized_outcome(outcome: ToolCallOutcome | Literal[""]) -> ToolCallOutcome:
+    """Narrow a finalized ``_CallPlan.outcome`` to the public ``ToolCallOutcome``.
+
+    ``""`` only ever exists as ``_CallPlan.outcome``'s pre-dispatch default —
+    the dispatch loop in ``_arun`` sets every plan's outcome to one of the
+    four real values before stats are built (see the loop right after the
+    ``on_invalid == "correct"`` branch). This turns that invariant into an
+    explicit, type-checked guarantee instead of silently letting an
+    unfinalized ``""`` leak into the public ``ToolCallStats`` API.
+    """
+    if not outcome:
+        raise AssertionError("SaidexToolNode: _CallPlan.outcome was never finalized")
+    return outcome
 
 
 def _extract_messages(input: Any, messages_key: str) -> tuple[list[BaseMessage], str]:
