@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 if TYPE_CHECKING:
     from langchain_core.messages.base import BaseMessage
@@ -28,6 +28,60 @@ class ExtractionMode(str, Enum):
 
     TOOL_CALLING = "tool_calling"
     JSON = "json"
+
+
+@dataclass(frozen=True)
+class ToolCallConfig:
+    """How the schema tool is bound in :attr:`ExtractionMode.TOOL_CALLING`.
+
+    The defaults reproduce OpenAI's most reliable setup: force the model to call
+    the schema tool, disable parallel calls, and switch on strict structured
+    outputs.  Several OpenAI-*compatible* gateways (Moonshot/Kimi, some
+    Qwen/DeepSeek deployments) reject one or more of these with an HTTP 400, so
+    every flag can be overridden — or dropped from the request entirely.
+
+    ``None`` means **omit the keyword argument**, which is not the same as
+    sending ``False``: some gateways already fail on the mere presence of
+    ``strict``, while others accept the parameter but refuse the value ``True``.
+
+    Ready-made presets:
+
+    - :attr:`OPENAI` — the defaults below.
+    - :attr:`COMPATIBLE` — ``tool_choice="auto"`` and no ``strict`` /
+      ``parallel_tool_calls`` at all; the safe setting for limited gateways.
+
+    Attributes:
+        tool_choice: ``"forced"`` sends the schema tool's name (the model *must*
+            call it), ``"auto"`` lets the model decide, ``None`` omits the
+            keyword argument.
+        strict: Value for the ``strict`` keyword (OpenAI structured outputs), or
+            ``None`` to omit it.
+        parallel_tool_calls: Value for the ``parallel_tool_calls`` keyword, or
+            ``None`` to omit it.
+        auto_relax: When ``True`` (default) and the provider rejects the bound
+            flags — an HTTP 400 naming one of them, or a ``TypeError`` from a
+            ``bind_tools`` implementation that does not accept them — the schema
+            tool is re-bound **once** with :attr:`COMPATIBLE` and the attempt
+            continues, without consuming a validation retry.
+    """
+
+    tool_choice: Literal["forced", "auto"] | None = "forced"
+    strict: bool | None = True
+    parallel_tool_calls: bool | None = False
+    auto_relax: bool = True
+
+    #: Default flags — forced ``tool_choice``, ``strict=True``, no parallel calls.
+    OPENAI: ClassVar[ToolCallConfig]
+    #: Relaxed flags for OpenAI-compatible gateways with limited support.
+    COMPATIBLE: ClassVar[ToolCallConfig]
+
+
+ToolCallConfig.OPENAI = ToolCallConfig()
+ToolCallConfig.COMPATIBLE = ToolCallConfig(
+    tool_choice="auto",
+    strict=None,
+    parallel_tool_calls=None,
+)
 
 
 @dataclass(frozen=True)

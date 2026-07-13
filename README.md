@@ -192,6 +192,28 @@ Both modes share the same validation, error-feedback, retry, and fallback
 behaviour. JSON mode tolerates markdown code fences and stray text around the
 JSON object. See **[Extraction Modes](docs/extraction-modes.md)** for details.
 
+### OpenAI-compatible gateways — `ToolCallConfig`
+
+Tool-calling mode binds the schema with OpenAI's most reliable flag set: a
+forced `tool_choice`, `strict=True`, and `parallel_tool_calls=False`. Some
+OpenAI-*compatible* gateways (Kimi/Moonshot, some Qwen or DeepSeek deployments)
+reject those flags with an HTTP 400. SAIDEX notices such a rejection and
+re-binds the tool **once** with relaxed flags — no configuration needed, and no
+validation retry consumed. You can also state the flags up front:
+
+```python
+from saidex import ToolCallConfig, extract_data_from_text
+
+result, stats = await extract_data_from_text(
+    llm, MySchema, text,
+    tool_config=ToolCallConfig.COMPATIBLE,   # tool_choice="auto", no strict/parallel flags
+)
+```
+
+Every flag is individually settable; `None` omits the keyword argument entirely
+(which differs from sending `false`). See
+**[Extraction Modes](docs/extraction-modes.md#openai-compatible-gateways-toolcallconfig)**.
+
 ### Retry strategy
 
 ```
@@ -844,6 +866,7 @@ source-aware checks the same way.
 | `schema` | `type[ModelT]` | — | Pydantic `BaseModel` subclass |
 | `messages` | `list[BaseMessage]` | — | Conversation context |
 | `mode` | `ExtractionMode` | `TOOL_CALLING` | `TOOL_CALLING` or `JSON` (no tool calling) |
+| `tool_config` | `ToolCallConfig \| None` | `ToolCallConfig.OPENAI` | Which flags `bind_tools` sends in tool-calling mode ([docs](docs/extraction-modes.md#openai-compatible-gateways-toolcallconfig)) |
 | `callbacks` | `list[Any] \| None` | `None` | LangChain callback handlers |
 | `fallback_llm_model` | `Any \| None` | `None` | Second model tried on primary failure |
 | `max_primary_retries` | `int` | `3` | Validation retries for primary model |
@@ -871,6 +894,22 @@ All parameters of `extract_data` plus:
 | --- | --- |
 | `ExtractionMode.TOOL_CALLING` | Bind the schema as a tool and force the model to call it. Requires a tool-calling-capable model. **Default.** |
 | `ExtractionMode.JSON` | Inject the JSON Schema into the prompt and parse the model's raw JSON reply. Works with any chat model. |
+
+### `ToolCallConfig`
+
+Controls the keyword arguments sent to `bind_tools` in tool-calling mode. `None`
+means the keyword argument is **omitted from the request** — not sent as `false`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `tool_choice` | `"forced" \| "auto" \| None` | `"forced"` | Force the schema tool by name, let the model choose, or send no `tool_choice` |
+| `strict` | `bool \| None` | `True` | Value for `strict` (OpenAI structured outputs), or `None` to omit |
+| `parallel_tool_calls` | `bool \| None` | `False` | Value for `parallel_tool_calls`, or `None` to omit |
+| `auto_relax` | `bool` | `True` | On a flag rejection (HTTP 400 or `TypeError`), re-bind once with `COMPATIBLE` instead of failing |
+
+Presets: `ToolCallConfig.OPENAI` (the defaults above) and
+`ToolCallConfig.COMPATIBLE` (`tool_choice="auto"`, no `strict`, no
+`parallel_tool_calls`).
 
 ---
 

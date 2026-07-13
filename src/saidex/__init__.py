@@ -29,6 +29,7 @@ Public API
         ExtractorRunStats,
         # Shared
         ExtractionMode,
+        ToolCallConfig,
         ExtractDataStats,
         FieldIssue,
         ExtractionEvent,
@@ -98,6 +99,7 @@ from .models import (
     ExtractionMode,
     ExtractorRunStats,
     FieldIssue,
+    ToolCallConfig,
 )
 from .observability import (
     ExtractionListener,
@@ -160,6 +162,7 @@ __all__ = [
     "ExtractorRunStats",
     # shared
     "ExtractionMode",
+    "ToolCallConfig",
     "ExtractDataStats",
     "FieldIssue",
     "ExtractionEvent",
