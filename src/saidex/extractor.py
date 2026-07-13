@@ -13,6 +13,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 from json_repair import repair_json
+from langchain_core.callbacks.base import Callbacks
 from langchain_core.messages.base import BaseMessage
 from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.system import SystemMessage
@@ -150,7 +151,7 @@ async def extract_data(
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
     tool_config: ToolCallConfig | None = None,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
@@ -206,8 +207,7 @@ async def extract_data(
             :attr:`~saidex.ToolCallConfig.COMPATIBLE` for OpenAI-compatible
             gateways that reject those flags.  Ignored in
             :attr:`~saidex.ExtractionMode.JSON` mode.
-        callbacks: Optional list of LangChain callback handlers (e.g. for
-            tracing with LangSmith or Langfuse).
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional second model tried when the primary model
             fails all retries.  Typically a larger or more capable model.
         max_primary_retries: Maximum validation-retry attempts for the primary
@@ -430,7 +430,7 @@ async def extract_data_from_text(
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
     tool_config: ToolCallConfig | None = None,
     system_prompt: str | None = None,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
@@ -455,7 +455,7 @@ async def extract_data_from_text(
             :func:`extract_data`.
         system_prompt: Optional system instruction prepended to the message
             list.  When omitted a generic extraction prompt is used.
-        callbacks: Optional LangChain callback handlers.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
@@ -541,7 +541,7 @@ async def extract_data_list(
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
     tool_config: ToolCallConfig | None = None,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
@@ -573,7 +573,7 @@ async def extract_data_list(
             :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
         tool_config: Tool-binding flags for tool-calling mode — see
             :func:`extract_data`.
-        callbacks: Optional LangChain callback handlers.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
@@ -684,7 +684,7 @@ async def extract_data_list_from_text(
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
     tool_config: ToolCallConfig | None = None,
     system_prompt: str | None = None,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
@@ -711,7 +711,7 @@ async def extract_data_list_from_text(
             :func:`extract_data`.
         system_prompt: Optional system instruction prepended to the message
             list.  When omitted a generic list-extraction prompt is used.
-        callbacks: Optional LangChain callback handlers.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
@@ -772,7 +772,7 @@ async def extract_data_with_tools(
     tools: list[Tool],
     final_answer_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
     system_prompt: str | None = None,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_iterations: int = 12,
     max_validation_retries: int = 3,
@@ -804,7 +804,7 @@ async def extract_data_with_tools(
             tools and emits plain text, the content is parsed as JSON.
         system_prompt: Optional system instruction.  A generic instruction is
             used when omitted.
-        callbacks: Optional LangChain callback handlers.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model tried when the primary
             exhausts its iteration budget.
         max_iterations: Maximum LLM invocations per model attempt (default 12).
@@ -867,7 +867,7 @@ async def run_extractor_agent(
     *,
     tools: list[Tool],
     final_answer_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_iterations: int = 12,
     max_validation_retries: int = 3,
