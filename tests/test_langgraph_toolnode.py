@@ -17,7 +17,9 @@ from langgraph.runtime import Runtime  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from saidex.langgraph import SaidexToolNode  # noqa: E402
+from saidex import on_extraction  # noqa: E402
+from saidex.langgraph import SaidexToolNode, ToolCallValidationError  # noqa: E402
+from tests._mock_llm import make_llm, make_response  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -887,3 +889,168 @@ async def test_command_tool_mixed_with_feedback_respects_list_shape() -> None:
     assert list_updates[0][0].tool_call_id == "c2"
     assert list_updates[0][0].status == "error"
     assert EXECUTED == ["move_list_state:x"]
+
+
+# ---------------------------------------------------------------------------
+# correct + raise policies (Task 7)
+# ---------------------------------------------------------------------------
+
+
+def _correction_llm(args_sequence: list[dict[str, Any] | None]) -> Any:
+    """Mock correction model: each entry is a tool-call args dict or None (invalid)."""
+    responses = []
+    for args in args_sequence:
+        if args is None:
+            responses.append(make_response(invalid=True))
+        else:
+            responses.append(
+                make_response(tool_calls=[{"args": args, "name": "add", "id": "corr"}])
+            )
+    return make_llm(responses)
+
+
+@pytest.mark.asyncio
+async def test_correct_policy_fixes_and_executes() -> None:
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")], msg_id="ai-9")]}
+    node = SaidexToolNode(
+        [add],
+        on_invalid="correct",
+        correction_model=_correction_llm([{"a": 5, "b": 2}]),
+    )
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.content == "7"
+    assert tool_message.tool_call_id == "c1"
+    assert EXECUTED == ["add:5+2"]
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.tool_calls[0]["args"] == {"a": 5, "b": 2}
+
+
+@pytest.mark.asyncio
+async def test_correct_policy_recovers_unparseable_invalid_call() -> None:
+    state = {"messages": [_ai(invalid=[_invalid("add", "garbage text", "c1")], msg_id="ai-9")]}
+    node = SaidexToolNode(
+        [add],
+        on_invalid="correct",
+        correction_model=_correction_llm([{"a": 1, "b": 9}]),
+    )
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].content == "10"
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.invalid_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_correct_policy_falls_back_to_feedback() -> None:
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
+    node = SaidexToolNode(
+        [add],
+        on_invalid="correct",
+        correction_model=_correction_llm([None, None]),
+        max_correction_retries=2,
+    )
+    result = await node.ainvoke(state)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert "was NOT executed" in str(tool_message.content)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_correct_policy_skips_valid_calls() -> None:
+    correction = _correction_llm([{"a": 0, "b": 0}])
+    state = {"messages": [_ai([_call("add", {"a": 3, "b": 4}, "c1")])]}
+    node = SaidexToolNode([add], on_invalid="correct", correction_model=correction)
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].content == "7"
+    correction.bind_tools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_correct_policy_does_not_emit_extraction_event() -> None:
+    """The correction cycle is a private sub-extraction: Task 8 reports it via
+    ToolCallStats.correction_retries, not through the normal extraction-observer
+    channel — no ExtractionEvent may escape it (extract_data is called with
+    _notify_observers=False)."""
+    events: list[Any] = []
+    sub = on_extraction(events.append)
+    try:
+        state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
+        node = SaidexToolNode(
+            [add],
+            on_invalid="correct",
+            correction_model=_correction_llm([{"a": 5, "b": 2}]),
+        )
+        await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    finally:
+        sub.unsubscribe()
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_raise_policy_fails_fast_without_executing() -> None:
+    state = {
+        "messages": [
+            _ai(
+                [
+                    _call("add", {"a": 1, "b": 2}, "ok-1"),
+                    _call("add", {"a": "bad", "b": 2}, "bad-1"),
+                ]
+            )
+        ]
+    }
+    node = SaidexToolNode([add], on_invalid="raise")
+    with pytest.raises(ToolCallValidationError) as excinfo:
+        await node.ainvoke(state)
+    assert EXECUTED == []
+    assert excinfo.value.failures[0][0] == "add"
+    assert excinfo.value.failures[0][1] == "bad-1"
+
+
+@pytest.mark.asyncio
+async def test_raise_policy_passes_when_all_valid() -> None:
+    state = {"messages": [_ai([_call("add", {"a": 1, "b": 2}, "c1")])]}
+    result = await SaidexToolNode([add], on_invalid="raise").ainvoke(
+        state, runtime=_NO_GRAPH_RUNTIME
+    )
+    assert _tool_messages(result)[0].content == "3"
+
+
+# ---------------------------------------------------------------------------
+# Task 6 review leftover (Finding a): id="" must be dropped on the tool_calls
+# side too, not only invalid_tool_calls — the drop-check must be falsy-based
+# so both sides agree on what "no id" means.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_empty_string_id_tool_calls_entry_dropped_not_executed_not_retained(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Leftover from the Task 6 review: the drop-check compared ``id`` by
+    identity (``is None``) while only the invalid_tool_calls-side construction
+    normalized ``id=""`` to ``None`` — so a ``tool_calls`` entry with ``id=""``
+    slipped past the drop-check as answerable and could reach
+    _feedback_message as an orphan ``ToolMessage(tool_call_id="")`` answering
+    no real call. The drop-check is now falsy-based so both sides agree."""
+    caplog.set_level("WARNING", logger="saidex.langgraph")
+    state = {
+        "messages": [
+            _ai(
+                [{"name": "add", "args": {"a": "bad", "b": 2}, "id": "", "type": "tool_call"}],
+                msg_id="ai-1",
+            )
+        ]
+    }
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result) == []
+    assert EXECUTED == []
+    assert any("no id" in record.message.lower() for record in caplog.records)
+
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.tool_calls == []
