@@ -1473,7 +1473,13 @@ parser is tolerant of common deviations:</p>
 <li><strong>Surrounding text</strong> — if the content has stray text around the object, the
   outermost <code>{ ... }</code> block is isolated and parsed.</li>
 <li><strong>Chunked / multimodal content</strong> — list-style content is concatenated from
-  its text parts before parsing.</li>
+  its text parts before parsing.  Which blocks count is decided by the <code>text</code>
+  key, not by the block's <code>type</code> name, so provider-specific names all work:
+  LangChain's <code>{"type": "text", …}</code> and the Responses API's
+  <code>{"type": "output_text", …}</code> alike.</li>
+<li><strong>Reasoning blocks</strong> — <code>reasoning</code> / <code>thinking</code> blocks are skipped, even when
+  they carry their payload under a <code>text</code> key, so a model's private chain of
+  thought never reaches the JSON parser.</li>
 </ul>
 <p>If parsing still fails, or the JSON is not an object, the model receives a
 correction message and the normal <a href="../retry-and-fallback/">retry loop</a> applies —
