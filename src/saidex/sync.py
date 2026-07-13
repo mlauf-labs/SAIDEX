@@ -30,7 +30,7 @@ from .extractor import (
     extract_data_with_tools,
     run_extractor_agent,
 )
-from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats
+from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats, ToolCallConfig
 
 if TYPE_CHECKING:
     from .retry import RetryConfig
@@ -78,6 +78,7 @@ def extract_data_sync(
     messages: list[BaseMessage],
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     callbacks: list[Any] | None = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
@@ -98,6 +99,8 @@ def extract_data_sync(
         schema: The Pydantic ``BaseModel`` subclass to populate.
         messages: Conversation history passed to the model.
         mode: Which extraction strategy to use.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`~saidex.extract_data`.
         callbacks: Optional LangChain callback handlers.
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
@@ -116,6 +119,7 @@ def extract_data_sync(
             schema,
             messages,
             mode=mode,
+            tool_config=tool_config,
             callbacks=callbacks,
             fallback_llm_model=fallback_llm_model,
             max_primary_retries=max_primary_retries,
@@ -136,6 +140,7 @@ def extract_data_from_text_sync(
     text: str,
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     system_prompt: str | None = None,
     callbacks: list[Any] | None = None,
     fallback_llm_model: Any = None,
@@ -157,6 +162,8 @@ def extract_data_from_text_sync(
         schema: The Pydantic ``BaseModel`` subclass to populate.
         text: The text to analyse.
         mode: Which extraction strategy to use.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`~saidex.extract_data`.
         system_prompt: Optional system instruction prepended to the messages.
         callbacks: Optional LangChain callback handlers.
         fallback_llm_model: Optional fallback model.
@@ -176,6 +183,7 @@ def extract_data_from_text_sync(
             schema,
             text,
             mode=mode,
+            tool_config=tool_config,
             system_prompt=system_prompt,
             callbacks=callbacks,
             fallback_llm_model=fallback_llm_model,
@@ -197,6 +205,7 @@ def extract_data_list_sync(
     messages: list[BaseMessage],
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     callbacks: list[Any] | None = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
@@ -217,6 +226,8 @@ def extract_data_list_sync(
         schema: The Pydantic ``BaseModel`` subclass describing one item.
         messages: Conversation history passed to the model.
         mode: Which extraction strategy to use.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`~saidex.extract_data`.
         callbacks: Optional LangChain callback handlers.
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
@@ -235,6 +246,7 @@ def extract_data_list_sync(
             schema,
             messages,
             mode=mode,
+            tool_config=tool_config,
             callbacks=callbacks,
             fallback_llm_model=fallback_llm_model,
             max_primary_retries=max_primary_retries,
@@ -255,6 +267,7 @@ def extract_data_list_from_text_sync(
     text: str,
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     system_prompt: str | None = None,
     callbacks: list[Any] | None = None,
     fallback_llm_model: Any = None,
@@ -276,6 +289,8 @@ def extract_data_list_from_text_sync(
         schema: The Pydantic ``BaseModel`` subclass describing one item.
         text: The text to analyse.
         mode: Which extraction strategy to use.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`~saidex.extract_data`.
         system_prompt: Optional system instruction prepended to the messages.
         callbacks: Optional LangChain callback handlers.
         fallback_llm_model: Optional fallback model.
@@ -295,6 +310,7 @@ def extract_data_list_from_text_sync(
             schema,
             text,
             mode=mode,
+            tool_config=tool_config,
             system_prompt=system_prompt,
             callbacks=callbacks,
             fallback_llm_model=fallback_llm_model,

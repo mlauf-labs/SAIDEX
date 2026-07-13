@@ -42,6 +42,59 @@ result, stats = await extract_data(
 )
 ```
 
+### OpenAI-compatible gateways (`ToolCallConfig`)
+
+By default the schema tool is bound with OpenAI's most reliable flag set: a
+**forced** `tool_choice`, `strict=True` (structured outputs) and
+`parallel_tool_calls=False`.  Several OpenAI-*compatible* gateways — endpoints
+hosting Kimi/Moonshot, some Qwen or DeepSeek deployments — reject one or more of
+those flags with an HTTP 400, even though the model itself calls tools perfectly
+well.
+
+`ToolCallConfig` makes each flag configurable:
+
+```python
+from saidex import ToolCallConfig, extract_data
+
+result, stats = await extract_data(
+    llm, MySchema, messages,
+    tool_config=ToolCallConfig.COMPATIBLE,
+)
+```
+
+| Preset | `tool_choice` | `strict` | `parallel_tool_calls` |
+| --- | --- | --- | --- |
+| `ToolCallConfig.OPENAI` (default) | forced (the tool's name) | `True` | `False` |
+| `ToolCallConfig.COMPATIBLE` | `"auto"` | *not sent* | *not sent* |
+
+`None` means **the keyword argument is left out of the request entirely** — which
+is not the same as sending `False`.  Some gateways already fail on the mere
+presence of `strict`; others accept the parameter but refuse the value `True`.
+Both cases are expressible:
+
+```python
+# Gateway knows `strict` but only supports `false`
+tool_config=ToolCallConfig(strict=False)
+
+# Gateway 400s on the parameter itself — omit it, keep everything else
+tool_config=ToolCallConfig(strict=None)
+```
+
+### Automatic recovery
+
+You usually do not have to configure anything.  When a provider rejects the
+bound flags — an HTTP 400 naming `strict` / `tool_choice` /
+`parallel_tool_calls`, or a `TypeError` from a `bind_tools` implementation that
+never accepted them — SAIDEX re-binds the schema tool **once** with
+`ToolCallConfig.COMPATIBLE`, logs a warning, and carries on **without consuming a
+validation retry**.  A second failure ends the attempt as `llm_error` as before.
+
+Switch the behaviour off with `ToolCallConfig(auto_relax=False)` when you want a
+hard failure instead of a silently degraded request.
+
+`tool_config` is ignored in `ExtractionMode.JSON` mode, which never calls
+`bind_tools`.
+
 ---
 
 ## `ExtractionMode.JSON`
@@ -105,6 +158,7 @@ exactly like a validation failure.
 | Situation | Recommended mode |
 | --- | --- |
 | OpenAI / Anthropic / Gemini / Mistral | `TOOL_CALLING` (default) |
+| OpenAI-compatible gateway (Kimi, Qwen, DeepSeek, …) | `TOOL_CALLING` with [`ToolCallConfig.COMPATIBLE`](#openai-compatible-gateways-toolcallconfig) |
 | Local model via Ollama / llama.cpp | `JSON` |
 | Model/endpoint without tool-calling support | `JSON` |
 | Tool calling behaves inconsistently for a provider | `JSON` (as a workaround) |
@@ -156,6 +210,7 @@ result, stats = await extract_data(
 ## Related
 
 - [`examples/07_json_mode.py`](../examples/07_json_mode.py) — runnable JSON-mode example
+- [`examples/15_openai_compatible_gateway.py`](../examples/15_openai_compatible_gateway.py) — `ToolCallConfig` against a compatible gateway
 - [Extraction](extraction.md) — the two extraction functions
 - [Retry & Fallback](retry-and-fallback.md) — the shared retry / fallback behaviour
 - [Schema Design](schema-design.md) — writing schemas the model can satisfy

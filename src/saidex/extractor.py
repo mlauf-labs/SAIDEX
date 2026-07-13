@@ -28,6 +28,7 @@ from .models import (
     ExtractionMode,
     ExtractorRunStats,
     FieldIssue,
+    ToolCallConfig,
 )
 from .observability import dispatch_to_observers
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
@@ -148,6 +149,7 @@ async def extract_data(
     messages: list[BaseMessage],
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     callbacks: list[Any] | None = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
@@ -197,6 +199,13 @@ async def extract_data(
             least one message describing what to extract.
         mode: Which extraction strategy to use.  Defaults to
             :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
+        tool_config: Which flags to send with ``bind_tools`` in
+            :attr:`~saidex.ExtractionMode.TOOL_CALLING` mode.  Defaults to
+            :attr:`~saidex.ToolCallConfig.OPENAI` (forced ``tool_choice``,
+            ``strict=True``, no parallel calls).  Pass
+            :attr:`~saidex.ToolCallConfig.COMPATIBLE` for OpenAI-compatible
+            gateways that reject those flags.  Ignored in
+            :attr:`~saidex.ExtractionMode.JSON` mode.
         callbacks: Optional list of LangChain callback handlers (e.g. for
             tracing with LangSmith or Langfuse).
         fallback_llm_model: Optional second model tried when the primary model
@@ -303,6 +312,7 @@ async def extract_data(
             model_label="primary",
             retry_config=effective_retry_config,
             mode=mode,
+            tool_config=tool_config,
             validator=validator,
             source_text=grounding_source,
         )
@@ -346,6 +356,7 @@ async def extract_data(
                 model_label="fallback",
                 retry_config=effective_retry_config,
                 mode=mode,
+                tool_config=tool_config,
                 validator=validator,
                 source_text=grounding_source,
             )
@@ -417,6 +428,7 @@ async def extract_data_from_text(
     text: str,
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     system_prompt: str | None = None,
     callbacks: list[Any] | None = None,
     fallback_llm_model: Any = None,
@@ -439,6 +451,8 @@ async def extract_data_from_text(
         text: The text to analyse.
         mode: Which extraction strategy to use (tool calling or raw JSON).
             Defaults to :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`extract_data`.
         system_prompt: Optional system instruction prepended to the message
             list.  When omitted a generic extraction prompt is used.
         callbacks: Optional LangChain callback handlers.
@@ -480,6 +494,7 @@ async def extract_data_from_text(
         schema=schema,
         messages=messages,
         mode=mode,
+        tool_config=tool_config,
         callbacks=callbacks,
         fallback_llm_model=fallback_llm_model,
         max_primary_retries=max_primary_retries,
@@ -525,6 +540,7 @@ async def extract_data_list(
     messages: list[BaseMessage],
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     callbacks: list[Any] | None = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
@@ -555,6 +571,8 @@ async def extract_data_list(
             least one message describing what to extract.
         mode: Which extraction strategy to use.  Defaults to
             :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`extract_data`.
         callbacks: Optional LangChain callback handlers.
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
@@ -620,6 +638,7 @@ async def extract_data_list(
             schema=container,
             messages=messages,
             mode=mode,
+            tool_config=tool_config,
             callbacks=None,
             fallback_llm_model=fallback_llm_model,
             max_primary_retries=max_primary_retries,
@@ -663,6 +682,7 @@ async def extract_data_list_from_text(
     text: str,
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     system_prompt: str | None = None,
     callbacks: list[Any] | None = None,
     fallback_llm_model: Any = None,
@@ -687,6 +707,8 @@ async def extract_data_list_from_text(
         text: The text to analyse.
         mode: Which extraction strategy to use (tool calling or raw JSON).
             Defaults to :attr:`~saidex.ExtractionMode.TOOL_CALLING`.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`extract_data`.
         system_prompt: Optional system instruction prepended to the message
             list.  When omitted a generic list-extraction prompt is used.
         callbacks: Optional LangChain callback handlers.
@@ -730,6 +752,7 @@ async def extract_data_list_from_text(
         schema=schema,
         messages=messages,
         mode=mode,
+        tool_config=tool_config,
         callbacks=callbacks,
         fallback_llm_model=fallback_llm_model,
         max_primary_retries=max_primary_retries,
@@ -1448,6 +1471,77 @@ async def _run_extractor_agent_with_model(
     return None, _stats(success=False, reason=failure_reason or "validation_exhausted")
 
 
+#: Keyword arguments of ``bind_tools`` that limited providers are known to reject.
+_TOOL_FLAG_NAMES = ("strict", "tool_choice", "parallel_tool_calls")
+
+#: Substrings marking a *client* error (as opposed to a transport hiccup).  A
+#: rejection is only treated as a flag problem when one of these appears next to
+#: a flag name, so an unrelated failure never triggers a relaxed re-bind.
+_BAD_REQUEST_MARKERS = (
+    "400",
+    "bad request",
+    "invalid_request",
+    "invalid request",
+    "unsupported",
+    "unrecognized",
+    "not supported",
+    "unknown parameter",
+    "unexpected keyword",
+)
+
+
+def _bind_schema_tool(
+    llm_model: Any,
+    tool: dict[str, Any],
+    tool_name: str,
+    config: ToolCallConfig,
+) -> Any:
+    """Bind *tool* to *llm_model*, sending only the flags *config* asks for.
+
+    A ``None`` field means the keyword argument is left out of the request
+    entirely — some OpenAI-compatible gateways reject the mere presence of
+    ``strict`` or ``parallel_tool_calls``.
+
+    Args:
+        llm_model: The chat model to bind against.
+        tool: The OpenAI-style tool definition of the schema.
+        tool_name: The tool's function name, used for a forced ``tool_choice``.
+        config: Which flags to send, and with what values.
+
+    Returns:
+        The bound chat model.
+    """
+    kwargs: dict[str, Any] = {}
+    if config.tool_choice == "forced":
+        kwargs["tool_choice"] = tool_name
+    elif config.tool_choice == "auto":
+        kwargs["tool_choice"] = "auto"
+    if config.strict is not None:
+        kwargs["strict"] = config.strict
+    if config.parallel_tool_calls is not None:
+        kwargs["parallel_tool_calls"] = config.parallel_tool_calls
+    return llm_model.bind_tools([tool], **kwargs)
+
+
+def _is_tool_flag_rejection(exc: BaseException) -> bool:
+    """Whether *exc* looks like the provider refusing one of the tool-binding flags.
+
+    Covers both failure sites: an HTTP 400 from a gateway that does not support
+    ``strict`` / a forced ``tool_choice`` / ``parallel_tool_calls``, and a
+    ``TypeError`` from a ``bind_tools`` implementation that never accepted the
+    keyword argument in the first place.
+    """
+    text = str(exc).lower()
+    if not any(flag in text for flag in _TOOL_FLAG_NAMES):
+        return False
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status == 400:
+        return True
+    return any(marker in text for marker in _BAD_REQUEST_MARKERS)
+
+
 @dataclass(frozen=True)
 class _ModelAttempt(Generic[MODEL_T]):
     """Outcome of one single-model extraction attempt loop.
@@ -1477,6 +1571,7 @@ async def _try_with_model(
     model_label: str,
     retry_config: RetryConfig,
     mode: ExtractionMode,
+    tool_config: ToolCallConfig | None = None,
     validator: Validator[MODEL_T] | None = None,
     source_text: str | None = None,
 ) -> _ModelAttempt[MODEL_T]:
@@ -1487,15 +1582,48 @@ async def _try_with_model(
     the instance (or ``None``), the retry count, the structured field issues seen
     across attempts, the pure parse/format-error count, and a failure reason.
     """
+    flags = tool_config or ToolCallConfig.OPENAI
+    #: Set once the schema tool has been re-bound with relaxed flags, so a
+    #: provider that keeps refusing cannot spin the loop forever.
+    relaxed = False
+    relax_rebind: Callable[[], Any] | None = None
+
     if mode is ExtractionMode.TOOL_CALLING:
         tool = convert_to_openai_tool(schema)
         schema_label: str = tool["function"]["name"]
-        llm = llm_model.bind_tools(
-            [tool],
-            tool_choice=schema_label,
-            parallel_tool_calls=False,
-            strict=True,
-        )
+        if flags.auto_relax:
+            relax_rebind = partial(
+                _bind_schema_tool, llm_model, tool, schema_label, ToolCallConfig.COMPATIBLE
+            )
+        try:
+            llm = _bind_schema_tool(llm_model, tool, schema_label, flags)
+        except TypeError as exc:
+            if relax_rebind is None or not _is_tool_flag_rejection(exc):
+                logger.error(
+                    "%s: bind_tools rejected the tool-calling flags for %s: %s",
+                    model_label,
+                    schema.__name__,
+                    exc,
+                )
+                return _ModelAttempt(None, 0, [], 0, "llm_error")
+            logger.warning(
+                "%s: model does not accept the tool-binding flags for %s (%s) — "
+                "re-binding with relaxed flags.",
+                model_label,
+                schema.__name__,
+                exc,
+            )
+            relaxed = True
+            try:
+                llm = relax_rebind()
+            except TypeError as relaxed_exc:
+                logger.error(
+                    "%s: relaxed bind_tools also failed for %s: %s",
+                    model_label,
+                    schema.__name__,
+                    relaxed_exc,
+                )
+                return _ModelAttempt(None, 0, [], 0, "llm_error")
     else:
         schema_label = schema.__name__
         llm = llm_model
@@ -1524,6 +1652,28 @@ async def _try_with_model(
                     invoke_result.retry_count,
                 )
         except Exception as exc:
+            if relax_rebind is not None and not relaxed and _is_tool_flag_rejection(exc):
+                logger.warning(
+                    "%s: provider rejected the tool-calling flags for %s (%s) — "
+                    "re-binding with relaxed flags and retrying.",
+                    model_label,
+                    schema.__name__,
+                    exc,
+                )
+                relaxed = True
+                try:
+                    llm = relax_rebind()
+                except TypeError as relaxed_exc:
+                    logger.error(
+                        "%s: relaxed bind_tools also failed for %s: %s",
+                        model_label,
+                        schema.__name__,
+                        relaxed_exc,
+                    )
+                    return _ModelAttempt(None, retries, issues, format_errors, "llm_error")
+                # Deliberately no ``remaining -= 1``: the relaxed re-bind is a
+                # transport-level correction, not a failed extraction attempt.
+                continue
             logger.error(
                 "%s: LLM invocation error for %s: %s",
                 model_label,

@@ -42,6 +42,7 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 | [`11_quality_analytics.py`](../examples/11_quality_analytics.py) | Aggregate field issues across runs: `summarize_field_issues` |
 | [`12_external_validator.py`](../examples/12_external_validator.py) | External `validator` callable: cross-field rule that re-enters the retry loop |
 | [`13_source_grounding.py`](../examples/13_source_grounding.py) | Source grounding: `Grounded` / `GroundedField` verify values against the text |
+| [`15_openai_compatible_gateway.py`](../examples/15_openai_compatible_gateway.py) | `ToolCallConfig`: tool calling against gateways that reject OpenAI-only flags |
 
 ---
 
