@@ -205,7 +205,9 @@ class SaidexToolNode(Runnable[Any, Any]):
             standard ``add_messages`` reducer replaces the malformed message in
             state.  Set to ``False`` for message channels with a plain append
             reducer.
-        name: Node name, forwarded to the inner ``ToolNode``.
+        name: Node name, forwarded to the inner ``ToolNode``.  Must be
+            non-empty (whitespace-only names are rejected too), since it is
+            also used verbatim as ``ToolNodeEvent.node_name``.
         tags: Tags, forwarded to the inner ``ToolNode``.
         handle_tool_errors: Forwarded to the inner ``ToolNode`` when given;
             otherwise the stock default stays active.
@@ -234,6 +236,8 @@ class SaidexToolNode(Runnable[Any, Any]):
             )
         if on_invalid == "correct" and correction_model is None:
             raise ValueError("on_invalid='correct' requires a correction_model")
+        if not name.strip():
+            raise ValueError(f"name must not be empty or whitespace-only, got {name!r}")
 
         inner_kwargs: dict[str, Any] = {"name": name, "tags": tags, "messages_key": messages_key}
         if handle_tool_errors is not _UNSET:
@@ -241,6 +245,13 @@ class SaidexToolNode(Runnable[Any, Any]):
         self._inner = ToolNode(tools, **inner_kwargs)
 
         self.name = name
+        # Runnable.name is declared str | None on the base class, so mypy
+        # cannot narrow self.name to str even though the constructor above
+        # guarantees it — this private mirror carries the precise type for
+        # ToolNodeEvent.node_name (which is str, not str | None) without an
+        # `or "tools"` fallback that would silently rename an explicitly
+        # empty name (see the constructor's ValueError above).
+        self._node_name: str = name
         self._on_invalid: OnInvalid = on_invalid
         self._correction_model = correction_model
         self._max_correction_retries = max_correction_retries
@@ -384,10 +395,7 @@ class SaidexToolNode(Runnable[Any, Any]):
                 for plan in plans
             )
         )
-        # self.name is always a str (the constructor defaults it to "tools"),
-        # but Runnable.name is typed str | None on the base class — the `or`
-        # satisfies mypy without weakening the runtime guarantee.
-        await dispatch_tool_node_event(ToolNodeEvent(node_name=self.name or "tools", stats=stats))
+        await dispatch_tool_node_event(ToolNodeEvent(node_name=self._node_name, stats=stats))
 
         return _merge_output(inner_output, extra, shape, self._messages_key, order)
 

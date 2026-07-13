@@ -155,6 +155,16 @@ def test_ctor_requires_correction_model_for_correct() -> None:
         SaidexToolNode([add], on_invalid="correct")
 
 
+@pytest.mark.parametrize("bad_name", ["", "   ", "\t\n"])
+def test_ctor_rejects_empty_or_whitespace_name(bad_name: str) -> None:
+    """Finding 3: name="" used to silently report node_name="tools" in stats
+    (the `self.name or "tools"` fallback), diverging from the inner ToolNode
+    which was actually named "". An explicitly empty/whitespace name is now
+    rejected outright instead of being silently renamed."""
+    with pytest.raises(ValueError, match="name"):
+        SaidexToolNode([add], name=bad_name)
+
+
 # ---------------------------------------------------------------------------
 # Happy-path parity with stock ToolNode
 # ---------------------------------------------------------------------------
