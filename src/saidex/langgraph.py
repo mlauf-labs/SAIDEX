@@ -216,7 +216,11 @@ class SaidexToolNode(Runnable[Any, Any]):
             ``id``) whose tool calls carry the repaired/corrected args, so the
             standard ``add_messages`` reducer replaces the malformed message in
             state.  Set to ``False`` for message channels with a plain append
-            reducer.
+            reducer.  Only ``tool_calls``/``invalid_tool_calls`` are rewritten,
+            never ``AIMessage.content`` — fully effective for providers that
+            serialize from ``tool_calls`` (e.g. ``langchain-openai``), but
+            content-block providers (Anthropic-style) may still re-serialize
+            the original, unsanitized ``tool_use`` block from ``content``.
         name: Node name, forwarded to the inner ``ToolNode``.  Must be
             non-empty (whitespace-only names are rejected too), since it is
             also used verbatim as ``ToolNodeEvent.node_name``.

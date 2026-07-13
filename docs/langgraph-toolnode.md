@@ -80,11 +80,24 @@ Two guarantees keep your graph state token-lean:
   `AIMessage` (same `id`) carrying the repaired/corrected arguments. The
   standard `add_messages` reducer (used by `MessagesState`) **replaces** the
   malformed message in place, so leaked chain-of-thought or broken JSON
-  disappears from history. Calls answered with feedback stay untouched (their
-  feedback message references the call id, so removing the call would orphan
-  it). Set `sanitize_messages=False` if your messages channel uses a plain
-  append reducer, where the update would **duplicate** the message instead of
+  disappears from history (effective for providers that serialize from
+  `tool_calls` — e.g. `langchain-openai`; content-block providers may still
+  carry the original block in `AIMessage.content` — see the note below).
+  Calls answered with feedback stay untouched (their feedback message
+  references the call id, so removing the call would orphan it). Set
+  `sanitize_messages=False` if your messages channel uses a plain append
+  reducer, where the update would **duplicate** the message instead of
   replacing it.
+
+  `_sanitize_message` only rewrites `tool_calls`/`invalid_tool_calls` on the
+  `AIMessage` — it never touches `AIMessage.content`. `langchain-openai`
+  serializes its wire format from `tool_calls` (falling back to
+  `additional_kwargs` only when both are empty), so sanitization is fully
+  effective there. Content-block providers (Anthropic-style) instead
+  re-serialize the `tool_use` block from `AIMessage.content`, which still
+  carries the original, unsanitized arguments even after `tool_calls` is
+  rewritten. This is a token-cost / history-hygiene gap, not a correctness
+  one — every tool-call id is still answered exactly once either way.
 
 ## Edge cases, documented honestly
 
