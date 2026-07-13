@@ -767,8 +767,29 @@ def _finalized_outcome(outcome: ToolCallOutcome | Literal[""]) -> ToolCallOutcom
     return outcome
 
 
+def _is_rebuildable_object_state(input: Any) -> bool:
+    """True when *input* is a state object :func:`_substitute_message` can
+    rebuild in place (a Pydantic model or a dataclass instance) once a repair
+    or correction needs to rewrite its ``AIMessage``.
+    """
+    return isinstance(input, BaseModel) or (
+        dataclasses.is_dataclass(input) and not isinstance(input, type)
+    )
+
+
 def _extract_messages(input: Any, messages_key: str) -> tuple[list[BaseMessage], str]:
-    """Return the message list and the input shape (``list``/``dict``/``object``)."""
+    """Return the message list and the input shape (``list``/``dict``/``object``).
+
+    An "object" shape is rejected up front unless it is something
+    :func:`_substitute_message` actually knows how to rebuild (a Pydantic
+    model or a dataclass) — a plain class exposing ``messages_key`` as an
+    attribute would otherwise be accepted here and only fail later, and only
+    once some call's repair or correction needs to rewrite the ``AIMessage``
+    in place (see :func:`_substitute_message`'s own ``TypeError``). Rejecting
+    it here instead makes the failure immediate and consistent regardless of
+    what a given batch of tool calls happens to need, rather than a state
+    shape that "works" until the day a call needs repairing.
+    """
     if isinstance(input, list):
         return input, "list"
     if isinstance(input, dict):
@@ -779,6 +800,11 @@ def _extract_messages(input: Any, messages_key: str) -> tuple[list[BaseMessage],
     messages = getattr(input, messages_key, None)
     if messages is None:
         raise ValueError(f"No message list found on state attribute {messages_key!r}")
+    if not _is_rebuildable_object_state(input):
+        raise TypeError(
+            f"Unsupported state type for SaidexToolNode: {type(input).__name__}. "
+            "Use a message list, a dict, a Pydantic model or a dataclass."
+        )
     return list(messages), "object"
 
 
@@ -842,6 +868,11 @@ def _substitute_message(
         return input.model_copy(update={messages_key: new_messages})
     if dataclasses.is_dataclass(input) and not isinstance(input, type):
         return dataclasses.replace(input, **{messages_key: new_messages})
+    # Unreachable in practice: _extract_messages only ever returns shape
+    # "object" for input that _is_rebuildable_object_state() already accepted
+    # (a BaseModel or a dataclass), so both branches above should always
+    # match. Kept as a defensive fallback in case that invariant is ever
+    # broken by a future refactor.
     raise TypeError(
         f"Unsupported state type for SaidexToolNode: {type(input).__name__}. "
         "Use a message list, a dict, a Pydantic model or a dataclass."

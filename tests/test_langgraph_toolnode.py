@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Annotated, Any
 from unittest.mock import MagicMock
 
@@ -223,6 +224,67 @@ async def test_object_input_state() -> None:
     state = GraphState(messages=[_ai([_call("add", {"a": 4, "b": 4}, "c1")])], counter=7)
     result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
     assert _tool_messages(result)[0].content == "8"
+
+
+@dataclasses.dataclass
+class _DataclassGraphState:
+    messages: list[Any]
+    counter: int = 0
+
+
+@pytest.mark.asyncio
+async def test_dataclass_object_input_state_supports_repair() -> None:
+    """Finding 6: _substitute_message's dataclass branch (dataclasses.replace)
+    was never exercised by any existing test — this pins that it actually
+    works, including through a repair that requires substitution."""
+    raw = '<think>hmm</think>{"a": 2, "b": 3}'
+    state = _DataclassGraphState(
+        messages=[_ai(invalid=[_invalid("add", raw, "c1")], msg_id="ai-1")], counter=1
+    )
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].content == "5"
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.tool_calls[0]["args"] == {"a": 2, "b": 3}
+
+
+@pytest.mark.asyncio
+async def test_plain_object_state_rejected_even_for_valid_call() -> None:
+    """Finding 6: _extract_messages and _substitute_message used to disagree
+    on accepted state types — a plain class (not a BaseModel or dataclass)
+    exposing `messages` as an attribute was accepted by _extract_messages but
+    only blew up in _substitute_message, and only once some call's repair or
+    correction actually needed substitution. So a valid, no-repair-needed
+    call on such a state used to succeed "by accident". _extract_messages now
+    rejects it immediately and consistently, regardless of what the batch of
+    calls needs."""
+
+    class PlainGraphState:
+        def __init__(self, messages: list[BaseMessage]) -> None:
+            self.messages = messages
+
+    state = PlainGraphState([_ai([_call("add", {"a": 1, "b": 2}, "c1")])])
+    with pytest.raises(TypeError, match="Unsupported state type"):
+        await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_plain_object_state_rejected_when_repair_needed() -> None:
+    """Same fail-fast guarantee on the path that used to actually crash
+    (inside _substitute_message) before this fix — now it fails at the same
+    point and with the same message as the valid-call case above, instead of
+    surfacing a different, later failure."""
+
+    class PlainGraphState:
+        def __init__(self, messages: list[BaseMessage]) -> None:
+            self.messages = messages
+
+    raw = '<think>hmm</think>{"a": 2, "b": 3}'
+    state = PlainGraphState([_ai(invalid=[_invalid("add", raw, "c1")], msg_id="ai-1")])
+    with pytest.raises(TypeError, match="Unsupported state type"):
+        await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert EXECUTED == []
 
 
 @pytest.mark.asyncio
