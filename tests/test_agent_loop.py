@@ -425,9 +425,18 @@ async def test_tool_invoke_non_mapping_args_returns_invalid() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_invoke_reserved_key_collision_returns_invalid() -> None:
-    """An arg named 'schema' collides with create_instance_safe's own parameter."""
+async def test_tool_invoke_arg_named_schema_no_longer_collides() -> None:
+    """Regression: 'schema' used to collide with create_instance_safe's own
+    (formerly keyword) parameter, raising TypeError and forcing this path
+    through _invoke's own TypeError guard. create_instance_safe/
+    create_instance_with_issues now take schema positional-only (see
+    saidex.utils), so an arg literally named 'schema' just flows through like
+    any other key — here it's not a declared ToolArgs field, so pydantic's
+    default extra="ignore" drops it and the call succeeds normally."""
     tool = _make_tool()
     outcome = await tool._invoke({"schema": "x", "name": "foo"})
     assert outcome.handler_error is None
-    assert "Invalid arguments" in outcome.content
+    assert "Invalid arguments" not in outcome.content
+    data = json.loads(outcome.content)
+    assert data["status"] == "ok"
+    assert data["name"] == "foo"
