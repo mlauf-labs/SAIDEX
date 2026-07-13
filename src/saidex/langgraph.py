@@ -141,10 +141,24 @@ class SaidexToolNode(Runnable[Any, Any]):
         self._tools_by_name = _build_registry(tools)
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
-        """Synchronously process the state.  See :meth:`ainvoke`.
+        """Synchronous entry point; bridges to :meth:`ainvoke` on a fresh event loop.
 
-        Bridges to the async implementation on a fresh event loop; inside an
-        already running loop a ``RuntimeError`` points to :meth:`ainvoke`.
+        See :meth:`ainvoke` for the full pipeline description (input shapes
+        accepted, output shape produced). Not usable from inside an already
+        running event loop — call :meth:`ainvoke` there instead.
+
+        Args:
+            input: Graph state — a message list, a dict containing
+                ``messages_key``, or a state object exposing it as an attribute.
+            config: LangChain run configuration; forwarded to the inner
+                ``ToolNode`` and the correction cycle so tracing nests properly.
+
+        Returns:
+            Tool results in the same shape the stock ``ToolNode`` produces, as
+            described in :meth:`ainvoke`.
+
+        Raises:
+            RuntimeError: If called from inside an already running event loop.
         """
         return _run_sync(
             self._arun(input, config, **kwargs),
@@ -175,7 +189,7 @@ class SaidexToolNode(Runnable[Any, Any]):
 
     async def _arun(self, input: Any, config: RunnableConfig | None, **kwargs: Any) -> Any:
         messages, _shape = _extract_messages(input, self._messages_key)
-        _last_ai_message(messages)
+        _last_ai_message(messages)  # fail fast on malformed state before delegating
         return await self._inner.ainvoke(input, config, **kwargs)
 
 
@@ -198,7 +212,7 @@ def _build_registry(
     for candidate in tools:
         try:
             base = candidate if isinstance(candidate, BaseTool) else _as_tool(candidate)
-        except Exception as exc:  # noqa: BLE001 — degrade to pass-through
+        except Exception as exc:  # degrade to pass-through
             logger.warning("could not build schema registry entry for %r: %s", candidate, exc)
             continue
         registry[base.name] = base
@@ -220,8 +234,19 @@ def _extract_messages(input: Any, messages_key: str) -> tuple[list[BaseMessage],
     return list(messages), "object"
 
 
-def _last_ai_message(messages: Sequence[BaseMessage]) -> AIMessage:
-    """Return the trailing ``AIMessage``, mirroring the stock node's contract."""
-    if messages and isinstance(messages[-1], AIMessage):
-        return messages[-1]
-    raise ValueError("SaidexToolNode expects the last message in state to be an AIMessage")
+def _last_ai_message(messages: Sequence[BaseMessage]) -> tuple[AIMessage, int]:
+    """Return the last ``AIMessage`` in ``messages`` and its index.
+
+    Scans backward, mirroring stock ``ToolNode._parse_input`` (which finds the
+    last ``AIMessage`` anywhere in the list, not necessarily the final
+    element) so state with trailing non-AI messages after the tool-calling
+    ``AIMessage`` still executes exactly as it would with the stock node. The
+    index is returned so callers can target that message specifically (e.g. a
+    future sanitizer that must swap it in place) rather than assuming it is
+    ``messages[-1]``.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        if isinstance(message, AIMessage):
+            return message, index
+    raise ValueError("SaidexToolNode expects an AIMessage in state")

@@ -8,8 +8,10 @@ import pytest
 
 pytest.importorskip("langgraph")
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage  # noqa: E402
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage  # noqa: E402
 from langchain_core.tools import tool  # noqa: E402
+from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
+from langgraph.graph.state import CompiledStateGraph  # noqa: E402
 from langgraph.prebuilt import ToolNode  # noqa: E402
 from langgraph.runtime import Runtime  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
@@ -22,11 +24,20 @@ from saidex.langgraph import SaidexToolNode  # noqa: E402
 
 EXECUTED: list[str] = []
 
-# The installed langgraph release requires an explicit Runtime whenever a
-# ToolNode (stock or wrapped) is invoked outside a compiled graph — bare
-# `ToolNode(...).ainvoke(state)` otherwise raises "Missing required config
-# key". Supply a no-op default via the public `langgraph.runtime.Runtime`
-# API so both sides of the parity comparison can actually execute.
+# WHY this sentinel exists: a bare `ToolNode(...).ainvoke(state)` (stock or
+# wrapped) called *outside* a compiled graph has no Pregel executor to inject
+# a Runtime through `config`, and the installed langgraph release requires
+# one unconditionally — it raises "Missing required config key" without it.
+# Supply a no-op default via the public `langgraph.runtime.Runtime` API so
+# standalone tests below can actually execute.
+#
+# The graph-embedded tests further down deliberately do NOT use this
+# sentinel: Pregel injects a real Runtime through `config` when a node runs
+# inside `graph.invoke()`/`graph.ainvoke()`, and `RunnableCallable.invoke`/
+# `ainvoke` (langgraph/_internal/_runnable.py) only fall back to that
+# config-based lookup when `runtime` is absent from `kwargs` — an explicit
+# `runtime=` kwarg would short-circuit that path and silently paper over a
+# regression where `_arun` stops forwarding `config` to the inner node.
 _NO_GRAPH_RUNTIME: Runtime[None] = Runtime()
 
 
@@ -69,6 +80,29 @@ def _ai(
 def _tool_messages(result: Any) -> list[ToolMessage]:
     messages = result["messages"] if isinstance(result, dict) else result
     return [m for m in messages if isinstance(m, ToolMessage)]
+
+
+def _agent_node(_state: MessagesState) -> dict[str, list[BaseMessage]]:
+    """Canned agent step: always answers with one tool call to ``add``."""
+    return {
+        "messages": [_ai([_call("add", {"a": 3, "b": 4}, "graph-c1")], msg_id="graph-ai-1")],
+    }
+
+
+def _build_tool_call_graph(tools_node: Any) -> CompiledStateGraph[Any, Any, Any, Any]:
+    """Minimal ``StateGraph(MessagesState)``: agent emits a tool call, tools node runs it.
+
+    Used to prove ``SaidexToolNode`` behaves as a true drop-in when Pregel
+    (not the test) injects the runtime through ``config`` — the graph-embedded
+    tests below invoke the compiled graph directly and never pass ``runtime=``.
+    """
+    graph: StateGraph[Any, Any, Any, Any] = StateGraph(MessagesState)
+    graph.add_node("agent", _agent_node)
+    graph.add_node("tools", tools_node)
+    graph.add_edge(START, "agent")
+    graph.add_edge("agent", "tools")
+    graph.add_edge("tools", END)
+    return graph.compile()
 
 
 # ---------------------------------------------------------------------------
@@ -183,9 +217,29 @@ async def test_no_tool_calls_matches_stock_toolnode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_last_message_not_ai_raises() -> None:
+async def test_no_ai_message_in_state_raises() -> None:
     with pytest.raises(ValueError, match="AIMessage"):
         await SaidexToolNode([add]).ainvoke({"messages": [HumanMessage(content="hi")]})
+
+
+@pytest.mark.asyncio
+async def test_ai_message_followed_by_other_messages_still_executes() -> None:
+    # Stock ToolNode._parse_input scans backward for the last AIMessage anywhere
+    # in the list, not just messages[-1]. A trailing non-AI message after the
+    # tool-calling AIMessage must therefore still execute the tool calls.
+    state = {
+        "messages": [
+            _ai([_call("add", {"a": 5, "b": 6}, "c1")]),
+            HumanMessage(content="please continue"),
+        ]
+    }
+    ours = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    stock = await ToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    ours_tm = _tool_messages(ours)
+    stock_tm = _tool_messages(stock)
+    assert len(ours_tm) == len(stock_tm) == 1
+    assert ours_tm[0].content == stock_tm[0].content == "11"
+    assert ours_tm[0].tool_call_id == "c1"
 
 
 @pytest.mark.asyncio
@@ -196,3 +250,55 @@ async def test_unknown_tool_passes_through_to_stock_error() -> None:
     assert tool_message.tool_call_id == "c1"
     assert tool_message.status == "error"
     assert "not a valid tool" in str(tool_message.content)
+
+
+# ---------------------------------------------------------------------------
+# Graph-embedded execution (real Pregel-injected runtime, no runtime= kwarg)
+# ---------------------------------------------------------------------------
+#
+# The tests above invoke SaidexToolNode standalone and pass runtime=
+# explicitly. langgraph's RunnableCallable.invoke/ainvoke skip the
+# config-based runtime lookup entirely whenever `runtime` is already present
+# in kwargs (see langgraph/_internal/_runnable.py), so those tests would keep
+# passing even if a future change broke config propagation from _arun to the
+# inner ToolNode. The tests below close that gap: they run SaidexToolNode
+# inside a compiled StateGraph, exactly as documented in the class docstring
+# (`graph.add_node("tools", SaidexToolNode(tools))`), so Pregel is the one
+# injecting the runtime through `config` — proving the drop-in claim for real.
+
+
+@pytest.mark.asyncio
+async def test_graph_embedded_async_execution() -> None:
+    app = _build_tool_call_graph(SaidexToolNode([add]))
+    result = await app.ainvoke({"messages": [HumanMessage(content="please add")]})
+    tool_messages = _tool_messages(result)
+    assert len(tool_messages) == 1
+    assert tool_messages[0].content == "7"
+    assert tool_messages[0].tool_call_id == "graph-c1"
+    assert tool_messages[0].name == "add"
+
+
+def test_graph_embedded_sync_execution() -> None:
+    app = _build_tool_call_graph(SaidexToolNode([add]))
+    result = app.invoke({"messages": [HumanMessage(content="please add")]})
+    tool_messages = _tool_messages(result)
+    assert len(tool_messages) == 1
+    assert tool_messages[0].content == "7"
+    assert tool_messages[0].tool_call_id == "graph-c1"
+    assert tool_messages[0].name == "add"
+
+
+@pytest.mark.asyncio
+async def test_graph_embedded_matches_stock_toolnode() -> None:
+    ours_app = _build_tool_call_graph(SaidexToolNode([add]))
+    stock_app = _build_tool_call_graph(ToolNode([add]))
+
+    ours_result = await ours_app.ainvoke({"messages": [HumanMessage(content="please add")]})
+    stock_result = await stock_app.ainvoke({"messages": [HumanMessage(content="please add")]})
+
+    ours_tm = _tool_messages(ours_result)
+    stock_tm = _tool_messages(stock_result)
+    assert len(ours_tm) == len(stock_tm) == 1
+    assert ours_tm[0].content == stock_tm[0].content
+    assert ours_tm[0].tool_call_id == stock_tm[0].tool_call_id
+    assert ours_tm[0].name == stock_tm[0].name
