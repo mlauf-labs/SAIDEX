@@ -11,12 +11,15 @@ cycle, or fail-fast raising.  Valid calls are executed by an internal stock
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import logging
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import Runnable, RunnableConfig
+from pydantic import BaseModel
 
 try:
     from langgraph.prebuilt import ToolNode
@@ -26,11 +29,14 @@ except ImportError as exc:  # keep langgraph an optional dependency
         "Install it with: pip install 'saidex[langgraph]'."
     ) from exc
 
+from json_repair import repair_json
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as _as_tool
 
-from .models import ExtractionMode
+from .extractor import _strip_code_fences, _strip_thinking_tags
+from .models import ExtractionMode, FieldIssue
 from .sync import _run_sync
+from .utils import create_instance_with_issues
 
 __all__ = [
     "SaidexToolNode",
@@ -43,6 +49,25 @@ logger = logging.getLogger(__name__)
 _UNSET: Any = object()
 
 OnInvalid = Literal["feedback", "correct", "raise"]
+
+
+@dataclasses.dataclass
+class _CallPlan:
+    """Per-call working state for one node invocation."""
+
+    call: dict[str, Any]
+    from_invalid: bool = False
+    raw_entry: dict[str, Any] | None = None
+    raw_args: str | None = None
+    repaired: bool = False
+    recoverable: bool = True
+    prevalidated: bool = False
+    schema: type[BaseModel] | None = None
+    error_text: str | None = None
+    issues: tuple[FieldIssue, ...] = ()
+    executable: bool = False
+    outcome: str = ""
+    correction_retries: int = 0
 
 
 class ToolCallValidationError(Exception):
@@ -188,9 +213,169 @@ class SaidexToolNode(Runnable[Any, Any]):
     # ------------------------------------------------------------------
 
     async def _arun(self, input: Any, config: RunnableConfig | None, **kwargs: Any) -> Any:
-        messages, _shape = _extract_messages(input, self._messages_key)
-        _last_ai_message(messages)  # fail fast on malformed state before delegating
-        return await self._inner.ainvoke(input, config, **kwargs)
+        messages, shape = _extract_messages(input, self._messages_key)
+        ai_message, ai_index = _last_ai_message(messages)
+        plans = self._plan_calls(ai_message)
+
+        feedback: list[BaseMessage] = []
+        for plan in plans:
+            if plan.executable:
+                plan.outcome = "executed"
+            else:
+                plan.outcome = "feedback"
+                feedback.append(self._feedback_message(plan))
+
+        executable_calls = [plan.call for plan in plans if plan.executable]
+        inner_output: Any = None
+        if executable_calls:
+            changed = any(plan.repaired for plan in plans) or len(executable_calls) != len(
+                ai_message.tool_calls
+            )
+            if changed:
+                delegated = ai_message.model_copy(
+                    update={"tool_calls": executable_calls, "invalid_tool_calls": []}
+                )
+                inner_input = _substitute_message(
+                    input, messages, delegated, ai_index, shape, self._messages_key
+                )
+            else:
+                inner_input = input
+            inner_output = await self._inner.ainvoke(inner_input, config, **kwargs)
+
+        extra: list[BaseMessage] = list(feedback)
+        sanitized = self._sanitize_message(ai_message, plans)
+        if sanitized is not None:
+            extra.append(sanitized)
+
+        order = {
+            call_id: index
+            for index, call_id in enumerate(
+                [c.get("id") for c in ai_message.tool_calls]
+                + [c.get("id") for c in ai_message.invalid_tool_calls]
+            )
+            if call_id is not None
+        }
+        return _merge_output(inner_output, extra, shape, self._messages_key, order)
+
+    def _plan_calls(self, message: AIMessage) -> list[_CallPlan]:
+        """Classify every call on *message* into an executable/invalid plan."""
+        plans: list[_CallPlan] = []
+        for call in message.tool_calls:
+            plans.append(_CallPlan(call=dict(call)))
+        for entry in message.invalid_tool_calls:
+            raw = entry.get("args") or ""
+            name = entry.get("name")
+            repaired_args = (
+                _repair_raw_args(
+                    raw,
+                    strip_thinking=self._strip_thinking,
+                    use_json_repair=self._json_repair,
+                )
+                if name
+                else None
+            )
+            if repaired_args is None:
+                plans.append(
+                    _CallPlan(
+                        call={
+                            "name": name or "unknown",
+                            "args": {},
+                            "id": entry.get("id"),
+                            "type": "tool_call",
+                        },
+                        from_invalid=True,
+                        raw_entry=dict(entry),
+                        raw_args=raw,
+                        recoverable=False,
+                        error_text=str(entry.get("error") or "malformed tool call"),
+                    )
+                )
+                continue
+            plans.append(
+                _CallPlan(
+                    call={
+                        "name": name,
+                        "args": repaired_args,
+                        "id": entry.get("id"),
+                        "type": "tool_call",
+                    },
+                    from_invalid=True,
+                    raw_entry=dict(entry),
+                    raw_args=raw,
+                    repaired=True,
+                )
+            )
+
+        for plan in plans:
+            if not plan.recoverable:
+                continue
+            tool = self._tools_by_name.get(plan.call["name"])
+            schema = getattr(tool, "tool_call_schema", None) if tool is not None else None
+            if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+                # Unknown tool or non-Pydantic schema: the executor's own
+                # validation and error handling stay authoritative.
+                plan.executable = True
+                continue
+            plan.schema = schema
+            plan.prevalidated = True
+            try:
+                _, issues, error_text = create_instance_with_issues(schema, **plan.call["args"])
+            except Exception as exc:  # e.g. non-mapping args
+                issues, error_text = [], f"arguments not valid: {exc}"
+            if error_text is None:
+                plan.executable = True
+            else:
+                plan.issues = tuple(issues)
+                plan.error_text = error_text
+        return plans
+
+    def _feedback_message(self, plan: _CallPlan) -> ToolMessage:
+        """Build the corrective ``ToolMessage`` for an invalid call."""
+        name = plan.call["name"]
+        if not plan.recoverable:
+            tool = self._tools_by_name.get(name)
+            schema_hint = ""
+            if tool is not None and isinstance(getattr(tool, "tool_call_schema", None), type):
+                fields = ", ".join(tool.tool_call_schema.model_fields)  # type: ignore[union-attr]
+                schema_hint = f"\nExpected arguments for '{name}': {fields}."
+            content = (
+                f"The arguments of your call to tool '{name}' could not be parsed "
+                f"as JSON and the call was NOT executed.\n"
+                f"Provider error: {plan.error_text}\n"
+                f"Raw arguments received:\n{(plan.raw_args or '')[:500]}\n"
+                f"{schema_hint}\n"
+                f"Call the tool again with a single valid JSON object as arguments."
+            )
+        else:
+            content = (
+                f"The arguments for tool call '{name}' did not match the tool's "
+                f"schema and the call was NOT executed.\n\n{plan.error_text}\n\n"
+                f"Call the tool again with corrected arguments that fix every "
+                f"issue above."
+            )
+        return ToolMessage(
+            content=content,
+            name=name,
+            tool_call_id=plan.call.get("id") or "",
+            status="error",
+        )
+
+    def _sanitize_message(self, message: AIMessage, plans: list[_CallPlan]) -> AIMessage | None:
+        """Return an updated ``AIMessage`` when repair/correction changed calls."""
+        if not self._sanitize_messages or message.id is None:
+            return None
+        if not any(plan.repaired or plan.outcome == "corrected" for plan in plans):
+            return None
+        tool_calls = [plan.call for plan in plans if not plan.from_invalid]
+        tool_calls += [plan.call for plan in plans if plan.from_invalid and plan.executable]
+        invalid_tool_calls = [
+            plan.raw_entry
+            for plan in plans
+            if plan.from_invalid and not plan.executable and plan.raw_entry is not None
+        ]
+        return message.model_copy(
+            update={"tool_calls": tool_calls, "invalid_tool_calls": invalid_tool_calls}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -250,3 +435,93 @@ def _last_ai_message(messages: Sequence[BaseMessage]) -> tuple[AIMessage, int]:
         if isinstance(message, AIMessage):
             return message, index
     raise ValueError("SaidexToolNode expects an AIMessage in state")
+
+
+def _repair_raw_args(
+    raw: str, *, strip_thinking: bool, use_json_repair: bool
+) -> dict[str, Any] | None:
+    """Deterministically recover an args dict from a malformed raw string."""
+    text = _strip_thinking_tags(raw) if strip_thinking else raw
+    text = _strip_code_fences(text.strip())
+    if not text:
+        return None
+    try:
+        parsed: Any = json.loads(text)
+    except (ValueError, json.JSONDecodeError):
+        if not use_json_repair:
+            return None
+        parsed = repair_json(text, return_objects=True)
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _substitute_message(
+    input: Any,
+    messages: Sequence[BaseMessage],
+    replacement: AIMessage,
+    index: int,
+    shape: str,
+    messages_key: str,
+) -> Any:
+    """Rebuild *input* with the message at *index* swapped for *replacement*.
+
+    Keeps every other state field intact so ``InjectedState`` tools observe the
+    real state. *index* must target the same ``AIMessage`` that
+    :func:`_last_ai_message` located — it is not necessarily the last message
+    in *messages*.
+    """
+    new_messages: list[BaseMessage] = list(messages)
+    new_messages[index] = replacement
+    if shape == "list":
+        return new_messages
+    if shape == "dict":
+        return {**input, messages_key: new_messages}
+    if isinstance(input, BaseModel):
+        return input.model_copy(update={messages_key: new_messages})
+    if dataclasses.is_dataclass(input) and not isinstance(input, type):
+        return dataclasses.replace(input, **{messages_key: new_messages})
+    raise TypeError(
+        f"Unsupported state type for SaidexToolNode: {type(input).__name__}. "
+        "Use a message list, a dict, a Pydantic model or a dataclass."
+    )
+
+
+def _order_tool_messages(messages: list[BaseMessage], order: dict[str, int]) -> list[BaseMessage]:
+    """Stable-sort ``ToolMessage``s into original call order; others keep position."""
+
+    def key(indexed: tuple[int, BaseMessage]) -> tuple[int, int]:
+        position, message = indexed
+        if isinstance(message, ToolMessage) and message.tool_call_id in order:
+            return (order[message.tool_call_id], position)
+        return (len(order), position)
+
+    return [message for _, message in sorted(enumerate(messages), key=key)]
+
+
+def _merge_output(
+    inner_output: Any,
+    extra_messages: list[BaseMessage],
+    shape: str,
+    messages_key: str,
+    order: dict[str, int],
+) -> Any:
+    """Combine the inner node's output with policy messages, mirroring shape.
+
+    ``Command`` objects (and any other non-message elements the inner node
+    returns) are passed through unchanged; policy messages are grouped into a
+    ``{messages_key: [...]}`` update in that case.
+    """
+    if inner_output is None:
+        merged: list[BaseMessage] = _order_tool_messages(list(extra_messages), order)
+        return merged if shape == "list" else {messages_key: merged}
+    if isinstance(inner_output, dict):
+        combined = list(inner_output.get(messages_key, [])) + list(extra_messages)
+        return {**inner_output, messages_key: _order_tool_messages(combined, order)}
+    if isinstance(inner_output, list):
+        if all(isinstance(element, BaseMessage) for element in inner_output):
+            return _order_tool_messages([*inner_output, *extra_messages], order)
+        if extra_messages:
+            return [*inner_output, {messages_key: extra_messages}]
+        return inner_output
+    if extra_messages:
+        return [inner_output, {messages_key: extra_messages}]
+    return inner_output

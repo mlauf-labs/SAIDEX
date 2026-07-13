@@ -302,3 +302,158 @@ async def test_graph_embedded_matches_stock_toolnode() -> None:
     assert ours_tm[0].content == stock_tm[0].content
     assert ours_tm[0].tool_call_id == stock_tm[0].tool_call_id
     assert ours_tm[0].name == stock_tm[0].name
+
+
+# ---------------------------------------------------------------------------
+# Recovery of invalid_tool_calls + validation feedback (Task 6)
+# ---------------------------------------------------------------------------
+
+
+def _invalid(name: str, raw_args: str, call_id: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "args": raw_args,
+        "id": call_id,
+        "error": "Malformed args",
+        "type": "invalid_tool_call",
+    }
+
+
+def _ai_of(result: Any) -> AIMessage | None:
+    messages = result["messages"] if isinstance(result, dict) else result
+    for m in messages:
+        if isinstance(m, AIMessage):
+            return m
+    return None
+
+
+@pytest.mark.asyncio
+async def test_invalid_call_recovered_via_think_strip() -> None:
+    raw = '<think>let me compute</think>{"a": 2, "b": 3}'
+    state = {"messages": [_ai(invalid=[_invalid("add", raw, "c1")])]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.content == "5"
+    assert tool_message.tool_call_id == "c1"
+    assert EXECUTED == ["add:2+3"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_call_recovered_via_json_repair() -> None:
+    state = {"messages": [_ai(invalid=[_invalid("add", '{"a": 2, "b": 3', "c1")])]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].content == "5"
+
+
+@pytest.mark.asyncio
+async def test_repair_flags_can_be_disabled() -> None:
+    state = {"messages": [_ai(invalid=[_invalid("add", '{"a": 2, "b": 3', "c1")])]}
+    node = SaidexToolNode([add], json_repair=False)
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_validation_failure_yields_structured_feedback() -> None:
+    state = {"messages": [_ai([_call("add", {"a": "notanint", "b": 2}, "c1")])]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert tool_message.tool_call_id == "c1"
+    assert tool_message.name == "add"
+    assert "TYPE ERRORS" in str(tool_message.content)
+    assert "was NOT executed" in str(tool_message.content)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_unrecoverable_invalid_gets_feedback_with_schema_summary() -> None:
+    state = {"messages": [_ai(invalid=[_invalid("add", "utter garbage no json here", "c1")])]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert tool_message.tool_call_id == "c1"
+    assert "could not be parsed" in str(tool_message.content)
+    assert "add" in str(tool_message.content)
+
+
+@pytest.mark.asyncio
+async def test_every_id_answered_mixed_batch() -> None:
+    state = {
+        "messages": [
+            _ai(
+                [
+                    _call("add", {"a": 1, "b": 2}, "ok-1"),
+                    _call("add", {"a": "bad", "b": 2}, "bad-1"),
+                    _call("nope", {"x": 1}, "unknown-1"),
+                ],
+                invalid=[_invalid("add", "garbage", "junk-1")],
+            )
+        ]
+    }
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    ids = [m.tool_call_id for m in _tool_messages(result)]
+    assert ids == ["ok-1", "bad-1", "unknown-1", "junk-1"]
+    assert EXECUTED == ["add:1+2"]
+
+
+@pytest.mark.asyncio
+async def test_sanitize_replaces_ai_message_after_repair() -> None:
+    raw = '<think>hmm</think>{"a": 2, "b": 3}'
+    state = {"messages": [_ai(invalid=[_invalid("add", raw, "c1")], msg_id="ai-9")]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.id == "ai-9"
+    assert updated.invalid_tool_calls == []
+    assert updated.tool_calls[0]["args"] == {"a": 2, "b": 3}
+
+
+@pytest.mark.asyncio
+async def test_sanitize_keeps_feedback_calls_untouched() -> None:
+    state = {
+        "messages": [
+            _ai(
+                [_call("add", {"a": "bad", "b": 2}, "c1")],
+                invalid=[_invalid("add", '{"a": 5, "b": 5', "c2")],
+                msg_id="ai-9",
+            )
+        ]
+    }
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    updated = _ai_of(result)
+    assert updated is not None
+    # The repaired call joined tool_calls; the feedback-path call stayed as-is.
+    assert [c["id"] for c in updated.tool_calls] == ["c1", "c2"]
+    assert updated.tool_calls[0]["args"] == {"a": "bad", "b": 2}
+    assert updated.invalid_tool_calls == []
+
+
+@pytest.mark.asyncio
+async def test_no_sanitized_message_when_nothing_changed() -> None:
+    state = {"messages": [_ai([_call("add", {"a": 1, "b": 2}, "c1")])]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _ai_of(result) is None
+
+
+@pytest.mark.asyncio
+async def test_sanitize_messages_false_returns_no_ai_message() -> None:
+    raw = '{"a": 2, "b": 3'
+    state = {"messages": [_ai(invalid=[_invalid("add", raw, "c1")])]}
+    node = SaidexToolNode([add], sanitize_messages=False)
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _ai_of(result) is None
+
+
+@pytest.mark.asyncio
+async def test_sanitize_skipped_without_message_id() -> None:
+    raw = '{"a": 2, "b": 3'
+    state = {"messages": [_ai(invalid=[_invalid("add", raw, "c1")], msg_id=None)]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _ai_of(result) is None
+    assert _tool_messages(result)[0].content == "5"
