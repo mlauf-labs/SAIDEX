@@ -256,3 +256,86 @@ class ExtractionEvent:
     stats: ExtractDataStats | ExtractorRunStats
     messages: list[BaseMessage]
     source_text: str | None = None
+
+
+@dataclass(frozen=True)
+class ToolCallStats:
+    """Outcome of one tool call processed by a ``SaidexToolNode``.
+
+    Attributes:
+        tool_name: Name of the tool the call targeted.
+        tool_call_id: The call id from the model output, or ``None`` when the
+            provider did not assign one (some ``invalid_tool_calls`` entries).
+        outcome: What ultimately happened — ``"executed"`` (ran, possibly after
+            deterministic repair), ``"corrected"`` (ran after an LLM correction
+            cycle) or ``"feedback"`` (not run; a corrective ``ToolMessage`` was
+            emitted instead).
+        repaired: Whether the call was deterministically recovered from
+            ``invalid_tool_calls`` (think-tag stripping / json-repair).
+        prevalidated: Whether the args were validated against the tool's
+            Pydantic schema before execution.  ``False`` for unknown tool names
+            and tools with non-Pydantic (dict) schemas, which are passed through
+            to the executor unchanged.
+        correction_retries: LLM attempts consumed by the correction cycle
+            (``0`` unless ``on_invalid="correct"`` ran for this call).
+        field_issues: Field-level validation problems observed before the
+            policy was applied.
+    """
+
+    tool_name: str
+    tool_call_id: str | None
+    outcome: str
+    repaired: bool = False
+    prevalidated: bool = True
+    correction_retries: int = 0
+    field_issues: tuple[FieldIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class ToolNodeStats:
+    """Statistics from one ``SaidexToolNode`` invocation.
+
+    Attributes:
+        calls: Per-call outcomes, in original tool-call order
+            (``tool_calls`` first, then ``invalid_tool_calls``).
+    """
+
+    calls: tuple[ToolCallStats, ...] = ()
+
+    @property
+    def executed_count(self) -> int:
+        """Calls that executed without an LLM correction cycle."""
+        return sum(1 for c in self.calls if c.outcome == "executed")
+
+    @property
+    def corrected_count(self) -> int:
+        """Calls that executed after an LLM correction cycle."""
+        return sum(1 for c in self.calls if c.outcome == "corrected")
+
+    @property
+    def feedback_count(self) -> int:
+        """Calls that were answered with a corrective feedback message."""
+        return sum(1 for c in self.calls if c.outcome == "feedback")
+
+    @property
+    def repaired_count(self) -> int:
+        """Calls deterministically recovered from ``invalid_tool_calls``."""
+        return sum(1 for c in self.calls if c.repaired)
+
+    @property
+    def field_issues(self) -> tuple[FieldIssue, ...]:
+        """All field-level issues across calls, in call order."""
+        return tuple(issue for c in self.calls for issue in c.field_issues)
+
+
+@dataclass(frozen=True)
+class ToolNodeEvent:
+    """Payload dispatched to observers after one ``SaidexToolNode`` invocation.
+
+    Attributes:
+        node_name: The node's ``name`` (as shown in the graph).
+        stats: The invocation's :class:`ToolNodeStats`.
+    """
+
+    node_name: str
+    stats: ToolNodeStats
