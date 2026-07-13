@@ -38,6 +38,12 @@ class ToolArgs(BaseModel):
 
 
 class ToolArgsWithSchemaField(BaseModel):
+    """Deliberately declares a field literally named ``schema`` (regression
+    coverage). Pydantic's "shadows an attribute in parent BaseModel"
+    UserWarning is expected and harmless — suppressed narrowly in
+    pyproject.toml's [tool.pytest.ini_options] filterwarnings.
+    """
+
     name: str
     schema: str
 

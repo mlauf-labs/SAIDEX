@@ -62,7 +62,14 @@ def greet(name: str) -> str:
 
 @tool
 def lookup_table(schema: str, table: str) -> str:
-    """Look up a table by schema and table name (regression: field named 'schema')."""
+    """Look up a table by schema and table name (regression: field named 'schema').
+
+    Real SQL-style tools genuinely have a 'schema' argument, so this
+    deliberately shadows BaseModel.schema(). Pydantic's "shadows an
+    attribute in parent" UserWarning it triggers (at @tool decoration time
+    and again during arg validation) is expected and harmless — suppressed
+    narrowly in pyproject.toml's [tool.pytest.ini_options] filterwarnings.
+    """
     EXECUTED.append(f"lookup_table:{schema}.{table}")
     return f"{schema}.{table}"
 
@@ -1169,6 +1176,35 @@ async def test_stats_collected_via_collect_stats() -> None:
 
 
 @pytest.mark.asyncio
+async def test_collect_stats_sink_does_not_leak_correction_sub_extraction() -> None:
+    """Pins the SINK channel, not just the on_tool_node() listener channel
+    (see test_correct_policy_does_not_emit_extraction_event and
+    test_on_tool_node_fires_and_correction_emits_no_extraction_event above,
+    both of which only cover on_extraction()/on_tool_node() listeners).
+    collect_stats() records from BOTH dispatch paths (dispatch_to_observers
+    for extractions, dispatch_tool_node_event for tool-node runs), so an
+    active sink is a distinct leak surface: the correction cycle's internal
+    extract_data(...) call passes _notify_observers=False specifically so
+    dispatch_to_observers is never invoked for it, and that must hold for
+    sinks too, not only for on_extraction() listeners. A regression here
+    would show up as len(sink) == 2 (the correction's ExtractDataStats plus
+    the node's ToolNodeStats) instead of exactly 1."""
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")], msg_id="ai-9")]}
+    node = SaidexToolNode(
+        [add],
+        on_invalid="correct",
+        correction_model=_correction_llm([{"a": 5, "b": 2}]),
+    )
+
+    async with collect_stats() as sink:
+        result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result)[0].content == "7"
+    assert len(sink) == 1
+    assert isinstance(sink.all()[0], ToolNodeStats)
+
+
+@pytest.mark.asyncio
 async def test_on_tool_node_fires_and_correction_emits_no_extraction_event() -> None:
     tool_events: list[Any] = []
     extraction_events: list[Any] = []
@@ -1248,6 +1284,15 @@ async def test_command_returning_tool_passes_through() -> None:
     # A Command update must carry a matching ToolMessage for its own call id
     # (langgraph's ToolNode._validate_tool_command enforces this whenever the
     # Command has no parent graph) — mirrors the existing `move` fixture.
+    #
+    # `assert type(result) is type(stock)` alone would still pass if
+    # SaidexToolNode mangled the Command's goto or injected extra messages
+    # into its update (both would still produce a `list` containing a
+    # `Command`). All valid calls with no repair/correction take the
+    # unchanged-input fast path in _arun (`inner_input = input`), so the
+    # inner stock ToolNode runs on the exact same input as the standalone
+    # `stock` call below — the Command payloads must therefore be identical,
+    # not just same-typed.
     @tool
     def handoff(target: str, tool_call_id: Annotated[str, InjectedToolCallId]) -> Command[Any]:
         """Hand off control to another agent."""
@@ -1264,6 +1309,20 @@ async def test_command_returning_tool_passes_through() -> None:
     result = await SaidexToolNode([handoff]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
     stock = await ToolNode([handoff]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
     assert type(result) is type(stock)
+
+    assert isinstance(result, list) and isinstance(stock, list)
+    ours_commands = [e for e in result if isinstance(e, Command)]
+    stock_commands = [e for e in stock if isinstance(e, Command)]
+    assert len(ours_commands) == len(stock_commands) == 1
+    ours_cmd, stock_cmd = ours_commands[0], stock_commands[0]
+
+    assert ours_cmd.goto == stock_cmd.goto == "agent_b"
+
+    ours_update_messages = ours_cmd.update["messages"]
+    stock_update_messages = stock_cmd.update["messages"]
+    assert len(ours_update_messages) == len(stock_update_messages) == 1
+    assert ours_update_messages[0].tool_call_id == stock_update_messages[0].tool_call_id == "c1"
+    assert ours_update_messages[0].content == stock_update_messages[0].content
 
 
 @pytest.mark.asyncio

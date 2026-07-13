@@ -44,7 +44,13 @@ class WithNested(BaseModel):
 
 
 class WithSchemaField(BaseModel):
-    """A model whose field is literally named ``schema`` (regression, issue: schema= collision)."""
+    """A model whose field is literally named ``schema`` (regression, issue: schema= collision).
+
+    Pydantic's "shadows an attribute in parent BaseModel" UserWarning is
+    expected and deliberately not fixed here — the shadowing is intentional
+    (real tools have "schema" args) and harmless; it is suppressed narrowly
+    in pyproject.toml's [tool.pytest.ini_options] filterwarnings.
+    """
 
     schema: str
     table: str

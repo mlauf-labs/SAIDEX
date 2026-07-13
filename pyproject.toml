@@ -102,6 +102,20 @@ version_files = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+filterwarnings = [
+    # Deliberate regression coverage for a real bug: a Pydantic model/tool
+    # with a field literally named "schema" (e.g. a SQL tool's schema/table
+    # args) used to raise a TypeError inside create_instance_with_issues.
+    # Real-world tools genuinely have such fields, so the tests declare them
+    # on purpose — Pydantic only warns about the BaseModel.schema() shadow,
+    # the models work fine. Some of these declarations happen at
+    # class-definition / @tool-decoration time (module import), before any
+    # test runs, so a per-test @pytest.mark.filterwarnings cannot catch them
+    # — hence this narrow, message-scoped ini filter instead. See
+    # tests/test_agent_loop.py, tests/test_utils.py, and
+    # tests/test_langgraph_toolnode.py for the declarations.
+    'ignore:Field name "schema" in .* shadows an attribute in parent .*:UserWarning',
+]
 
 [tool.coverage.run]
 source = ["src/saidex"]
