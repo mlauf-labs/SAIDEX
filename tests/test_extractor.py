@@ -47,8 +47,8 @@ def _make_bound_llm(responses: list[MagicMock]) -> MagicMock:
     return llm
 
 
-def _make_json_response(content: str) -> MagicMock:
-    """Create a mock LLM response that returns raw text content (JSON mode)."""
+def _make_json_response(content: Any) -> MagicMock:
+    """Create a mock LLM response with raw text or block-list content (JSON mode)."""
     response = MagicMock()
     response.content = content
     # No tool calls in JSON mode.
@@ -57,7 +57,7 @@ def _make_json_response(content: str) -> MagicMock:
     return response
 
 
-def _make_json_llm(contents: list[str]) -> MagicMock:
+def _make_json_llm(contents: list[Any]) -> MagicMock:
     """Return a mock LLM whose .ainvoke() yields *contents* as response content.
 
     The mock raises if ``bind_tools`` is ever called, asserting that JSON mode
@@ -357,6 +357,131 @@ async def test_json_mode_injects_schema_instructions() -> None:
     assert isinstance(last, HumanMessage)
     assert "JSON Schema" in last.content
     assert "SimpleSchema" in last.content
+
+
+# ---------------------------------------------------------------------------
+# JSON mode — list-shaped content (Responses-API / reasoning block types)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_json_mode_reads_text_blocks() -> None:
+    content = [{"type": "text", "text": '{"name": "Hank", "value": 21}'}]
+    llm = _make_json_llm([content])
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        [HumanMessage(content="Extract data")],
+        mode=ExtractionMode.JSON,
+        retry_config=NO_NETWORK_RETRY,
+    )
+
+    assert result is not None
+    assert result.name == "Hank"
+    assert stats.primary_retries == 0
+
+
+@pytest.mark.asyncio
+async def test_json_mode_reads_output_text_blocks() -> None:
+    """Responses-API models name the answer block ``output_text``, not ``text``."""
+    content = [{"type": "output_text", "text": '{"name": "Ivy", "value": 12}'}]
+    llm = _make_json_llm([content])
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        [HumanMessage(content="Extract data")],
+        mode=ExtractionMode.JSON,
+        retry_config=NO_NETWORK_RETRY,
+    )
+
+    assert result is not None
+    assert result.name == "Ivy"
+    assert result.value == 12
+    assert stats.primary_retries == 0
+
+
+@pytest.mark.asyncio
+async def test_json_mode_skips_reasoning_block_beside_output_text() -> None:
+    """A reasoning block must not be parsed — the ``output_text`` block carries the answer."""
+    content = [
+        {"type": "reasoning", "summary": "Let me think... {maybe}"},
+        {"type": "output_text", "text": '{"name": "Jack", "value": 33}'},
+    ]
+    llm = _make_json_llm([content])
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        [HumanMessage(content="Extract data")],
+        mode=ExtractionMode.JSON,
+        retry_config=NO_NETWORK_RETRY,
+    )
+
+    assert result is not None
+    assert result.name == "Jack"
+    assert stats.primary_retries == 0
+
+
+@pytest.mark.asyncio
+async def test_json_mode_skips_reasoning_block_carrying_a_text_key() -> None:
+    """Reasoning is skipped by *type*, even when its payload sits under ``text``."""
+    content = [
+        {"type": "reasoning", "text": '{"name": "WRONG", "value": 0}'},
+        {"type": "output_text", "text": '{"name": "Kim", "value": 9}'},
+    ]
+    llm = _make_json_llm([content])
+
+    result, _ = await extract_data(
+        llm,
+        SimpleSchema,
+        [HumanMessage(content="Extract data")],
+        mode=ExtractionMode.JSON,
+        retry_config=NO_NETWORK_RETRY,
+    )
+
+    assert result is not None
+    assert result.name == "Kim"
+    assert result.value == 9
+
+
+@pytest.mark.asyncio
+async def test_json_mode_tolerates_unknown_block_type_with_text_key() -> None:
+    """Defensive: an unrecognised block type still counts when it exposes ``text``."""
+    content = [{"type": "some_future_alias", "text": '{"name": "Lena", "value": 4}'}]
+    llm = _make_json_llm([content])
+
+    result, _ = await extract_data(
+        llm,
+        SimpleSchema,
+        [HumanMessage(content="Extract data")],
+        mode=ExtractionMode.JSON,
+        retry_config=NO_NETWORK_RETRY,
+    )
+
+    assert result is not None
+    assert result.name == "Lena"
+
+
+@pytest.mark.asyncio
+async def test_json_mode_reasoning_only_content_reports_parse_error() -> None:
+    """Nothing answer-bearing in the response — fail as a parse error, not a crash."""
+    content = [{"type": "reasoning", "summary": "thinking, no answer"}]
+    llm = _make_json_llm([content, content])
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        [HumanMessage(content="Extract data")],
+        mode=ExtractionMode.JSON,
+        max_primary_retries=2,
+        retry_config=NO_NETWORK_RETRY,
+    )
+
+    assert result is None
+    assert stats.failure_reason == "parse_error"
+    assert stats.format_errors == 2
 
 
 # ---------------------------------------------------------------------------
