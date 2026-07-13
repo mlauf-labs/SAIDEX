@@ -1909,6 +1909,13 @@ def _parse_json_response(
     return parsed, None
 
 
+#: Block types that never carry the answer.  Reasoning models emit these next to
+#: the real answer block; parsing their text would feed the model's private
+#: chain of thought to the JSON parser.  Matched *before* the text key, because
+#: some providers put the reasoning under a ``text`` key as well.
+_NON_ANSWER_BLOCK_TYPES = frozenset({"reasoning", "thinking", "redacted_thinking"})
+
+
 def _extract_json_from_content(content: Any) -> Any:
     """Extract and parse a JSON value from raw LLM response content.
 
@@ -1917,6 +1924,11 @@ def _extract_json_from_content(content: Any) -> Any:
     ``<think>…</think>`` block (Qwen3, DeepSeek-R1, …), and truncated or
     otherwise malformed JSON (missing commas, unclosed brackets, etc.) via
     ``json-repair`` as a last-resort fallback.
+
+    List-shaped content is flattened by taking every block that exposes a
+    ``text`` key and is not a reasoning block.  Block *type* names differ per
+    provider — LangChain's ``"text"``, the Responses API's ``"output_text"`` —
+    so the text key, not the type name, decides what counts as an answer.
     """
     if isinstance(content, list):
         # Multimodal / chunked content — concatenate the text parts.
@@ -1924,8 +1936,10 @@ def _extract_json_from_content(content: Any) -> Any:
         for part in content:
             if isinstance(part, str):
                 text_parts.append(part)
-            elif isinstance(part, dict) and part.get("type") == "text":
-                text_parts.append(str(part.get("text", "")))
+            elif isinstance(part, dict) and "text" in part:
+                if part.get("type") in _NON_ANSWER_BLOCK_TYPES:
+                    continue
+                text_parts.append(str(part["text"]))
         text = "\n".join(text_parts)
     else:
         text = str(content)
