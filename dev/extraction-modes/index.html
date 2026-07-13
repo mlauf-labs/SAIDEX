@@ -610,6 +610,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="ExtractionMode.TOOL_CALLING (default)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openai-compatible-gateways-toolcallconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-compatible gateways (ToolCallConfig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automatic-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automatic recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1228,6 +1256,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="ExtractionMode.TOOL_CALLING (default)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#openai-compatible-gateways-toolcallconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-compatible gateways (ToolCallConfig)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automatic-recovery" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automatic recovery
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1420,6 +1476,66 @@ are the structured output.</p>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">TOOL_CALLING</span><span class="p">,</span>   <span class="c1"># this is the default</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">)</span>
 </code></pre></div>
+<h3 id="openai-compatible-gateways-toolcallconfig">OpenAI-compatible gateways (<code>ToolCallConfig</code>)<a class="headerlink" href="#openai-compatible-gateways-toolcallconfig" title="Permanent link">&para;</a></h3>
+<p>By default the schema tool is bound with OpenAI's most reliable flag set: a
+<strong>forced</strong> <code>tool_choice</code>, <code>strict=True</code> (structured outputs) and
+<code>parallel_tool_calls=False</code>.  Several OpenAI-<em>compatible</em> gateways — endpoints
+hosting Kimi/Moonshot, some Qwen or DeepSeek deployments — reject one or more of
+those flags with an HTTP 400, even though the model itself calls tools perfectly
+well.</p>
+<p><code>ToolCallConfig</code> makes each flag configurable:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">ToolCallConfig</span><span class="p">,</span> <span class="n">extract_data</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">tool_config</span><span class="o">=</span><span class="n">ToolCallConfig</span><span class="o">.</span><span class="n">COMPATIBLE</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">)</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Preset</th>
+<th><code>tool_choice</code></th>
+<th><code>strict</code></th>
+<th><code>parallel_tool_calls</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ToolCallConfig.OPENAI</code> (default)</td>
+<td>forced (the tool's name)</td>
+<td><code>True</code></td>
+<td><code>False</code></td>
+</tr>
+<tr>
+<td><code>ToolCallConfig.COMPATIBLE</code></td>
+<td><code>"auto"</code></td>
+<td><em>not sent</em></td>
+<td><em>not sent</em></td>
+</tr>
+</tbody>
+</table>
+<p><code>None</code> means <strong>the keyword argument is left out of the request entirely</strong> — which
+is not the same as sending <code>False</code>.  Some gateways already fail on the mere
+presence of <code>strict</code>; others accept the parameter but refuse the value <code>True</code>.
+Both cases are expressible:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Gateway knows `strict` but only supports `false`</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="n">tool_config</span><span class="o">=</span><span class="n">ToolCallConfig</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Gateway 400s on the parameter itself — omit it, keep everything else</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">tool_config</span><span class="o">=</span><span class="n">ToolCallConfig</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="automatic-recovery">Automatic recovery<a class="headerlink" href="#automatic-recovery" title="Permanent link">&para;</a></h3>
+<p>You usually do not have to configure anything.  When a provider rejects the
+bound flags — an HTTP 400 naming <code>strict</code> / <code>tool_choice</code> /
+<code>parallel_tool_calls</code>, or a <code>TypeError</code> from a <code>bind_tools</code> implementation that
+never accepted them — SAIDEX re-binds the schema tool <strong>once</strong> with
+<code>ToolCallConfig.COMPATIBLE</code>, logs a warning, and carries on <strong>without consuming a
+validation retry</strong>.  A second failure ends the attempt as <code>llm_error</code> as before.</p>
+<p>Switch the behaviour off with <code>ToolCallConfig(auto_relax=False)</code> when you want a
+hard failure instead of a silently degraded request.</p>
+<p><code>tool_config</code> is ignored in <code>ExtractionMode.JSON</code> mode, which never calls
+<code>bind_tools</code>.</p>
 <hr />
 <h2 id="extractionmodejson"><code>ExtractionMode.JSON</code><a class="headerlink" href="#extractionmodejson" title="Permanent link">&para;</a></h2>
 <p>The schema's JSON Schema is injected into the prompt and the model is asked to
@@ -1451,19 +1567,19 @@ reply with a single raw JSON object.  The library parses the response
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">JSON</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">JSON</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="p">)</span>
 </code></pre></div>
 <h3 id="what-gets-added-to-the-prompt">What gets added to the prompt<a class="headerlink" href="#what-gets-added-to-the-prompt" title="Permanent link">&para;</a></h3>
 <p>In JSON mode the library appends one <code>HumanMessage</code> before invoking the model:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>Respond with a SINGLE JSON object that strictly conforms to the JSON Schema
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>below. Output ONLY the raw JSON object — no markdown code fences, no comments,
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>and no explanatory text before or after it.
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>JSON Schema for &#39;MySchema&#39;:
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>{ ... full JSON Schema ... }
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>Respond with a SINGLE JSON object that strictly conforms to the JSON Schema
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>below. Output ONLY the raw JSON object — no markdown code fences, no comments,
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>and no explanatory text before or after it.
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>JSON Schema for &#39;MySchema&#39;:
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>{ ... full JSON Schema ... }
 </code></pre></div>
 <h3 id="robust-parsing">Robust parsing<a class="headerlink" href="#robust-parsing" title="Permanent link">&para;</a></h3>
 <p>Real models do not always follow "raw JSON only" perfectly.  The JSON-mode
@@ -1499,6 +1615,10 @@ exactly like a validation failure.</p>
 <td><code>TOOL_CALLING</code> (default)</td>
 </tr>
 <tr>
+<td>OpenAI-compatible gateway (Kimi, Qwen, DeepSeek, …)</td>
+<td><code>TOOL_CALLING</code> with <a href="#openai-compatible-gateways-toolcallconfig"><code>ToolCallConfig.COMPATIBLE</code></a></td>
+</tr>
+<tr>
 <td>Local model via Ollama / llama.cpp</td>
 <td><code>JSON</code></td>
 </tr>
@@ -1524,7 +1644,7 @@ models.</p>
 <hr />
 <h2 id="tips-for-json-mode">Tips for JSON mode<a class="headerlink" href="#tips-for-json-mode" title="Permanent link">&para;</a></h2>
 <h3 id="use-a-low-temperature">Use a low temperature<a class="headerlink" href="#use-a-low-temperature" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">llm</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o-mini&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
 </code></pre></div>
 <p>Deterministic output makes the model far more likely to produce clean JSON.</p>
 <h3 id="keep-schemas-focused">Keep schemas focused<a class="headerlink" href="#keep-schemas-focused" title="Permanent link">&para;</a></h3>
@@ -1534,20 +1654,21 @@ for guidance — it matters even more in JSON mode.</p>
 <h3 id="combine-with-a-fallback-model">Combine with a fallback model<a class="headerlink" href="#combine-with-a-fallback-model" title="Permanent link">&para;</a></h3>
 <p>A small local model in JSON mode with a capable cloud model as fallback gives a
 good cost/reliability balance:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">local</span>    <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;llama3.1&quot;</span><span class="p">,</span> <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;http://localhost:11434/v1&quot;</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="n">fallback</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="n">local</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">JSON</span><span class="p">,</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>    <span class="n">fallback_llm_model</span><span class="o">=</span><span class="n">fallback</span><span class="p">,</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="n">max_primary_retries</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">local</span>    <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;llama3.1&quot;</span><span class="p">,</span> <span class="n">base_url</span><span class="o">=</span><span class="s2">&quot;http://localhost:11434/v1&quot;</span><span class="p">,</span> <span class="n">api_key</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">fallback</span> <span class="o">=</span> <span class="n">ChatOpenAI</span><span class="p">(</span><span class="n">model</span><span class="o">=</span><span class="s2">&quot;gpt-4o&quot;</span><span class="p">,</span> <span class="n">temperature</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data</span><span class="p">(</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">local</span><span class="p">,</span> <span class="n">MySchema</span><span class="p">,</span> <span class="n">messages</span><span class="p">,</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">mode</span><span class="o">=</span><span class="n">ExtractionMode</span><span class="o">.</span><span class="n">JSON</span><span class="p">,</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">fallback_llm_model</span><span class="o">=</span><span class="n">fallback</span><span class="p">,</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="n">max_primary_retries</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="p">)</span>
 </code></pre></div>
 <hr />
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../examples/07_json_mode.py"><code>examples/07_json_mode.py</code></a> — runnable JSON-mode example</li>
+<li><a href="../examples/15_openai_compatible_gateway.py"><code>examples/15_openai_compatible_gateway.py</code></a> — <code>ToolCallConfig</code> against a compatible gateway</li>
 <li><a href="../extraction/">Extraction</a> — the two extraction functions</li>
 <li><a href="../retry-and-fallback/">Retry &amp; Fallback</a> — the shared retry / fallback behaviour</li>
 <li><a href="../schema-design/">Schema Design</a> — writing schemas the model can satisfy</li>
