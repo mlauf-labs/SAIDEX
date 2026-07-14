@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 if TYPE_CHECKING:
     from langchain_core.messages.base import BaseMessage
@@ -28,6 +28,60 @@ class ExtractionMode(str, Enum):
 
     TOOL_CALLING = "tool_calling"
     JSON = "json"
+
+
+@dataclass(frozen=True)
+class ToolCallConfig:
+    """How the schema tool is bound in :attr:`ExtractionMode.TOOL_CALLING`.
+
+    The defaults reproduce OpenAI's most reliable setup: force the model to call
+    the schema tool, disable parallel calls, and switch on strict structured
+    outputs.  Several OpenAI-*compatible* gateways (Moonshot/Kimi, some
+    Qwen/DeepSeek deployments) reject one or more of these with an HTTP 400, so
+    every flag can be overridden — or dropped from the request entirely.
+
+    ``None`` means **omit the keyword argument**, which is not the same as
+    sending ``False``: some gateways already fail on the mere presence of
+    ``strict``, while others accept the parameter but refuse the value ``True``.
+
+    Ready-made presets:
+
+    - :attr:`OPENAI` — the defaults below.
+    - :attr:`COMPATIBLE` — ``tool_choice="auto"`` and no ``strict`` /
+      ``parallel_tool_calls`` at all; the safe setting for limited gateways.
+
+    Attributes:
+        tool_choice: ``"forced"`` sends the schema tool's name (the model *must*
+            call it), ``"auto"`` lets the model decide, ``None`` omits the
+            keyword argument.
+        strict: Value for the ``strict`` keyword (OpenAI structured outputs), or
+            ``None`` to omit it.
+        parallel_tool_calls: Value for the ``parallel_tool_calls`` keyword, or
+            ``None`` to omit it.
+        auto_relax: When ``True`` (default) and the provider rejects the bound
+            flags — an HTTP 400 naming one of them, or a ``TypeError`` from a
+            ``bind_tools`` implementation that does not accept them — the schema
+            tool is re-bound **once** with :attr:`COMPATIBLE` and the attempt
+            continues, without consuming a validation retry.
+    """
+
+    tool_choice: Literal["forced", "auto"] | None = "forced"
+    strict: bool | None = True
+    parallel_tool_calls: bool | None = False
+    auto_relax: bool = True
+
+    #: Default flags — forced ``tool_choice``, ``strict=True``, no parallel calls.
+    OPENAI: ClassVar[ToolCallConfig]
+    #: Relaxed flags for OpenAI-compatible gateways with limited support.
+    COMPATIBLE: ClassVar[ToolCallConfig]
+
+
+ToolCallConfig.OPENAI = ToolCallConfig()
+ToolCallConfig.COMPATIBLE = ToolCallConfig(
+    tool_choice="auto",
+    strict=None,
+    parallel_tool_calls=None,
+)
 
 
 @dataclass(frozen=True)
@@ -202,3 +256,100 @@ class ExtractionEvent:
     stats: ExtractDataStats | ExtractorRunStats
     messages: list[BaseMessage]
     source_text: str | None = None
+
+
+#: The four outcomes a SaidexToolNode-processed tool call can have. See
+#: :attr:`ToolCallStats.outcome` for what each value means.
+ToolCallOutcome = Literal["executed", "corrected", "feedback", "dropped"]
+
+
+@dataclass(frozen=True)
+class ToolCallStats:
+    """Outcome of one tool call processed by a ``SaidexToolNode``.
+
+    Attributes:
+        tool_name: Name of the tool the call targeted.
+        tool_call_id: The call id from the model output, or ``None`` when the
+            provider did not assign one at all.  This can happen on entries
+            from either ``tool_calls`` or ``invalid_tool_calls`` (LangChain
+            types ``id`` as optional on both) — such a call cannot be answered
+            with a ``ToolMessage`` and is dropped rather than executed or
+            answered; see ``outcome="dropped"``.
+        outcome: What ultimately happened — ``"executed"`` (ran, possibly after
+            deterministic repair), ``"corrected"`` (ran after an LLM correction
+            cycle), ``"feedback"`` (not run; a corrective ``ToolMessage`` was
+            emitted instead) or ``"dropped"`` (not run and not answered — the
+            call carried no ``tool_call_id`` at all, so no ``ToolMessage``
+            could be produced for it either).
+        repaired: Whether the call was deterministically recovered from
+            ``invalid_tool_calls`` (think-tag stripping / json-repair).
+        prevalidated: Whether the args were validated against the tool's
+            Pydantic schema before execution.  ``False`` covers several
+            distinct cases with different consequences: an unknown tool name
+            or a tool with a non-Pydantic (dict) schema is passed through to
+            the executor unchanged, whereas an unrepairable malformed call or
+            a dropped id-less call is **not** passed through at all — see
+            ``outcome``.
+        correction_retries: LLM attempts consumed by the correction cycle
+            (``0`` unless ``on_invalid="correct"`` ran for this call).
+        field_issues: Field-level validation problems observed before the
+            policy was applied.
+    """
+
+    tool_name: str
+    tool_call_id: str | None
+    outcome: ToolCallOutcome
+    repaired: bool = False
+    prevalidated: bool = True
+    correction_retries: int = 0
+    field_issues: tuple[FieldIssue, ...] = ()
+
+
+@dataclass(frozen=True)
+class ToolNodeStats:
+    """Statistics from one ``SaidexToolNode`` invocation.
+
+    Attributes:
+        calls: Per-call outcomes, in original tool-call order
+            (``tool_calls`` first, then ``invalid_tool_calls``).
+    """
+
+    calls: tuple[ToolCallStats, ...] = ()
+
+    @property
+    def executed_count(self) -> int:
+        """Calls that executed without an LLM correction cycle."""
+        return sum(1 for c in self.calls if c.outcome == "executed")
+
+    @property
+    def corrected_count(self) -> int:
+        """Calls that executed after an LLM correction cycle."""
+        return sum(1 for c in self.calls if c.outcome == "corrected")
+
+    @property
+    def feedback_count(self) -> int:
+        """Calls that were answered with a corrective feedback message."""
+        return sum(1 for c in self.calls if c.outcome == "feedback")
+
+    @property
+    def repaired_count(self) -> int:
+        """Calls deterministically recovered from ``invalid_tool_calls``."""
+        return sum(1 for c in self.calls if c.repaired)
+
+    @property
+    def field_issues(self) -> tuple[FieldIssue, ...]:
+        """All field-level issues across calls, in call order."""
+        return tuple(issue for c in self.calls for issue in c.field_issues)
+
+
+@dataclass(frozen=True)
+class ToolNodeEvent:
+    """Payload dispatched to observers after one ``SaidexToolNode`` invocation.
+
+    Attributes:
+        node_name: The node's ``name`` (as shown in the graph).
+        stats: The invocation's :class:`ToolNodeStats`.
+    """
+
+    node_name: str
+    stats: ToolNodeStats

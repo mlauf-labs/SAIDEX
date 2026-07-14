@@ -21,6 +21,7 @@
 | **[Source Grounding](source-grounding.md)** | Mark fields with `Grounded` / `GroundedField` so extracted values are verified against the source text (anti-hallucination) |
 | **[Image Extraction](images.md)** | Multimodal messages, OpenAI Vision, local vLLM |
 | **[Observability](observability.md)** | Callbacks, Langfuse, LangSmith, logging, async/sync |
+| **[LangGraph: SaidexToolNode](langgraph-toolnode.md)** | Drop-in `ToolNode` replacement that repairs, validates and corrects agentic tool calls |
 
 ---
 
@@ -42,6 +43,8 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 | [`11_quality_analytics.py`](../examples/11_quality_analytics.py) | Aggregate field issues across runs: `summarize_field_issues` |
 | [`12_external_validator.py`](../examples/12_external_validator.py) | External `validator` callable: cross-field rule that re-enters the retry loop |
 | [`13_source_grounding.py`](../examples/13_source_grounding.py) | Source grounding: `Grounded` / `GroundedField` verify values against the text |
+| [`15_openai_compatible_gateway.py`](../examples/15_openai_compatible_gateway.py) | `ToolCallConfig`: tool calling against gateways that reject OpenAI-only flags |
+| [`16_langgraph_toolnode.py`](../examples/16_langgraph_toolnode.py) | `SaidexToolNode`: validated tool calling in a LangGraph agent |
 
 ---
 
@@ -64,3 +67,4 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 - …extract data from images → [Image Extraction](images.md)
 - …add tracing with Langfuse or LangSmith → [Observability](observability.md)
 - …call the library from synchronous code → [Observability — Sync usage](observability.md#sync-usage)
+- …validate and correct tool calls in a LangGraph agent → [LangGraph: SaidexToolNode](langgraph-toolnode.md)

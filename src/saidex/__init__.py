@@ -29,16 +29,22 @@ Public API
         ExtractorRunStats,
         # Shared
         ExtractionMode,
+        ToolCallConfig,
         ExtractDataStats,
         FieldIssue,
         ExtractionEvent,
+        ToolCallStats,
+        ToolNodeStats,
+        ToolNodeEvent,
         OnComplete,
         Validator,
         collect_stats,
         StatsSink,
         on_extraction,
+        on_tool_node,
         Subscription,
         ExtractionListener,
+        ToolNodeListener,
         RetryConfig,
         create_instance_safe,
         # Source grounding (schema-declared, source-aware field checks)
@@ -98,13 +104,19 @@ from .models import (
     ExtractionMode,
     ExtractorRunStats,
     FieldIssue,
+    ToolCallConfig,
+    ToolCallStats,
+    ToolNodeEvent,
+    ToolNodeStats,
 )
 from .observability import (
     ExtractionListener,
     StatsSink,
     Subscription,
+    ToolNodeListener,
     collect_stats,
     on_extraction,
+    on_tool_node,
 )
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
 from .sync import (
@@ -160,16 +172,22 @@ __all__ = [
     "ExtractorRunStats",
     # shared
     "ExtractionMode",
+    "ToolCallConfig",
     "ExtractDataStats",
     "FieldIssue",
     "ExtractionEvent",
+    "ToolCallStats",
+    "ToolNodeStats",
+    "ToolNodeEvent",
     "OnComplete",
     "Validator",
     "collect_stats",
     "StatsSink",
     "on_extraction",
+    "on_tool_node",
     "Subscription",
     "ExtractionListener",
+    "ToolNodeListener",
     "RetryConfig",
     # cross-run field-issue analytics
     "summarize_field_issues",
@@ -209,4 +227,4 @@ __all__ = [
     "validate_rrule",
 ]
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"

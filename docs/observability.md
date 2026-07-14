@@ -112,6 +112,14 @@ method, or on exit when used as a context manager (`with on_extraction(cb): ...`
 A listener that raises is logged and ignored — it can never break the extraction
 it observes.
 
+### Tool-node events (LangGraph)
+
+When you use [`SaidexToolNode`](langgraph-toolnode.md), each node invocation
+emits a `ToolNodeEvent`. Active `collect_stats()` sinks record its
+`ToolNodeStats` alongside extraction stats, and `on_tool_node()` registers a
+process-wide listener — the tool-node counterpart to `on_extraction()`
+(extraction listeners do not receive tool-node events).
+
 ---
 
 ## Langfuse

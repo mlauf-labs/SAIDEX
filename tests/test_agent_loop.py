@@ -37,6 +37,17 @@ class ToolArgs(BaseModel):
     parent_id: str | None = Field(default=None)
 
 
+class ToolArgsWithSchemaField(BaseModel):
+    """Deliberately declares a field literally named ``schema`` (regression
+    coverage). Pydantic's "shadows an attribute in parent BaseModel"
+    UserWarning is expected and harmless — suppressed narrowly in
+    pyproject.toml's [tool.pytest.ini_options] filterwarnings.
+    """
+
+    name: str
+    schema: str
+
+
 def _tc(name: str, args: dict[str, Any], call_id: str = "call_1") -> dict[str, Any]:
     """Build a tool_call dict as LangChain returns them."""
     return {"name": name, "args": args, "id": call_id}
@@ -425,9 +436,42 @@ async def test_tool_invoke_non_mapping_args_returns_invalid() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_invoke_reserved_key_collision_returns_invalid() -> None:
-    """An arg named 'schema' collides with create_instance_safe's own parameter."""
+async def test_tool_invoke_arg_named_schema_no_longer_collides() -> None:
+    """Regression: 'schema' used to collide with create_instance_safe's own
+    (formerly keyword) parameter, raising TypeError and forcing this path
+    through _invoke's own TypeError guard. create_instance_safe/
+    create_instance_with_issues now take schema positional-only (see
+    saidex.utils), so an arg literally named 'schema' just flows through like
+    any other key — here it's not a declared ToolArgs field, so pydantic's
+    default extra="ignore" drops it and the call succeeds normally."""
     tool = _make_tool()
     outcome = await tool._invoke({"schema": "x", "name": "foo"})
     assert outcome.handler_error is None
-    assert "Invalid arguments" in outcome.content
+    assert "Invalid arguments" not in outcome.content
+    data = json.loads(outcome.content)
+    assert data["status"] == "ok"
+    assert data["name"] == "foo"
+
+
+@pytest.mark.asyncio
+async def test_tool_invoke_declared_schema_field_flows_through() -> None:
+    """Sibling to test_tool_invoke_arg_named_schema_no_longer_collides (review
+    Finding 6): that test's ToolArgs does NOT declare a 'schema' field, so it
+    only proves pydantic's extra='ignore' silently drops an unknown key —
+    it never proves a genuinely declared 'schema' parameter actually reaches
+    the handler. Here ToolArgsWithSchemaField DOES declare 'schema', pinning
+    the real user-visible behavior: a tool whose args model has a 'schema'
+    field receives its value through Tool._invoke like any other field."""
+    tool = Tool(
+        name="lookup_table",
+        description="A test tool with a declared 'schema' field.",
+        parameters=ToolArgsWithSchemaField,
+        handler=_noop_handler,
+    )
+    outcome = await tool._invoke({"schema": "public", "name": "t"})
+    assert outcome.handler_error is None
+    assert "Invalid arguments" not in outcome.content
+    data = json.loads(outcome.content)
+    assert data["status"] == "ok"
+    assert data["schema"] == "public"
+    assert data["name"] == "t"

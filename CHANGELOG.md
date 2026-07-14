@@ -24,6 +24,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.1.0
 
+## v0.7.0 (2026-07-14)
+
+### BREAKING CHANGE
+
+- `create_instance_safe` and `create_instance_with_issues` now take `schema` as a
+  **positional-only** parameter. Callers passing it by keyword —
+  `create_instance_safe(schema=Foo, ...)` — must switch to positional:
+  `create_instance_safe(Foo, ...)`. Passing it positionally (the documented usage)
+  is unaffected.
+
+  This is what fixes the underlying bug: previously *any* extraction target schema
+  with a field literally named `schema` raised
+  `TypeError: got multiple values for argument 'schema'`, which also broke
+  `extract_data` for such schemas.
+
+### Feat
+
+- **langgraph**: emit ToolNodeEvent stats and verify tracing passthrough
+- **langgraph**: add correct and raise policies for invalid tool calls
+- **langgraph**: recover invalid tool calls and pre-validate args with feedback
+- **langgraph**: add SaidexToolNode skeleton with stock delegation
+- **observability**: collect ToolNodeStats in sinks and add on_tool_node listener
+- **models**: add ToolCallStats, ToolNodeStats and ToolNodeEvent
+- **extractor**: make tool-binding flags configurable via ToolCallConfig
+
+### Fix
+
+- **langgraph**: fail fast on unsupported object state before substitution
+- **langgraph**: pass Send-API tool-call payloads through to the executor
+- **langgraph**: reject empty or whitespace-only node name
+- **observability**: restore typed Subscription callback
+- **langgraph**: never let a correction failure crash SaidexToolNode
+- **langgraph**: drop id-less tool_calls entries from sanitized history
+- **langgraph**: answer every id-less/misordered tool call correctly
+- **utils**: accept schemas with a field named 'schema'
+- **langgraph**: scan backward for the last AIMessage like stock ToolNode
+- **extractor**: keep Responses-API output_text blocks in JSON mode
+
+### Refactor
+
+- **models**: type ToolCallStats.outcome as a Literal
+- **extractor**: accept a CallbackManager in callbacks parameters
+- **observability**: share one dispatch path between extraction and tool-node events
+
 ## v0.6.0 (2026-07-06)
 
 ### Feat

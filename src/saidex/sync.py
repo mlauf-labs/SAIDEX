@@ -17,6 +17,7 @@ import asyncio
 from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from langchain_core.callbacks.base import Callbacks
 from langchain_core.messages.base import BaseMessage
 from pydantic import BaseModel
 
@@ -30,7 +31,7 @@ from .extractor import (
     extract_data_with_tools,
     run_extractor_agent,
 )
-from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats
+from .models import ExtractDataStats, ExtractionMode, ExtractorRunStats, ToolCallConfig
 
 if TYPE_CHECKING:
     from .retry import RetryConfig
@@ -78,7 +79,8 @@ def extract_data_sync(
     messages: list[BaseMessage],
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
-    callbacks: list[Any] | None = None,
+    tool_config: ToolCallConfig | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
@@ -98,7 +100,9 @@ def extract_data_sync(
         schema: The Pydantic ``BaseModel`` subclass to populate.
         messages: Conversation history passed to the model.
         mode: Which extraction strategy to use.
-        callbacks: Optional LangChain callback handlers.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`~saidex.extract_data`.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
@@ -116,6 +120,7 @@ def extract_data_sync(
             schema,
             messages,
             mode=mode,
+            tool_config=tool_config,
             callbacks=callbacks,
             fallback_llm_model=fallback_llm_model,
             max_primary_retries=max_primary_retries,
@@ -136,8 +141,9 @@ def extract_data_from_text_sync(
     text: str,
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     system_prompt: str | None = None,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
@@ -157,8 +163,10 @@ def extract_data_from_text_sync(
         schema: The Pydantic ``BaseModel`` subclass to populate.
         text: The text to analyse.
         mode: Which extraction strategy to use.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`~saidex.extract_data`.
         system_prompt: Optional system instruction prepended to the messages.
-        callbacks: Optional LangChain callback handlers.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
@@ -176,6 +184,7 @@ def extract_data_from_text_sync(
             schema,
             text,
             mode=mode,
+            tool_config=tool_config,
             system_prompt=system_prompt,
             callbacks=callbacks,
             fallback_llm_model=fallback_llm_model,
@@ -197,7 +206,8 @@ def extract_data_list_sync(
     messages: list[BaseMessage],
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
-    callbacks: list[Any] | None = None,
+    tool_config: ToolCallConfig | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
@@ -217,7 +227,9 @@ def extract_data_list_sync(
         schema: The Pydantic ``BaseModel`` subclass describing one item.
         messages: Conversation history passed to the model.
         mode: Which extraction strategy to use.
-        callbacks: Optional LangChain callback handlers.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`~saidex.extract_data`.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
@@ -235,6 +247,7 @@ def extract_data_list_sync(
             schema,
             messages,
             mode=mode,
+            tool_config=tool_config,
             callbacks=callbacks,
             fallback_llm_model=fallback_llm_model,
             max_primary_retries=max_primary_retries,
@@ -255,8 +268,9 @@ def extract_data_list_from_text_sync(
     text: str,
     *,
     mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+    tool_config: ToolCallConfig | None = None,
     system_prompt: str | None = None,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_primary_retries: int = 3,
     max_fallback_retries: int = 3,
@@ -276,8 +290,10 @@ def extract_data_list_from_text_sync(
         schema: The Pydantic ``BaseModel`` subclass describing one item.
         text: The text to analyse.
         mode: Which extraction strategy to use.
+        tool_config: Tool-binding flags for tool-calling mode — see
+            :func:`~saidex.extract_data`.
         system_prompt: Optional system instruction prepended to the messages.
-        callbacks: Optional LangChain callback handlers.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
@@ -295,6 +311,7 @@ def extract_data_list_from_text_sync(
             schema,
             text,
             mode=mode,
+            tool_config=tool_config,
             system_prompt=system_prompt,
             callbacks=callbacks,
             fallback_llm_model=fallback_llm_model,
@@ -318,7 +335,7 @@ def extract_data_with_tools_sync(
     tools: list[Tool],
     final_answer_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
     system_prompt: str | None = None,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_iterations: int = 12,
     max_validation_retries: int = 3,
@@ -340,7 +357,7 @@ def extract_data_with_tools_sync(
         tools: Helper tools the LLM may call before producing its final answer.
         final_answer_mode: How the final answer is collected.
         system_prompt: Optional system instruction.
-        callbacks: Optional LangChain callback handlers.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_iterations: Maximum LLM invocations per model attempt.
         max_validation_retries: Max final-answer validation failures tolerated.
@@ -381,7 +398,7 @@ def run_extractor_agent_sync(
     *,
     tools: list[Tool],
     final_answer_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
-    callbacks: list[Any] | None = None,
+    callbacks: Callbacks = None,
     fallback_llm_model: Any = None,
     max_iterations: int = 12,
     max_validation_retries: int = 3,
@@ -402,7 +419,7 @@ def run_extractor_agent_sync(
         messages: Conversation history passed to the model.
         tools: Helper tools the LLM may call before producing its final answer.
         final_answer_mode: How the final answer is collected.
-        callbacks: Optional LangChain callback handlers.
+        callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model.
         max_iterations: Maximum LLM invocations per model attempt.
         max_validation_retries: Max final-answer validation failures tolerated.

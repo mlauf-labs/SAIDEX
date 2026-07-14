@@ -1,10 +1,11 @@
-"""Scoped and global observers for extraction statistics.
+"""Scoped and global observers for extraction and tool-node statistics.
 
 `collect_stats` is a scoped context manager — usable with either ``async with``
-or plain ``with`` — that captures the stats of every extraction inside its
-block, so callers need not thread a stats object through intermediate
-signatures.  `on_extraction` registers a process-wide listener for observability
-integrations (logging, tracing, metrics).
+or plain ``with`` — that captures the stats of every extraction or
+``SaidexToolNode`` run inside its block, so callers need not thread a stats
+object through intermediate signatures.  `on_extraction` and `on_tool_node`
+register process-wide listeners for observability integrations (logging,
+tracing, metrics).
 """
 
 from __future__ import annotations
@@ -12,12 +13,18 @@ from __future__ import annotations
 import contextlib
 import inspect
 import logging
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextvars import ContextVar, Token
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .models import ExtractDataStats, ExtractionEvent, ExtractorRunStats
+    from .models import (
+        ExtractDataStats,
+        ExtractionEvent,
+        ExtractorRunStats,
+        ToolNodeEvent,
+        ToolNodeStats,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -25,40 +32,56 @@ logger = logging.getLogger(__name__)
 #: receives the completed :class:`~saidex.models.ExtractionEvent`.
 ExtractionListener = Callable[["ExtractionEvent"], "Awaitable[None] | None"]
 
+#: Signature of an ``on_tool_node`` listener: a sync **or** async callable that
+#: receives the completed :class:`~saidex.models.ToolNodeEvent`.
+ToolNodeListener = Callable[["ToolNodeEvent"], "Awaitable[None] | None"]
+
+#: Either kind of listener callback a :class:`Subscription` can wrap. A plain
+#: ``Callable[[ExtractionEvent | ToolNodeEvent], ...]`` would NOT type-check
+#: here: Callable parameters are contravariant, so a function typed to accept
+#: only ``ExtractionEvent`` (what :func:`on_extraction` actually passes) is
+#: not a valid substitute for one that must accept the union — mypy rejects
+#: it. A union of the two specific listener types is what both call sites
+#: actually pass, so that is what this models.
+_SubscriptionCallback = ExtractionListener | ToolNodeListener
+
 
 class StatsSink:
-    """Collects the stats of every extraction inside a ``collect_stats`` block.
+    """Collects the stats of every extraction or tool-node run inside a
+    ``collect_stats`` block.
 
     You do not construct this directly — :func:`collect_stats` yields one.  Only
-    each extraction's stats object is stored (never its messages, result, or
-    source text), so a sink stays PII-light by default.
+    each run's stats object is stored (never its messages, result, or source
+    text), so a sink stays PII-light by default.
     """
 
     def __init__(self) -> None:
-        self._stats: list[ExtractDataStats | ExtractorRunStats] = []
+        self._stats: list[ExtractDataStats | ExtractorRunStats | ToolNodeStats] = []
 
-    def _record(self, event: ExtractionEvent) -> None:
-        """Append one completed extraction's stats.  Never raises."""
+    def _record(self, event: ExtractionEvent | ToolNodeEvent) -> None:
+        """Append one completed run's stats.  Never raises."""
         self._stats.append(event.stats)
 
-    def all(self) -> list[ExtractDataStats | ExtractorRunStats]:
+    def all(self) -> list[ExtractDataStats | ExtractorRunStats | ToolNodeStats]:
         """Return the collected stats, oldest first.
 
         Returns:
-            A new list holding one stats object per extraction that completed
-            inside the ``collect_stats`` block, in chronological order.
+            A new list holding one stats object per extraction or tool-node
+            invocation that completed inside the ``collect_stats`` block, in
+            chronological order.
         """
         return list(self._stats)
 
     def __len__(self) -> int:
         return len(self._stats)
 
-    def __iter__(self) -> Iterator[ExtractDataStats | ExtractorRunStats]:
+    def __iter__(self) -> Iterator[ExtractDataStats | ExtractorRunStats | ToolNodeStats]:
         return iter(list(self._stats))
 
 
 _active_sinks: ContextVar[tuple[StatsSink, ...]] = ContextVar("saidex_active_sinks", default=())
 _global_listeners: list[ExtractionListener] = []
+_tool_node_listeners: list[ToolNodeListener] = []
 
 
 class _StatsCollector:
@@ -112,15 +135,21 @@ def collect_stats() -> _StatsCollector:
 
 
 class Subscription:
-    """Handle returned by :func:`on_extraction`, used to remove the listener.
+    """Handle returned by :func:`on_extraction` and :func:`on_tool_node`, used
+    to remove the listener.
 
     Removing the listener can be done three equivalent, idempotent ways: call
     the object, call :meth:`unsubscribe`, or use it as a context manager (the
     listener is removed on block exit).
     """
 
-    def __init__(self, callback: ExtractionListener) -> None:
-        self._callback = callback
+    def __init__(
+        self,
+        callback: _SubscriptionCallback,
+        registry: list[ExtractionListener] | list[ToolNodeListener] | None = None,
+    ) -> None:
+        self._callback: _SubscriptionCallback = callback
+        self._registry: list[Any] = _global_listeners if registry is None else registry
         self._active = True
 
     def unsubscribe(self) -> None:
@@ -128,7 +157,7 @@ class Subscription:
         if self._active:
             self._active = False
             with contextlib.suppress(ValueError):
-                _global_listeners.remove(self._callback)
+                self._registry.remove(self._callback)
 
     def __call__(self) -> None:
         self.unsubscribe()
@@ -160,6 +189,68 @@ def on_extraction(callback: ExtractionListener) -> Subscription:
     return Subscription(callback)
 
 
+def on_tool_node(callback: ToolNodeListener) -> Subscription:
+    """Register a process-wide listener invoked after every ``SaidexToolNode`` run.
+
+    The listener fires once per node invocation, receiving the completed
+    :class:`~saidex.models.ToolNodeEvent`.  It may be sync or async.  Any
+    exception it raises is logged and swallowed so an observer can never break
+    the graph run.  ``on_extraction`` listeners do **not** receive these events.
+
+    Args:
+        callback: A sync or async callable receiving the completed
+            :class:`~saidex.models.ToolNodeEvent`.
+
+    Returns:
+        A :class:`Subscription` that removes the listener when called, when its
+        :meth:`Subscription.unsubscribe` method runs, or on context-manager exit.
+    """
+    _tool_node_listeners.append(callback)
+    return Subscription(callback, _tool_node_listeners)
+
+
+async def _dispatch(
+    event: ExtractionEvent | ToolNodeEvent,
+    listeners: Sequence[Any],
+    listener_label: str,
+) -> None:
+    """Notify every active sink and the given listener registry of a completed run.
+
+    Shared by :func:`dispatch_to_observers` and :func:`dispatch_tool_node_event`.
+    Returns immediately when neither a sink nor a listener is active, so
+    inactive observers add no measurable overhead.  A failing observer is
+    isolated: its exception is logged with a traceback and swallowed so it
+    neither breaks the run nor stops the remaining observers from being
+    notified.
+
+    Args:
+        event: The completed run's event (extraction or tool-node).
+        listeners: The listener registry to notify — callers pass
+            ``_global_listeners`` or ``_tool_node_listeners`` so routing stays
+            enforced by which registry is supplied, not by logic here.
+        listener_label: Name used in the suppressed-exception log message
+            (e.g. ``"on_extraction"`` or ``"on_tool_node"``), keeping the two
+            dispatch paths' log lines distinguishable.
+    """
+    sinks = _active_sinks.get()
+    if not sinks and not listeners:
+        return
+    for sink in sinks:
+        try:
+            sink._record(event)
+        except Exception as exc:  # noqa: BLE001 — observers must not break the run
+            logger.error("stats sink failed to record and was skipped: %s", exc, exc_info=True)
+    for listener in tuple(listeners):
+        try:
+            outcome = listener(event)
+            if inspect.isawaitable(outcome):
+                await outcome
+        except Exception as exc:  # noqa: BLE001 — observers must not break the run
+            logger.error(
+                "%s listener raised and was suppressed: %s", listener_label, exc, exc_info=True
+            )
+
+
 async def dispatch_to_observers(event: ExtractionEvent) -> None:
     """Notify every active sink and global listener of a completed extraction.
 
@@ -172,18 +263,17 @@ async def dispatch_to_observers(event: ExtractionEvent) -> None:
     Args:
         event: The completed extraction's event.
     """
-    sinks = _active_sinks.get()
-    if not sinks and not _global_listeners:
-        return
-    for sink in sinks:
-        try:
-            sink._record(event)
-        except Exception as exc:  # noqa: BLE001 — observers must not break the run
-            logger.error("stats sink failed to record and was skipped: %s", exc, exc_info=True)
-    for listener in tuple(_global_listeners):
-        try:
-            outcome = listener(event)
-            if inspect.isawaitable(outcome):
-                await outcome
-        except Exception as exc:  # noqa: BLE001 — observers must not break the run
-            logger.error("on_extraction listener raised and was suppressed: %s", exc, exc_info=True)
+    await _dispatch(event, _global_listeners, "on_extraction")
+
+
+async def dispatch_tool_node_event(event: ToolNodeEvent) -> None:
+    """Notify every active sink and ``on_tool_node`` listener of a node run.
+
+    Mirrors :func:`dispatch_to_observers` for tool-node events: sinks record
+    the stats object, global tool-node listeners receive the full event, and a
+    failing observer is logged and isolated.
+
+    Args:
+        event: The completed node invocation's event.
+    """
+    await _dispatch(event, _tool_node_listeners, "on_tool_node")
