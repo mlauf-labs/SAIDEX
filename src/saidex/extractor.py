@@ -148,6 +148,13 @@ def _to_field_issues(issues: Sequence[ValidationIssue], schema_name: str) -> lis
     ]
 
 
+def _item_issue_path(index: int, field_path: str) -> str:
+    """Locate an item validator's finding inside the ``…List`` container."""
+    if field_path == EXTERNAL_VALIDATOR_PATH:
+        return f"items -> {index}"
+    return f"items -> {index} -> {field_path}"
+
+
 async def _run_external_validator(
     validator: Validator[MODEL_T] | None,
     instance: MODEL_T,
@@ -688,14 +695,15 @@ async def extract_data_list(
     if validator is not None:
         item_validator = validator
 
-        async def _validate_each_item(container_instance: BaseModel) -> str | None:
-            """Run the item *validator* over every container item, joining failures."""
-            errors: list[str] = []
+        async def _validate_each_item(container_instance: BaseModel) -> list[ValidationIssue]:
+            """Run the item *validator* over every container item, locating each finding."""
+            issues: list[ValidationIssue] = []
             for index, item in enumerate(cast(Any, container_instance).items):
-                _, item_error = await _run_external_validator(item_validator, item, schema.__name__)
-                if item_error is not None:
-                    errors.append(f"items -> {index}: {item_error}")
-            return "\n".join(errors) if errors else None
+                for issue in await _call_validator(item_validator, item, schema.__name__):
+                    issues.append(
+                        replace(issue, field_path=_item_issue_path(index, issue.field_path))
+                    )
+            return issues
 
         container_validator = _validate_each_item
 

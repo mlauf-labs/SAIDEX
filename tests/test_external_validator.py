@@ -289,8 +289,10 @@ async def test_validator_runs_per_item_in_batch() -> None:
     assert items is not None
     assert [i.value for i in items] == [150, 120]
     assert stats.primary_retries == 1
-    # The per-item message points at the offending index.
-    assert any("items -> 1" in i.message for i in stats.field_issues)
+    # Each failing item is its own issue, located by field path.
+    assert [(i.field_path, i.message) for i in stats.field_issues] == [
+        ("items -> 1", "value 5 must be at least 100"),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -779,3 +781,97 @@ async def test_agent_json_mode_flag_only_accepts_first_answer() -> None:
 
     assert result is not None and result.result == "first"
     assert stats.validation_retries == 0
+
+
+# ---------------------------------------------------------------------------
+# Structured issues — batch
+# ---------------------------------------------------------------------------
+
+
+def _list_response(values: list[int]) -> MagicMock:
+    return _tool_response(
+        {"items": [{"name": f"n{i}", "value": v} for i, v in enumerate(values)]},
+        name="SimpleSchemaList",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_str_validator_yields_one_issue_per_item() -> None:
+    llm = _bound_llm([_list_response([5, 150, 7]), _list_response([150, 150, 150])])
+
+    items, stats = await extract_data_list(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=_reject_low
+    )
+
+    assert items is not None
+    assert [(i.schema_name, i.field_path, i.error_type) for i in stats.field_issues] == [
+        ("SimpleSchema", "items -> 0", "external_validator"),
+        ("SimpleSchema", "items -> 2", "external_validator"),
+    ]
+    feedback = next(t for t in _feedback_texts(llm) if "additional validation check" in t)
+    assert "  - 'items -> 0': value 5 must be at least 100" in feedback
+    assert "  - 'items -> 2': value 7 must be at least 100" in feedback
+
+
+@pytest.mark.asyncio
+async def test_list_structured_issues_get_item_prefix() -> None:
+    def rules(item: SimpleSchema) -> list[ValidationIssue]:
+        if item.value >= 100:
+            return []
+        return [
+            ValidationIssue("too small", field_path="value", error_type="min_value"),
+            ValidationIssue("whole item is suspicious"),
+        ]
+
+    llm = _bound_llm([_list_response([150, 5]), _list_response([150, 150])])
+
+    items, stats = await extract_data_list(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=rules
+    )
+
+    assert items is not None
+    assert [(i.field_path, i.error_type) for i in stats.field_issues] == [
+        ("items -> 1 -> value", "min_value"),
+        ("items -> 1", "external_validator"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_flag_only_items_do_not_retry() -> None:
+    def rules(item: SimpleSchema) -> list[ValidationIssue]:
+        if item.value % 2:
+            return [ValidationIssue("odd value", field_path="value", on_mismatch="flag")]
+        return []
+
+    llm = _bound_llm([_list_response([150, 151, 153])])
+
+    items, stats = await extract_data_list(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=rules
+    )
+
+    assert items is not None and len(items) == 3
+    assert stats.primary_retries == 0
+    assert [i.field_path for i in stats.field_issues] == [
+        "items -> 1 -> value",
+        "items -> 2 -> value",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_retry_on_one_item_retries_container() -> None:
+    def rules(item: SimpleSchema) -> list[ValidationIssue]:
+        if item.value < 100:
+            return [ValidationIssue("too small", field_path="value")]
+        return [ValidationIssue("fine but noted", on_mismatch="flag")]
+
+    llm = _bound_llm([_list_response([150, 5]), _list_response([150, 150])])
+
+    items, stats = await extract_data_list(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=rules
+    )
+
+    assert items is not None
+    assert stats.primary_retries == 1
+    feedback = next(t for t in _feedback_texts(llm) if "additional validation check" in t)
+    assert "'items -> 1 -> value': too small" in feedback
+    assert "fine but noted" not in feedback
