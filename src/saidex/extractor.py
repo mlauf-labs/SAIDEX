@@ -64,6 +64,14 @@ OnExhausted = Callable[
     [MODEL_T, tuple[FieldIssue, ...]], "MODEL_T | None | Awaitable[MODEL_T | None]"
 ]
 
+#: List-variant counterpart of :data:`OnExhausted`: receives the last rejected
+#: ``list`` of items and returns the items to keep (``[]`` is a valid result),
+#: or ``None`` to let the run fail.
+OnExhaustedList = Callable[
+    [list[MODEL_T], tuple[FieldIssue, ...]],
+    "list[MODEL_T] | None | Awaitable[list[MODEL_T] | None]",
+]
+
 #: What an external ``validator`` may return: ``None`` (or any falsy value) to
 #: accept, a non-empty string to reject with one message, or one / several
 #: :class:`~saidex.models.ValidationIssue` objects for structured findings.  A
@@ -285,9 +293,12 @@ async def _salvage(
         raise TypeError(
             f"on_exhausted must return a {schema.__name__} instance or None; got {outcome!r}"
         )
-    instance, _, error_text = create_instance_with_issues(
-        schema, **outcome.model_dump(by_alias=True)
+    # Computed fields are dumped too, but a schema with extra="forbid" would
+    # reject them as unknown inputs on re-validation.
+    dumped = outcome.model_dump(
+        by_alias=True, exclude=set(type(outcome).model_computed_fields) or None
     )
+    instance, _, error_text = create_instance_with_issues(schema, **dumped)
     if instance is not None:
         return instance, None
     logger.warning("on_exhausted returned an invalid %s: %s", schema.__name__, error_text)
@@ -306,6 +317,29 @@ def _item_issue_path(index: int, field_path: str) -> str:
     if field_path == EXTERNAL_VALIDATOR_PATH:
         return f"items -> {index}"
     return f"items -> {index} -> {field_path}"
+
+
+def issue_item_index(issue: FieldIssue, list_field: str = "items") -> int | None:
+    """Return the list index an issue points at, or ``None``.
+
+    Batch extraction reports item issues with paths like ``items -> 3`` or
+    ``items -> 3 -> quote``; for a list field inside your own schema the path
+    starts with that field's name (``findings -> 3 -> quote``).  Use this in an
+    ``on_exhausted`` hook to drop the items that were rejected.
+
+    Args:
+        issue: The issue to inspect, e.g. from ``stats.last_rejection``.
+        list_field: Name of the list field; ``"items"`` for the batch variants.
+
+    Returns:
+        The 0-based item index, or ``None`` when the path does not start with
+        ``<list_field> -> <index>``.
+    """
+    head, sep, rest = issue.field_path.partition(" -> ")
+    if head != list_field or not sep:
+        return None
+    index = rest.split(" -> ", 1)[0]
+    return int(index) if index.isdigit() else None
 
 
 async def _run_external_validator(
@@ -941,6 +975,7 @@ async def extract_data_list(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhaustedList[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a message list.
 
@@ -983,6 +1018,10 @@ async def extract_data_list(
             re-enters the shared retry loop.  Wrap it with :func:`with_context` to
             receive the attempt context; every item of one attempt gets the same
             context.  See :func:`extract_data`.
+        on_exhausted: Optional salvage hook receiving the last rejected ``list`` of
+            items and the issues that rejected it (paths ``items -> i``, item
+            schema name).  Return the items to keep (``[]`` is allowed) or
+            ``None``.  See :func:`extract_data`.
 
     Returns:
         A tuple of ``(items, stats)``:
@@ -1019,6 +1058,29 @@ async def extract_data_list(
 
         container_validator = WithContext(_validate_each_item)
 
+    container_hook: OnExhausted[BaseModel] | None = None
+    if on_exhausted is not None:
+        item_hook = on_exhausted
+
+        async def _salvage_items(
+            container_instance: BaseModel, rejection: tuple[FieldIssue, ...]
+        ) -> BaseModel | None:
+            """Hand the caller's hook the items, then re-wrap what it keeps."""
+            items = list(cast(Any, container_instance).items)
+            item_rejection = tuple(replace(i, schema_name=schema.__name__) for i in rejection)
+            kept = item_hook(items, item_rejection)
+            if inspect.isawaitable(kept):
+                kept = await kept
+            if kept is None:
+                return None
+            if not isinstance(kept, list):
+                raise TypeError(
+                    f"on_exhausted must return a list of {schema.__name__} or None; got {kept!r}"
+                )
+            return container.model_construct(items=kept)
+
+        container_hook = _salvage_items
+
     # Computed lazily: the list-level source text only feeds the trace inputs
     # (the inner extract_data derives its own copy for grounding).
     grounding_source = _source_text_from_messages(messages) if capture_source_text else ""
@@ -1045,6 +1107,7 @@ async def extract_data_list(
             retry_config=retry_config,
             capture_source_text=capture_source_text,
             validator=container_validator,
+            on_exhausted=container_hook,
             _notify_observers=False,
             _trace=trace,
         )
@@ -1102,6 +1165,7 @@ async def extract_data_list_from_text(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhaustedList[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a plain text string.
 
@@ -1131,6 +1195,8 @@ async def extract_data_list_from_text(
             ``stats.source_text``, passed to *on_complete*, and included in the
             trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable run on each item — see
+            :func:`extract_data_list`.
+        on_exhausted: Optional salvage hook for the item list — see
             :func:`extract_data_list`.
 
     Returns:
@@ -1171,6 +1237,7 @@ async def extract_data_list_from_text(
         on_complete=on_complete,
         capture_source_text=capture_source_text,
         validator=validator,
+        on_exhausted=on_exhausted,
     )
 
 

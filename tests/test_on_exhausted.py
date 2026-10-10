@@ -7,9 +7,17 @@ from typing import Any
 import pytest
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from saidex import ExtractionEvent, FieldIssue, ValidationIssue, extract_data
+from saidex import (
+    ExtractionEvent,
+    FieldIssue,
+    ValidationIssue,
+    extract_data,
+    extract_data_from_text,
+    extract_data_list,
+    issue_item_index,
+)
 from saidex.retry import RetryConfig
 from tests._mock_llm import make_llm, make_response
 
@@ -247,3 +255,124 @@ async def test_on_complete_and_trace_see_salvage() -> None:
     assert events[0].result is not None and events[0].stats.salvaged
     assert handler.outputs[-1]["salvaged"] is True
     assert handler.outputs[-1]["success"] is True
+
+
+async def test_salvage_with_computed_field_and_extra_forbid() -> None:
+    class Priced(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        net: int
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def gross(self) -> int:
+            return self.net * 2
+
+    llm = make_llm([make_response([_call({"net": 5}, "Priced")])])
+    result, stats = await extract_data(
+        llm,
+        Priced,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=lambda p: "no",
+        on_exhausted=lambda p, issues: p,
+    )
+    assert result is not None and result.gross == 10
+    assert stats.salvaged
+
+
+async def test_from_text_forwards_hook() -> None:
+    result, stats = await extract_data_from_text(
+        make_llm([_findings_resp(QUOTES, f"c{i}") for i in range(2)]),
+        Findings,
+        SOURCE,
+        max_primary_retries=2,
+        retry_config=_NO_RETRY,
+        validator=_verbatim,
+        on_exhausted=_drop_rejected,
+    )
+    assert result is not None and len(result.findings) == 2
+    assert stats.salvaged
+
+
+def _issue(path: str) -> FieldIssue:
+    return FieldIssue(
+        schema_name="X", field_path=path, category="value", error_type="e", message="m", attempt=0
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "list_field", "expected"),
+    [
+        ("items -> 3", "items", 3),
+        ("items -> 12 -> quote", "items", 12),
+        ("findings -> 0 -> quote", "findings", 0),
+        ("findings -> 0 -> quote", "items", None),
+        ("itemsX -> 1", "items", None),
+        ("<external validator>", "items", None),
+    ],
+)
+def test_issue_item_index(path: str, list_field: str, expected: int | None) -> None:
+    assert issue_item_index(_issue(path), list_field) == expected
+
+
+def _drop_items(items: list[Finding], issues: tuple[FieldIssue, ...]) -> list[Finding]:
+    bad = {issue_item_index(i) for i in issues}
+    return [item for index, item in enumerate(items) if index not in bad]
+
+
+def _not_verbatim_item(f: Finding) -> str | None:
+    return None if f.quote in SOURCE else "quote is not verbatim"
+
+
+def _list_resp(quotes: list[str]) -> Any:
+    args = {"items": [{"speaker": "x", "quote": q} for q in quotes]}
+    return make_response([_call(args, "FindingList")])
+
+
+async def test_list_hook_drops_items() -> None:
+    items, stats = await extract_data_list(
+        make_llm([_list_resp(QUOTES)]),
+        Finding,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_not_verbatim_item,
+        on_exhausted=_drop_items,
+    )
+    assert items is not None
+    assert [f.quote for f in items] == ["we ship on Monday", "budget is fine"]
+    assert stats.item_count == 2 and stats.salvaged
+    assert stats.schema_name == "Finding"
+
+
+async def test_list_hook_receives_item_schema_issues() -> None:
+    seen: list[tuple[FieldIssue, ...]] = []
+
+    def hook(items: list[Finding], issues: tuple[FieldIssue, ...]) -> None:
+        seen.append(issues)
+
+    await extract_data_list(
+        make_llm([_list_resp(QUOTES)]),
+        Finding,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_not_verbatim_item,
+        on_exhausted=hook,
+    )
+    assert [(i.field_path, i.schema_name) for i in seen[0]] == [("items -> 1", "Finding")]
+
+
+async def test_list_hook_may_return_empty_list() -> None:
+    items, stats = await extract_data_list(
+        make_llm([_list_resp(["nope"])]),
+        Finding,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_not_verbatim_item,
+        on_exhausted=lambda items, issues: [],
+    )
+    assert items == []
+    assert stats.item_count == 0 and stats.salvaged
