@@ -110,6 +110,13 @@ async def test_extract_data_json_mode() -> None:
     )
     assert result is not None
     assert _issue_keys(stats) == EXPECTED_ISSUES
+    texts = [str(m.content) for m in _last_messages(llm) if isinstance(m, HumanMessage)]
+    assert GROUNDING_FEEDBACK in texts
+    assert (
+        "The extracted data is structurally valid but failed an additional validation check:"
+        f"\n\n{VALIDATOR_FEEDBACK}\n\n"
+        "Return a corrected response that resolves the problem above."
+    ) in texts
 
 
 async def test_agent_json_final_answer() -> None:
