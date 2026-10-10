@@ -13,7 +13,9 @@ business rule, a reference-data check, a running total that must reconcile.
 Every extraction entry point accepts an optional **`validator`** callable.  It
 receives the model instance *after* it has already passed Pydantic validation and
 either **accepts** it (returns `None`/empty string) or **rejects** it (raises any
-exception, or returns a non-empty error message).  A rejection re-enters the
+exception, or returns a non-empty error message).  To report several findings at
+once, it can also return a list of [`ValidationIssue`](#structured-issues)
+objects, each with its own field path and retry-or-flag behaviour.  A rejection re-enters the
 **existing field-level retry loop** with the message surfaced to the model — exactly
 like a Pydantic `ValidationError` — so the model gets a chance to self-correct.
 
@@ -75,7 +77,9 @@ A validator rejection:
 
 - consumes one validation retry (`stats.primary_retries` / `validation_retries`),
 - records a structured [`FieldIssue`](quality-analytics.md) with
-  `error_type="external_validator"` and `field_path="<external validator>"`,
+  `error_type="external_validator"` and `field_path="<external validator>"`
+  (or one `FieldIssue` per [`ValidationIssue`](#structured-issues)
+  with your own path and rule id),
 - triggers the **fallback model** when the primary model exhausts its retries,
 - sets `stats.failure_reason = "validation_exhausted"` if all attempts fail.
 
@@ -105,6 +109,86 @@ Write **specific, actionable** messages — the model reads them to know what to
 
 ---
 
+## Structured issues
+
+Return a list of `ValidationIssue` objects when one attempt can break several
+independent rules.  Each issue becomes its own entry in `stats.field_issues`
+(with your `field_path`, `category` and `error_type`), and the model gets
+per-field feedback — the same treatment as Pydantic and `Grounded()` failures.
+
+```python
+from saidex import ValidationIssue, extract_data_from_text
+
+
+def check_reply(reply: Reply) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    if INTERNAL_NOTE_MARKER in reply.body:
+        issues.append(ValidationIssue(
+            "Do not quote the internal note.",
+            field_path="body", error_type="leaks_internal_note",
+        ))
+    if "refund" in reply.body and refund_pending:
+        issues.append(ValidationIssue(
+            "Do not promise a refund while approval is pending.",
+            field_path="body", error_type="premature_refund",
+        ))
+    if reply.language != customer_language:
+        issues.append(ValidationIssue(
+            f"Reply in the customer's language ({customer_language}).",
+            field_path="language", error_type="wrong_language",
+            received=reply.language,
+        ))
+    if len(reply.body) > 1500:
+        issues.append(ValidationIssue(
+            "Reply is unusually long.",
+            field_path="body", error_type="long_reply", on_mismatch="flag",
+        ))
+    return issues
+
+
+reply, stats = await extract_data_from_text(llm, Reply, ticket, validator=check_reply)
+```
+
+The model receives the `"retry"` issues grouped by field path:
+
+```text
+The extracted data is structurally valid but failed an additional validation check:
+
+  - 'body': Do not quote the internal note.
+  - 'body': Do not promise a refund while approval is pending.
+  - 'language': Reply in the customer's language (en).
+    Received: 'de'
+```
+
+| Validator returns | Instance | Retry consumed | Recorded in `stats.field_issues` |
+| --- | --- | --- | --- |
+| `None` / `""` / `[]` | accepted | no | — |
+| non-empty `str`, or raises | rejected | yes | one issue, `field_path="<external validator>"` |
+| list of non-empty `str` | rejected | yes | one issue per string, `field_path="<external validator>"` |
+| issues, at least one `on_mismatch="retry"` | rejected | yes | every issue, `flag` ones included |
+| issues, all `on_mismatch="flag"` | accepted | no | every issue |
+
+`ValidationIssue` fields:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `message` | — (required) | What is wrong; shown to the model |
+| `field_path` | `"<external validator>"` | Offending field, e.g. `"body"` or `"lines -> 0 -> price"` — relative to the validated model; batch extraction adds the `items -> {i}` prefix |
+| `category` | `"value"` | Coarse bucket, same vocabulary as `FieldIssue.category` |
+| `error_type` | `"external_validator"` | Free-form rule id — count violations per rule across runs |
+| `on_mismatch` | `"retry"` | `"retry"` rejects and consumes a retry; `"flag"` only records |
+| `received` | `None` | Optional offending value, shown to the model |
+
+A single `ValidationIssue` (without a list) works too, and a list may mix plain
+strings with issues.  Returning anything else — a dict, `True`, bytes — raises
+`TypeError`: it is treated as a bug in the validator, not as a rejection, and
+never consumes a retry.
+
+`flag` issues mirror [`FieldCheck(on_mismatch="flag")`](source-grounding.md): use them
+for soft findings you want to count in evals without burning a retry.
+
+---
+
 ## Sync or async
 
 The callable may be synchronous or a coroutine function; SAIDEX awaits it when
@@ -125,15 +209,19 @@ order, stats = await extract_data_from_text(llm, Order, text, validator=validate
 ## Batch extraction — validated per item
 
 For `extract_data_list` / `extract_data_list_from_text` the validator is applied to
-**each extracted item** individually.  Failures are reported per item so the model
-can pinpoint the offending record:
+**each extracted item** individually.  Every failing item becomes its own field
+issue, located by its index, so the model can pinpoint the offending record:
 
 ```python
 items, stats = await extract_data_list_from_text(
     llm, InvoiceLine, document, validator=validate_line
 )
-# A rejected item surfaces as e.g. "items -> 2: amount must be positive"
+# A rejected item surfaces with field_path "items -> 2" — or "items -> 2 -> amount"
+# when the validator returns ValidationIssue(..., field_path="amount").
 ```
+
+One `"retry"` issue on any item rejects the whole batch attempt; `"flag"` issues
+are recorded per item without a retry.
 
 ---
 

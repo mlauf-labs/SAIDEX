@@ -11,7 +11,9 @@ from pydantic import BaseModel
 
 from saidex import (
     ExtractionMode,
+    ValidationIssue,
     extract_data,
+    extract_data_from_text,
     extract_data_list,
     extract_data_sync,
     extract_data_with_tools,
@@ -287,8 +289,10 @@ async def test_validator_runs_per_item_in_batch() -> None:
     assert items is not None
     assert [i.value for i in items] == [150, 120]
     assert stats.primary_retries == 1
-    # The per-item message points at the offending index.
-    assert any("items -> 1" in i.message for i in stats.field_issues)
+    # Each failing item is its own issue, located by field path.
+    assert [(i.field_path, i.message) for i in stats.field_issues] == [
+        ("items -> 1", "value 5 must be at least 100"),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -391,3 +395,557 @@ def test_validator_sync_wrapper() -> None:
     assert result is not None
     assert result.value == 150
     assert stats.primary_retries == 1
+
+
+# ---------------------------------------------------------------------------
+# ValidationIssue
+# ---------------------------------------------------------------------------
+
+
+def test_validation_issue_defaults() -> None:
+    issue = ValidationIssue(message="bad")
+    assert issue.field_path == "<external validator>"
+    assert issue.category == "value"
+    assert issue.error_type == "external_validator"
+    assert issue.on_mismatch == "retry"
+    assert issue.received is None
+
+
+def test_validation_issue_rejects_unknown_on_mismatch() -> None:
+    with pytest.raises(ValueError, match="on_mismatch"):
+        ValidationIssue(message="bad", on_mismatch="ignore")  # type: ignore[arg-type]
+
+
+def test_validation_issue_is_frozen() -> None:
+    issue = ValidationIssue(message="bad")
+    with pytest.raises(AttributeError):
+        issue.message = "other"  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Structured issues — single shot
+# ---------------------------------------------------------------------------
+
+
+def _feedback_texts(llm: MagicMock) -> list[str]:
+    """Human-turn texts the bound LLM saw on its last call."""
+    bound = llm.bind_tools.return_value
+    msgs = bound.ainvoke.call_args_list[-1].args[0]
+    return [str(m.content) for m in msgs if isinstance(m, HumanMessage)]
+
+
+def _two_rule_validator(instance: SimpleSchema) -> list[ValidationIssue]:
+    if instance.value >= 100:
+        return []
+    return [
+        ValidationIssue(
+            message="value must be at least 100",
+            field_path="value",
+            error_type="min_value",
+            received=str(instance.value),
+        ),
+        ValidationIssue(
+            message="name must not be a placeholder",
+            field_path="name",
+            category="format",
+            error_type="placeholder_name",
+        ),
+    ]
+
+
+def _reject_then_accept_llm() -> MagicMock:
+    return _bound_llm(
+        [
+            _tool_response({"name": "Alice", "value": 5}),
+            _tool_response({"name": "Alice", "value": 150}),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_structured_retry_issues_become_field_issues_and_one_retry() -> None:
+    llm = _reject_then_accept_llm()
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        _messages(),
+        retry_config=_NO_NETWORK_RETRY,
+        validator=_two_rule_validator,
+    )
+
+    assert result is not None and result.value == 150
+    assert stats.primary_retries == 1
+    assert [(i.field_path, i.category, i.error_type, i.attempt) for i in stats.field_issues] == [
+        ("value", "value", "min_value", 0),
+        ("name", "format", "placeholder_name", 0),
+    ]
+    assert stats.field_issues[0].received == "5"
+    feedback = next(t for t in _feedback_texts(llm) if "additional validation check" in t)
+    assert "  - 'value': value must be at least 100\n    Received: '5'" in feedback
+    assert "  - 'name': name must not be a placeholder" in feedback
+
+
+@pytest.mark.asyncio
+async def test_flag_only_issues_are_recorded_without_retry() -> None:
+    def advisory(instance: SimpleSchema) -> list[ValidationIssue]:
+        return [ValidationIssue(message="unusually long", field_path="name", on_mismatch="flag")]
+
+    llm = _bound_llm([_tool_response({"name": "Alice", "value": 5})])
+
+    result, stats = await extract_data(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=advisory
+    )
+
+    assert result is not None
+    assert stats.primary_retries == 0
+    assert [(i.field_path, i.message) for i in stats.field_issues] == [("name", "unusually long")]
+
+
+@pytest.mark.asyncio
+async def test_mixed_retry_and_flag_feedback_lists_only_retry() -> None:
+    def mixed(instance: SimpleSchema) -> list[ValidationIssue]:
+        flag = ValidationIssue(message="soft finding", field_path="name", on_mismatch="flag")
+        if instance.value >= 100:
+            return [flag]
+        return [flag, ValidationIssue(message="too small", field_path="value")]
+
+    llm = _reject_then_accept_llm()
+
+    result, stats = await extract_data(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=mixed
+    )
+
+    assert result is not None
+    assert stats.primary_retries == 1
+    # attempt 0: flag + retry; attempt 1: flag only
+    assert [(i.message, i.attempt) for i in stats.field_issues] == [
+        ("soft finding", 0),
+        ("too small", 0),
+        ("soft finding", 1),
+    ]
+    feedback = next(t for t in _feedback_texts(llm) if "additional validation check" in t)
+    assert "too small" in feedback
+    assert "soft finding" not in feedback
+
+
+@pytest.mark.asyncio
+async def test_empty_issue_list_is_accepted() -> None:
+    llm = _bound_llm([_tool_response({"name": "Alice", "value": 5})])
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        _messages(),
+        retry_config=_NO_NETWORK_RETRY,
+        validator=lambda _: [],
+    )
+
+    assert result is not None
+    assert stats.field_issues == ()
+
+
+@pytest.mark.asyncio
+async def test_falsy_non_str_result_is_accepted() -> None:
+    # v0.7.0 idiom: `x.bad and "msg"` returns False when everything is fine.
+    llm = _bound_llm([_tool_response({"name": "Alice", "value": 150})])
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        _messages(),
+        retry_config=_NO_NETWORK_RETRY,
+        validator=lambda inst: inst.value < 100 and "too small",
+    )
+
+    assert result is not None
+    assert stats.primary_retries == 0
+
+
+@pytest.mark.asyncio
+async def test_single_issue_without_list_is_accepted() -> None:
+    def single(instance: SimpleSchema) -> ValidationIssue | None:
+        return None if instance.value >= 100 else ValidationIssue("too small", field_path="value")
+
+    llm = _reject_then_accept_llm()
+
+    result, stats = await extract_data(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=single
+    )
+
+    assert result is not None
+    assert [(i.field_path, i.message) for i in stats.field_issues] == [("value", "too small")]
+
+
+@pytest.mark.asyncio
+async def test_tuple_of_issues_accepted() -> None:
+    def as_tuple(instance: SimpleSchema) -> tuple[ValidationIssue, ...]:
+        if instance.value >= 100:
+            return ()
+        return (ValidationIssue("a", field_path="value"), ValidationIssue("b", field_path="name"))
+
+    llm = _reject_then_accept_llm()
+
+    result, stats = await extract_data(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=as_tuple
+    )
+
+    assert result is not None
+    assert [i.message for i in stats.field_issues] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_async_validator_returning_issues() -> None:
+    async def async_rules(instance: SimpleSchema) -> list[ValidationIssue]:
+        return _two_rule_validator(instance)
+
+    llm = _reject_then_accept_llm()
+
+    result, stats = await extract_data(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=async_rules
+    )
+
+    assert result is not None
+    assert [i.field_path for i in stats.field_issues] == ["value", "name"]
+
+
+@pytest.mark.asyncio
+async def test_structured_issues_exhaust_retries_stamp_attempts() -> None:
+    llm = _bound_llm([_tool_response({"name": "Alice", "value": 1})] * 3)
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        _messages(),
+        max_primary_retries=3,
+        retry_config=_NO_NETWORK_RETRY,
+        validator=_two_rule_validator,
+    )
+
+    assert result is None
+    assert stats.failure_reason == "validation_exhausted"
+    assert [i.attempt for i in stats.field_issues] == [0, 0, 1, 1, 2, 2]
+
+
+_INVALID_RESULTS = [True, {"field": "x"}, b"bytes", [ValidationIssue("ok"), 42]]
+
+
+@pytest.mark.parametrize("bad_result", _INVALID_RESULTS)
+@pytest.mark.asyncio
+async def test_invalid_result_type_raises_type_error(bad_result: object) -> None:
+    llm = _bound_llm([_tool_response({"name": "Alice", "value": 5})])
+
+    with pytest.raises(TypeError, match="external validator"):
+        await extract_data(
+            llm,
+            SimpleSchema,
+            _messages(),
+            retry_config=_NO_NETWORK_RETRY,
+            validator=lambda _: bad_result,  # type: ignore[arg-type,return-value]
+        )
+
+
+@pytest.mark.parametrize("bad_result", _INVALID_RESULTS)
+@pytest.mark.asyncio
+async def test_list_invalid_item_result_raises_type_error(bad_result: object) -> None:
+    llm = _bound_llm([_tool_response({"items": [{"name": "A", "value": 5}]}, "SimpleSchemaList")])
+
+    with pytest.raises(TypeError, match="external validator"):
+        await extract_data_list(
+            llm,
+            SimpleSchema,
+            _messages(),
+            retry_config=_NO_NETWORK_RETRY,
+            validator=lambda _: bad_result,  # type: ignore[arg-type,return-value]
+        )
+    # Raised on the first attempt — no retry was spent on a programming error.
+    assert llm.bind_tools.return_value.ainvoke.await_count == 1
+
+
+@pytest.mark.parametrize("mode", [ExtractionMode.TOOL_CALLING, ExtractionMode.JSON])
+@pytest.mark.asyncio
+async def test_agent_invalid_result_raises_type_error(mode: ExtractionMode) -> None:
+    response = (
+        _agent_final({"result": "x", "score": 1})
+        if mode is ExtractionMode.TOOL_CALLING
+        else _json_response('{"result": "x", "score": 1}')
+    )
+    llm = _agent_llm([response])
+
+    with pytest.raises(TypeError, match="external validator"):
+        await extract_data_with_tools(
+            llm,
+            FinalAnswer,
+            "do it",
+            tools=[],
+            final_answer_mode=mode,
+            retry_config=_NO_NETWORK_RETRY,
+            validator=lambda _: True,  # type: ignore[arg-type,return-value]
+        )
+
+
+@pytest.mark.asyncio
+async def test_sequence_of_strings_becomes_one_issue_each() -> None:
+    # v0.7.0 pattern: collect error strings and return the (possibly empty) list.
+    def collect(instance: SimpleSchema) -> list[str]:
+        errors: list[str] = []
+        if instance.value < 100:
+            errors.append("value too small")
+        if instance.name == "Alice":
+            errors.append("name is a placeholder")
+        return errors
+
+    llm = _bound_llm(
+        [
+            _tool_response({"name": "Alice", "value": 5}),
+            _tool_response({"name": "Bob", "value": 150}),
+        ]
+    )
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        _messages(),
+        retry_config=_NO_NETWORK_RETRY,
+        validator=collect,
+    )
+
+    assert result is not None and result.name == "Bob"
+    assert [(i.field_path, i.message) for i in stats.field_issues] == [
+        ("<external validator>", "value too small"),
+        ("<external validator>", "name is a placeholder"),
+    ]
+    feedback = next(t for t in _feedback_texts(llm) if "additional validation check" in t)
+    assert "  - value too small\n  - name is a placeholder" in feedback
+
+
+@pytest.mark.asyncio
+async def test_legacy_string_feedback_text_unchanged() -> None:
+    llm = _reject_then_accept_llm()
+
+    await extract_data(
+        llm,
+        SimpleSchema,
+        _messages(),
+        retry_config=_NO_NETWORK_RETRY,
+        validator=lambda inst: "too small" if inst.value < 100 else None,
+    )
+
+    assert (
+        "The extracted data is structurally valid but failed an additional "
+        "validation check:\n\ntoo small\n\n"
+        "Return a corrected response that resolves the problem above."
+    ) in _feedback_texts(llm)
+
+
+@pytest.mark.asyncio
+async def test_structured_issues_from_text() -> None:
+    llm = _reject_then_accept_llm()
+
+    result, stats = await extract_data_from_text(
+        llm,
+        SimpleSchema,
+        "Alice has 150 points.",
+        retry_config=_NO_NETWORK_RETRY,
+        validator=_two_rule_validator,
+    )
+
+    assert result is not None
+    assert {i.field_path for i in stats.field_issues} == {"value", "name"}
+
+
+# ---------------------------------------------------------------------------
+# Structured issues — agent loop
+# ---------------------------------------------------------------------------
+
+
+def _score_rules(instance: FinalAnswer) -> list[ValidationIssue]:
+    issues = [ValidationIssue("result is terse", field_path="result", on_mismatch="flag")]
+    if instance.score < 10:
+        issues.append(ValidationIssue("score too low", field_path="score", error_type="min"))
+    return issues
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_calling_structured_issues() -> None:
+    llm = _agent_llm(
+        [
+            _agent_final({"result": "first", "score": 1}, "c1"),
+            _agent_final({"result": "second", "score": 50}, "c2"),
+        ]
+    )
+
+    result, stats = await extract_data_with_tools(
+        llm,
+        FinalAnswer,
+        "do it",
+        tools=[],
+        retry_config=_NO_NETWORK_RETRY,
+        validator=_score_rules,
+    )
+
+    assert result is not None and result.result == "second"
+    assert stats.validation_retries == 1
+    assert [(i.field_path, i.attempt) for i in stats.field_issues] == [
+        ("result", 0),
+        ("score", 0),
+        ("result", 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_calling_flag_only_accepts_first_answer() -> None:
+    llm = _agent_llm([_agent_final({"result": "first", "score": 50}, "c1")])
+
+    result, stats = await extract_data_with_tools(
+        llm,
+        FinalAnswer,
+        "do it",
+        tools=[],
+        retry_config=_NO_NETWORK_RETRY,
+        validator=_score_rules,
+    )
+
+    assert result is not None and result.result == "first"
+    assert stats.validation_retries == 0
+    assert [i.field_path for i in stats.field_issues] == ["result"]
+
+
+@pytest.mark.asyncio
+async def test_agent_json_mode_structured_issues() -> None:
+    llm = _agent_llm(
+        [
+            _json_response('{"result": "first", "score": 1}'),
+            _json_response('{"result": "second", "score": 50}'),
+        ]
+    )
+
+    result, stats = await extract_data_with_tools(
+        llm,
+        FinalAnswer,
+        "do it",
+        tools=[],
+        final_answer_mode=ExtractionMode.JSON,
+        retry_config=_NO_NETWORK_RETRY,
+        validator=_score_rules,
+    )
+
+    assert result is not None and result.result == "second"
+    assert stats.validation_retries == 1
+    assert [(i.field_path, i.attempt) for i in stats.field_issues] == [
+        ("result", 0),
+        ("score", 0),
+        ("result", 1),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_agent_json_mode_flag_only_accepts_first_answer() -> None:
+    llm = _agent_llm([_json_response('{"result": "first", "score": 50}')])
+
+    result, stats = await extract_data_with_tools(
+        llm,
+        FinalAnswer,
+        "do it",
+        tools=[],
+        final_answer_mode=ExtractionMode.JSON,
+        retry_config=_NO_NETWORK_RETRY,
+        validator=_score_rules,
+    )
+
+    assert result is not None and result.result == "first"
+    assert stats.validation_retries == 0
+
+
+# ---------------------------------------------------------------------------
+# Structured issues — batch
+# ---------------------------------------------------------------------------
+
+
+def _list_response(values: list[int]) -> MagicMock:
+    return _tool_response(
+        {"items": [{"name": f"n{i}", "value": v} for i, v in enumerate(values)]},
+        name="SimpleSchemaList",
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_str_validator_yields_one_issue_per_item() -> None:
+    llm = _bound_llm([_list_response([5, 150, 7]), _list_response([150, 150, 150])])
+
+    items, stats = await extract_data_list(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=_reject_low
+    )
+
+    assert items is not None
+    assert [(i.schema_name, i.field_path, i.error_type) for i in stats.field_issues] == [
+        ("SimpleSchema", "items -> 0", "external_validator"),
+        ("SimpleSchema", "items -> 2", "external_validator"),
+    ]
+    feedback = next(t for t in _feedback_texts(llm) if "additional validation check" in t)
+    assert "  - 'items -> 0': value 5 must be at least 100" in feedback
+    assert "  - 'items -> 2': value 7 must be at least 100" in feedback
+
+
+@pytest.mark.asyncio
+async def test_list_structured_issues_get_item_prefix() -> None:
+    def rules(item: SimpleSchema) -> list[ValidationIssue]:
+        if item.value >= 100:
+            return []
+        return [
+            ValidationIssue("too small", field_path="value", error_type="min_value"),
+            ValidationIssue("whole item is suspicious"),
+        ]
+
+    llm = _bound_llm([_list_response([150, 5]), _list_response([150, 150])])
+
+    items, stats = await extract_data_list(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=rules
+    )
+
+    assert items is not None
+    assert [(i.field_path, i.error_type) for i in stats.field_issues] == [
+        ("items -> 1 -> value", "min_value"),
+        ("items -> 1", "external_validator"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_flag_only_items_do_not_retry() -> None:
+    def rules(item: SimpleSchema) -> list[ValidationIssue]:
+        if item.value % 2:
+            return [ValidationIssue("odd value", field_path="value", on_mismatch="flag")]
+        return []
+
+    llm = _bound_llm([_list_response([150, 151, 153])])
+
+    items, stats = await extract_data_list(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=rules
+    )
+
+    assert items is not None and len(items) == 3
+    assert stats.primary_retries == 0
+    assert [i.field_path for i in stats.field_issues] == [
+        "items -> 1 -> value",
+        "items -> 2 -> value",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_retry_on_one_item_retries_container() -> None:
+    def rules(item: SimpleSchema) -> list[ValidationIssue]:
+        if item.value < 100:
+            return [ValidationIssue("too small", field_path="value")]
+        return [ValidationIssue("fine but noted", on_mismatch="flag")]
+
+    llm = _bound_llm([_list_response([150, 5]), _list_response([150, 150])])
+
+    items, stats = await extract_data_list(
+        llm, SimpleSchema, _messages(), retry_config=_NO_NETWORK_RETRY, validator=rules
+    )
+
+    assert items is not None
+    assert stats.primary_retries == 1
+    feedback = next(t for t in _feedback_texts(llm) if "additional validation check" in t)
+    assert "'items -> 1 -> value': too small" in feedback
+    assert "fine but noted" not in feedback

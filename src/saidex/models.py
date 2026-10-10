@@ -116,6 +116,45 @@ class FieldIssue:
     received: str | None = None
 
 
+#: ``field_path`` of an external-validator issue that is not tied to a field.
+EXTERNAL_VALIDATOR_PATH = "<external validator>"
+
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    """One finding reported by an external ``validator`` callable.
+
+    Return a sequence of these from a validator (instead of a plain string) to
+    report several independent problems at once.  Each issue becomes its own
+    :class:`FieldIssue` in the stats, and ``"retry"`` issues are fed back to the
+    model grouped by field path, like Pydantic and ``FieldCheck`` failures.
+
+    Attributes:
+        message: Human-readable description of the problem, shown to the model.
+        field_path: Path of the offending field, e.g. ``"body"`` or
+            ``"items -> 0 -> price"``.  Defaults to ``"<external validator>"``
+            for findings that concern the instance as a whole.
+        category: Coarse bucket, same vocabulary as :attr:`FieldIssue.category`.
+        error_type: Free-form rule id, e.g. ``"leaks_internal_note"`` — use it
+            to count violations per rule across runs.
+        on_mismatch: ``"retry"`` (default) rejects the attempt and consumes a
+            retry; ``"flag"`` only records the issue and accepts the instance.
+        received: Optional short string form of the offending value.
+    """
+
+    message: str
+    field_path: str = EXTERNAL_VALIDATOR_PATH
+    category: str = "value"
+    error_type: str = "external_validator"
+    on_mismatch: Literal["retry", "flag"] = "retry"
+    received: str | None = None
+
+    def __post_init__(self) -> None:
+        """Reject an ``on_mismatch`` value the engine would not understand."""
+        if self.on_mismatch not in ("retry", "flag"):
+            raise ValueError(f"on_mismatch must be 'retry' or 'flag', got {self.on_mismatch!r}")
+
+
 @dataclass(frozen=True)
 class _ExtractionStatsBase:
     """Fields shared by every extraction-stats type.

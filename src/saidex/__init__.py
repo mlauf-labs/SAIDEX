@@ -38,6 +38,8 @@ Public API
         ToolNodeEvent,
         OnComplete,
         Validator,
+        ValidationIssue,
+        ValidatorResult,
         collect_stats,
         StatsSink,
         on_extraction,
@@ -83,6 +85,7 @@ from .analytics import (
 from .extractor import (
     OnComplete,
     Validator,
+    ValidatorResult,
     extract_data,
     extract_data_from_text,
     extract_data_list,
@@ -108,6 +111,7 @@ from .models import (
     ToolCallStats,
     ToolNodeEvent,
     ToolNodeStats,
+    ValidationIssue,
 )
 from .observability import (
     ExtractionListener,
@@ -181,6 +185,8 @@ __all__ = [
     "ToolNodeEvent",
     "OnComplete",
     "Validator",
+    "ValidationIssue",
+    "ValidatorResult",
     "collect_stats",
     "StatsSink",
     "on_extraction",
