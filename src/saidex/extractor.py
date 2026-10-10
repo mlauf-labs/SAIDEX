@@ -253,7 +253,8 @@ async def _run_external_validator(
 ) -> tuple[list[FieldIssue], list[FieldIssue], str | None]:
     """Run an optional external *validator* against a validated *instance*.
 
-    Mirrors :func:`~saidex.grounding.collect_field_check_issues`: every finding
+    Follows the same ``(issues, rejecting, feedback)`` contract as
+    :func:`~saidex.grounding._collect_field_checks`: every finding
     (``"retry"`` and ``"flag"``) is returned as a :class:`FieldIssue` with
     ``attempt=0`` for the caller to re-stamp, and feedback is built only from
     ``"retry"`` findings.

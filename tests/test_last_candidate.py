@@ -10,6 +10,7 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from saidex import (
+    ExtractDataStats,
     ExtractionEvent,
     ExtractionMode,
     ExtractorRunStats,
@@ -239,6 +240,7 @@ async def test_agent_json_candidate() -> None:
         validator=_reject_answers,
     )
     assert stats.last_candidate == Answer(result="nope")
+    assert [i.message for i in stats.last_rejection] == ["not ok"]
 
 
 async def test_agent_success_has_no_candidate() -> None:
@@ -346,8 +348,27 @@ async def test_stats_sink_drops_candidate() -> None:
         )
     recorded = sink.all()[0]
     assert stats.last_candidate is not None
-    assert recorded.last_candidate is None  # type: ignore[union-attr]
-    assert recorded.last_rejection == stats.last_rejection  # type: ignore[union-attr]
+    assert isinstance(recorded, ExtractDataStats)
+    assert recorded.last_candidate is None
+    assert recorded.last_rejection == stats.last_rejection
+
+
+async def test_stats_sink_drops_agent_candidate() -> None:
+    async with collect_stats() as sink:
+        _, stats = await extract_data_with_tools(
+            make_llm([_final("bad", "f0")]),
+            Answer,
+            "task",
+            tools=[],
+            max_validation_retries=0,
+            retry_config=_NO_RETRY,
+            validator=_reject_answers,
+        )
+    recorded = sink.all()[0]
+    assert stats.last_candidate is not None
+    assert isinstance(recorded, ExtractorRunStats)
+    assert recorded.last_candidate is None
+    assert recorded.last_rejection == stats.last_rejection
 
 
 async def test_stats_with_candidate_is_hashable_and_not_in_repr() -> None:

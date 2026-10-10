@@ -18,14 +18,10 @@ from contextvars import ContextVar, Token
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from .models import ExtractDataStats, ExtractorRunStats
+
 if TYPE_CHECKING:
-    from .models import (
-        ExtractDataStats,
-        ExtractionEvent,
-        ExtractorRunStats,
-        ToolNodeEvent,
-        ToolNodeStats,
-    )
+    from .models import ExtractionEvent, ToolNodeEvent, ToolNodeStats
 
 logger = logging.getLogger(__name__)
 
@@ -62,8 +58,10 @@ class StatsSink:
     def _record(self, event: ExtractionEvent | ToolNodeEvent) -> None:
         """Append one completed run's stats, without the PII-bearing candidate.  Never raises."""
         stats = event.stats
-        if getattr(stats, "last_candidate", None) is not None:
-            stats = replace(stats, last_candidate=None)  # type: ignore[arg-type]  # ToolNodeStats lacks the field
+        if isinstance(stats, (ExtractDataStats, ExtractorRunStats)) and (
+            stats.last_candidate is not None
+        ):
+            stats = replace(stats, last_candidate=None)
         self._stats.append(stats)
 
     def all(self) -> list[ExtractDataStats | ExtractorRunStats | ToolNodeStats]:
