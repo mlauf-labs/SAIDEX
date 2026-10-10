@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1081,6 +1081,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#structured-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sync-or-async" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1315,6 +1326,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#structured-issues" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured issues
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sync-or-async" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1396,7 +1418,9 @@ business rule, a reference-data check, a running total that must reconcile.</p>
 <p>Every extraction entry point accepts an optional <strong><code>validator</code></strong> callable.  It
 receives the model instance <em>after</em> it has already passed Pydantic validation and
 either <strong>accepts</strong> it (returns <code>None</code>/empty string) or <strong>rejects</strong> it (raises any
-exception, or returns a non-empty error message).  A rejection re-enters the
+exception, or returns a non-empty error message).  To report several findings at
+once, it can also return a list of <a href="#structured-issues"><code>ValidationIssue</code></a>
+objects, each with its own field path and retry-or-flag behaviour.  A rejection re-enters the
 <strong>existing field-level retry loop</strong> with the message surfaced to the model — exactly
 like a Pydantic <code>ValidationError</code> — so the model gets a chance to self-correct.</p>
 <hr />
@@ -1449,7 +1473,9 @@ like a Pydantic <code>ValidationError</code> — so the model gets a chance to s
 <ul>
 <li>consumes one validation retry (<code>stats.primary_retries</code> / <code>validation_retries</code>),</li>
 <li>records a structured <a href="../quality-analytics/"><code>FieldIssue</code></a> with
-  <code>error_type="external_validator"</code> and <code>field_path="&lt;external validator&gt;"</code>,</li>
+  <code>error_type="external_validator"</code> and <code>field_path="&lt;external validator&gt;"</code>
+  (or one <code>FieldIssue</code> per <a href="#structured-issues"><code>ValidationIssue</code></a>
+  with your own path and rule id),</li>
 <li>triggers the <strong>fallback model</strong> when the primary model exhausts its retries,</li>
 <li>sets <code>stats.failure_reason = "validation_exhausted"</code> if all attempts fail.</li>
 </ul>
@@ -1471,27 +1497,165 @@ short-circuits before the validator is ever called.</p>
 </code></pre></div>
 <p>Write <strong>specific, actionable</strong> messages — the model reads them to know what to fix.</p>
 <hr />
+<h2 id="structured-issues">Structured issues<a class="headerlink" href="#structured-issues" title="Permanent link">&para;</a></h2>
+<p>Return a list of <code>ValidationIssue</code> objects when one attempt can break several
+independent rules.  Each issue becomes its own entry in <code>stats.field_issues</code>
+(with your <code>field_path</code>, <code>category</code> and <code>error_type</code>), and the model gets
+per-field feedback — the same treatment as Pydantic and <code>Grounded()</code> failures.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">ValidationIssue</span><span class="p">,</span> <span class="n">extract_data_from_text</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="k">def</span> <span class="nf">check_reply</span><span class="p">(</span><span class="n">reply</span><span class="p">:</span> <span class="n">Reply</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">ValidationIssue</span><span class="p">]:</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">issues</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">ValidationIssue</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="k">if</span> <span class="n">INTERNAL_NOTE_MARKER</span> <span class="ow">in</span> <span class="n">reply</span><span class="o">.</span><span class="n">body</span><span class="p">:</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>        <span class="n">issues</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ValidationIssue</span><span class="p">(</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>            <span class="s2">&quot;Do not quote the internal note.&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>            <span class="n">field_path</span><span class="o">=</span><span class="s2">&quot;body&quot;</span><span class="p">,</span> <span class="n">error_type</span><span class="o">=</span><span class="s2">&quot;leaks_internal_note&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>        <span class="p">))</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="k">if</span> <span class="s2">&quot;refund&quot;</span> <span class="ow">in</span> <span class="n">reply</span><span class="o">.</span><span class="n">body</span> <span class="ow">and</span> <span class="n">refund_pending</span><span class="p">:</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        <span class="n">issues</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ValidationIssue</span><span class="p">(</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>            <span class="s2">&quot;Do not promise a refund while approval is pending.&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>            <span class="n">field_path</span><span class="o">=</span><span class="s2">&quot;body&quot;</span><span class="p">,</span> <span class="n">error_type</span><span class="o">=</span><span class="s2">&quot;premature_refund&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>        <span class="p">))</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>    <span class="k">if</span> <span class="n">reply</span><span class="o">.</span><span class="n">language</span> <span class="o">!=</span> <span class="n">customer_language</span><span class="p">:</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>        <span class="n">issues</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ValidationIssue</span><span class="p">(</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>            <span class="sa">f</span><span class="s2">&quot;Reply in the customer&#39;s language (</span><span class="si">{</span><span class="n">customer_language</span><span class="si">}</span><span class="s2">).&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>            <span class="n">field_path</span><span class="o">=</span><span class="s2">&quot;language&quot;</span><span class="p">,</span> <span class="n">error_type</span><span class="o">=</span><span class="s2">&quot;wrong_language&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>            <span class="n">received</span><span class="o">=</span><span class="n">reply</span><span class="o">.</span><span class="n">language</span><span class="p">,</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>        <span class="p">))</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">reply</span><span class="o">.</span><span class="n">body</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1500</span><span class="p">:</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>        <span class="n">issues</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">ValidationIssue</span><span class="p">(</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>            <span class="s2">&quot;Reply is unusually long.&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>            <span class="n">field_path</span><span class="o">=</span><span class="s2">&quot;body&quot;</span><span class="p">,</span> <span class="n">error_type</span><span class="o">=</span><span class="s2">&quot;long_reply&quot;</span><span class="p">,</span> <span class="n">on_mismatch</span><span class="o">=</span><span class="s2">&quot;flag&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>        <span class="p">))</span>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>    <span class="k">return</span> <span class="n">issues</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a><span class="n">reply</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">Reply</span><span class="p">,</span> <span class="n">ticket</span><span class="p">,</span> <span class="n">validator</span><span class="o">=</span><span class="n">check_reply</span><span class="p">)</span>
+</code></pre></div>
+<p>The model receives the <code>"retry"</code> issues grouped by field path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>The extracted data is structurally valid but failed an additional validation check:
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  - &#39;body&#39;: Do not quote the internal note.
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  - &#39;body&#39;: Do not promise a refund while approval is pending.
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  - &#39;language&#39;: Reply in the customer&#39;s language (en).
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    Received: &#39;de&#39;
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Validator returns</th>
+<th>Instance</th>
+<th>Retry consumed</th>
+<th>Recorded in <code>stats.field_issues</code></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>None</code> / <code>""</code> / <code>[]</code></td>
+<td>accepted</td>
+<td>no</td>
+<td>—</td>
+</tr>
+<tr>
+<td>non-empty <code>str</code>, or raises</td>
+<td>rejected</td>
+<td>yes</td>
+<td>one issue, <code>field_path="&lt;external validator&gt;"</code></td>
+</tr>
+<tr>
+<td>list of non-empty <code>str</code></td>
+<td>rejected</td>
+<td>yes</td>
+<td>one issue per string, <code>field_path="&lt;external validator&gt;"</code></td>
+</tr>
+<tr>
+<td>issues, at least one <code>on_mismatch="retry"</code></td>
+<td>rejected</td>
+<td>yes</td>
+<td>every issue, <code>flag</code> ones included</td>
+</tr>
+<tr>
+<td>issues, all <code>on_mismatch="flag"</code></td>
+<td>accepted</td>
+<td>no</td>
+<td>every issue</td>
+</tr>
+</tbody>
+</table>
+<p><code>ValidationIssue</code> fields:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>message</code></td>
+<td>— (required)</td>
+<td>What is wrong; shown to the model</td>
+</tr>
+<tr>
+<td><code>field_path</code></td>
+<td><code>"&lt;external validator&gt;"</code></td>
+<td>Offending field, e.g. <code>"body"</code> or <code>"lines -&gt; 0 -&gt; price"</code> — relative to the validated model; batch extraction adds the <code>items -&gt; {i}</code> prefix</td>
+</tr>
+<tr>
+<td><code>category</code></td>
+<td><code>"value"</code></td>
+<td>Coarse bucket, same vocabulary as <code>FieldIssue.category</code></td>
+</tr>
+<tr>
+<td><code>error_type</code></td>
+<td><code>"external_validator"</code></td>
+<td>Free-form rule id — count violations per rule across runs</td>
+</tr>
+<tr>
+<td><code>on_mismatch</code></td>
+<td><code>"retry"</code></td>
+<td><code>"retry"</code> rejects and consumes a retry; <code>"flag"</code> only records</td>
+</tr>
+<tr>
+<td><code>received</code></td>
+<td><code>None</code></td>
+<td>Optional offending value, shown to the model</td>
+</tr>
+</tbody>
+</table>
+<p>A single <code>ValidationIssue</code> (without a list) works too, and a list may mix plain
+strings with issues.  Returning anything else — a dict, <code>True</code>, bytes — raises
+<code>TypeError</code>: it is treated as a bug in the validator, not as a rejection, and
+never consumes a retry.</p>
+<p><code>flag</code> issues mirror <a href="../source-grounding/"><code>FieldCheck(on_mismatch="flag")</code></a>: use them
+for soft findings you want to count in evals without burning a retry.</p>
+<hr />
 <h2 id="sync-or-async">Sync or async<a class="headerlink" href="#sync-or-async" title="Permanent link">&para;</a></h2>
 <p>The callable may be synchronous or a coroutine function; SAIDEX awaits it when
 needed.  Use an async validator when the check itself does I/O (a database or
 reference-data lookup):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">validate_against_catalogue</span><span class="p">(</span><span class="n">order</span><span class="p">:</span> <span class="n">Order</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">known</span> <span class="o">=</span> <span class="k">await</span> <span class="n">catalogue</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">order</span><span class="o">.</span><span class="n">sku</span><span class="p">)</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">known</span><span class="p">:</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown SKU &#39;</span><span class="si">{</span><span class="n">order</span><span class="o">.</span><span class="n">sku</span><span class="si">}</span><span class="s2">&#39;. Use a SKU from the catalogue.&quot;</span><span class="p">)</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="n">order</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">Order</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">validator</span><span class="o">=</span><span class="n">validate_against_catalogue</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="k">async</span> <span class="k">def</span> <span class="nf">validate_against_catalogue</span><span class="p">(</span><span class="n">order</span><span class="p">:</span> <span class="n">Order</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>    <span class="n">known</span> <span class="o">=</span> <span class="k">await</span> <span class="n">catalogue</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">order</span><span class="o">.</span><span class="n">sku</span><span class="p">)</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>    <span class="k">if</span> <span class="ow">not</span> <span class="n">known</span><span class="p">:</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unknown SKU &#39;</span><span class="si">{</span><span class="n">order</span><span class="o">.</span><span class="n">sku</span><span class="si">}</span><span class="s2">&#39;. Use a SKU from the catalogue.&quot;</span><span class="p">)</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">order</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span><span class="n">llm</span><span class="p">,</span> <span class="n">Order</span><span class="p">,</span> <span class="n">text</span><span class="p">,</span> <span class="n">validator</span><span class="o">=</span><span class="n">validate_against_catalogue</span><span class="p">)</span>
 </code></pre></div>
 <hr />
 <h2 id="batch-extraction-validated-per-item">Batch extraction — validated per item<a class="headerlink" href="#batch-extraction-validated-per-item" title="Permanent link">&para;</a></h2>
 <p>For <code>extract_data_list</code> / <code>extract_data_list_from_text</code> the validator is applied to
-<strong>each extracted item</strong> individually.  Failures are reported per item so the model
-can pinpoint the offending record:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">items</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_list_from_text</span><span class="p">(</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">InvoiceLine</span><span class="p">,</span> <span class="n">document</span><span class="p">,</span> <span class="n">validator</span><span class="o">=</span><span class="n">validate_line</span>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="p">)</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># A rejected item surfaces as e.g. &quot;items -&gt; 2: amount must be positive&quot;</span>
+<strong>each extracted item</strong> individually.  Every failing item becomes its own field
+issue, located by its index, so the model can pinpoint the offending record:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">items</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_list_from_text</span><span class="p">(</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">InvoiceLine</span><span class="p">,</span> <span class="n">document</span><span class="p">,</span> <span class="n">validator</span><span class="o">=</span><span class="n">validate_line</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="p">)</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># A rejected item surfaces with field_path &quot;items -&gt; 2&quot; — or &quot;items -&gt; 2 -&gt; amount&quot;</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="c1"># when the validator returns ValidationIssue(..., field_path=&quot;amount&quot;).</span>
 </code></pre></div>
+<p>One <code>"retry"</code> issue on any item rejects the whole batch attempt; <code>"flag"</code> issues
+are recorded per item without a retry.</p>
 <hr />
 <h2 id="agent-loop">Agent loop<a class="headerlink" href="#agent-loop" title="Permanent link">&para;</a></h2>
 <p><code>extract_data_with_tools</code> / <code>run_extractor_agent</code> apply the validator to the
@@ -1562,7 +1726,7 @@ looping (up to <code>max_validation_retries</code>) so it can revise its answer.
     
     
 
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
 <script
