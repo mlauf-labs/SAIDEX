@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from saidex import (
+    ExtractionEvent,
     ExtractionMode,
     ExtractorRunStats,
     GroundedStr,
     ValidationIssue,
+    collect_stats,
     extract_data,
     extract_data_list,
     extract_data_sync,
@@ -270,3 +273,78 @@ def test_add_combines_candidates() -> None:
     assert (a + c).last_candidate == Answer(result="c")
     ok = ExtractorRunStats(success=True)
     assert (a + ok).last_candidate is None
+
+
+async def test_agent_fallback_candidate_overrides_primary() -> None:
+    _, stats = await extract_data_with_tools(
+        make_llm([_final("p", "p0")]),
+        Answer,
+        "task",
+        tools=[],
+        fallback_llm_model=make_llm([_final("f", "f0")]),
+        max_validation_retries=0,
+        retry_config=_NO_RETRY,
+        validator=_reject_answers,
+    )
+    assert stats.fallback_used
+    assert stats.last_candidate == Answer(result="f")
+
+
+class _Outputs(AsyncCallbackHandler):
+    def __init__(self) -> None:
+        self.outputs: list[Any] = []
+
+    async def on_chain_end(self, outputs: Any, **kw: Any) -> None:
+        self.outputs.append(outputs)
+
+
+async def test_event_exposes_candidate() -> None:
+    events: list[ExtractionEvent] = []
+
+    async def hook(event: ExtractionEvent) -> None:
+        events.append(event)
+
+    await extract_data(
+        make_llm([_item(1)]),
+        Item,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_reject_small,
+        on_complete=hook,
+    )
+    assert events[0].last_candidate == Item(name="a", value=1)
+    assert events[0].last_rejection == events[0].stats.last_rejection
+
+
+async def test_trace_gets_only_a_flag() -> None:
+    handler = _Outputs()
+    await extract_data(
+        make_llm([_item(1)]),
+        Item,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_reject_small,
+        callbacks=[handler],
+    )
+    outputs = handler.outputs[-1]
+    assert outputs["has_last_candidate"] is True
+    assert outputs["result"] is None
+    assert "last_candidate" not in outputs
+
+
+async def test_stats_sink_drops_candidate() -> None:
+    async with collect_stats() as sink:
+        _, stats = await extract_data(
+            make_llm([_item(1)]),
+            Item,
+            _msgs(),
+            max_primary_retries=1,
+            retry_config=_NO_RETRY,
+            validator=_reject_small,
+        )
+    recorded = sink.all()[0]
+    assert stats.last_candidate is not None
+    assert recorded.last_candidate is None  # type: ignore[union-attr]
+    assert recorded.last_rejection == stats.last_rejection  # type: ignore[union-attr]

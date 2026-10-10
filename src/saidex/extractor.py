@@ -1384,6 +1384,7 @@ def _common_outputs(result: Any, stats: ExtractDataStats | ExtractorRunStats) ->
         "success": stats.success,
         "failure_reason": None if stats.failure_reason is None else stats.failure_reason.value,
         "fallback_used": stats.fallback_used,
+        "has_last_candidate": stats.last_candidate is not None,
         "problem_fields": list(stats.problem_fields),
         "format_errors": stats.format_errors,
     }

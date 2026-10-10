@@ -409,6 +409,16 @@ class ExtractionEvent:
     messages: list[BaseMessage]
     source_text: str | None = None
 
+    @property
+    def last_candidate(self) -> BaseModel | list[BaseModel] | None:
+        """Shortcut for ``stats.last_candidate`` — see :class:`_ExtractionStatsBase`."""
+        return self.stats.last_candidate
+
+    @property
+    def last_rejection(self) -> tuple[FieldIssue, ...]:
+        """Shortcut for ``stats.last_rejection``."""
+        return self.stats.last_rejection
+
 
 #: The four outcomes a SaidexToolNode-processed tool call can have. See
 #: :attr:`ToolCallStats.outcome` for what each value means.
