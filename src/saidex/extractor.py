@@ -1610,14 +1610,12 @@ async def run_extractor_agent(
             )
             if succeeded:
                 logger.info("Fallback model succeeded for agent loop (%s).", schema.__name__)
-            else:
-                logger.error(
-                    "Both models failed for agent loop (%s). Total iterations: %d.",
-                    schema.__name__,
-                    combined.iterations,
-                )
-            if succeeded:
                 return await _finish(result, combined)
+            logger.error(
+                "Both models failed for agent loop (%s). Total iterations: %d.",
+                schema.__name__,
+                combined.iterations,
+            )
             return await _fail(combined)
 
         logger.error(
