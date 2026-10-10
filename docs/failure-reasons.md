@@ -18,10 +18,10 @@ elif stats.failure_reason == "validation_exhausted":   # same thing, as a string
 
 | Value | Meaning | Typical cause | Schema-valid candidate possible? | Retry later? |
 | --- | --- | --- | --- | --- |
-| `validation_exhausted` | The last attempt produced parseable output, but it failed schema validation, source grounding or the external validator, and no retries were left. | The model cannot satisfy a strict rule; the value is not in the source text; ambiguous field descriptions. | **Yes.** Grounding and external-validator rejections always follow a schema-valid instance. | Rarely with the same input and model. Improve the prompt or schema, use a stronger fallback model, or relax the validator. In the agent loop it is also reported when `max_iterations` ran out before a valid final answer (for example only helper-tool calls): raise `max_iterations`. |
-| `parse_error` | The last attempt's output could not be parsed into arguments: malformed JSON or an invalid tool call. | Small or reasoning models, truncated output (`max_tokens`), provider quirks. | **Yes**, if an *earlier* attempt produced one. | Sometimes. Truncation is often transient; consider a larger `max_tokens` or JSON mode. |
-| `llm_error` | The model call failed after all network retries, or the provider rejected the tool binding. | Outage, authentication, a rate limit beyond the retry budget, unsupported tool-calling flags. | **Yes**, if an *earlier* attempt produced one. | **Yes** for transient outages and rate limits. No if the tool binding was rejected even after automatic relaxation (or with `auto_relax=False`): fix `tool_config`. |
-| `no_tool_call` | Agent loop with tool-calling final answers only: the model replied with plain text instead of calling a tool, and no retries were left. | The model ignores tools; the prompt does not ask for the final-answer tool. | **Yes**, if an *earlier* attempt produced one. | Rarely. Adjust the prompt, or use `final_answer_mode=ExtractionMode.JSON`. |
+| `validation_exhausted` | The last attempt produced parseable output, but it failed schema validation, source grounding or the external validator, and no retries were left. | The model cannot satisfy a strict rule; the value is not in the source text; ambiguous field descriptions. | **Yes.** Grounding and external-validator rejections always follow a schema-valid instance. Check `stats.last_candidate`. | Rarely with the same input and model. Improve the prompt or schema, use a stronger fallback model, or relax the validator. In the agent loop it is also reported when `max_iterations` ran out before a valid final answer (for example only helper-tool calls): raise `max_iterations`. |
+| `parse_error` | The last attempt's output could not be parsed into arguments: malformed JSON or an invalid tool call. | Small or reasoning models, truncated output (`max_tokens`), provider quirks. | **Yes**, if an *earlier* attempt produced one. Check `stats.last_candidate`. | Sometimes. Truncation is often transient; consider a larger `max_tokens` or JSON mode. |
+| `llm_error` | The model call failed after all network retries, or the provider rejected the tool binding. | Outage, authentication, a rate limit beyond the retry budget, unsupported tool-calling flags. | **Yes**, if an *earlier* attempt produced one. Check `stats.last_candidate`. | **Yes** for transient outages and rate limits. No if the tool binding was rejected even after automatic relaxation (or with `auto_relax=False`): fix `tool_config`. |
+| `no_tool_call` | Agent loop with tool-calling final answers only: the model replied with plain text instead of calling a tool, and no retries were left. | The model ignores tools; the prompt does not ask for the final-answer tool. | **Yes**, if an *earlier* attempt produced one. Check `stats.last_candidate`. | Rarely. Adjust the prompt, or use `final_answer_mode=ExtractionMode.JSON`. |
 
 !!! note "A reason describes the last attempt only"
     The retry loop keeps going after a rejection, so the run's reason is the
@@ -29,6 +29,8 @@ elif stats.failure_reason == "validation_exhausted":   # same thing, as a string
     instance that the external validator rejects, and attempt 2 may then return
     malformed JSON: the run ends with `parse_error` even though a schema-valid
     candidate existed.
+`stats.last_candidate` is the authoritative check — see
+[External Validators](external-validators.md#when-every-attempt-fails-last_candidate).
 
 ## Primary and fallback model
 

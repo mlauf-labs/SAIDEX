@@ -86,6 +86,34 @@ A validator rejection:
 The validator only runs on **structurally valid** instances — a Pydantic failure
 short-circuits before the validator is ever called.
 
+## When every attempt fails — `last_candidate`
+
+If the retries run out, the call still returns `(None, stats)`. The last
+instance that passed schema validation but was rejected by your validator (or
+by source grounding) is not lost, though:
+
+```python
+result, stats = await extract_data(llm, Findings, messages, validator=check_quotes)
+if result is None and stats.last_candidate is not None:
+    findings = cast(Findings, stats.last_candidate)
+    for issue in stats.last_rejection:          # the "retry" issues that rejected it
+        print(issue.field_path, issue.message)
+```
+
+- `last_candidate` is the **most recent** schema-valid candidate. A later
+  attempt that fails differently (malformed JSON, provider error) does not
+  clear it, so it can be set whatever `failure_reason` says.
+- With a fallback model, the fallback's candidate wins if it produced one.
+- `last_rejection` holds only the issues that rejected it; `"flag"` issues stay
+  in `field_issues`.
+- On success both are empty (`None` / `()`).
+- Batch variants expose a `list` of items, with paths like `items -> 3 -> quote`.
+
+!!! warning "PII"
+    The candidate is extracted source data. It stays on the stats object and is
+    visible to `on_complete` hooks and listeners. Traces only get
+    `has_last_candidate`, and `collect_stats()` sinks drop it.
+
 ---
 
 ## Signal: raise or return

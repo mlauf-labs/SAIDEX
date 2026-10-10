@@ -71,6 +71,7 @@ A grounding failure:
   `category="grounding"` and the field path (e.g. `items -> 2 -> vendor`),
 - triggers the **fallback model** when the primary exhausts its retries,
 - sets `stats.failure_reason = "validation_exhausted"` if all attempts fail.
+- keeps the rejected instance on `stats.last_candidate` — see [External Validators → last_candidate](external-validators.md#when-every-attempt-fails-last_candidate).
 
 Grounding runs **before** an [external validator](external-validators.md) and only
 on structurally valid instances.

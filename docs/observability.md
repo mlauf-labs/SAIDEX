@@ -57,7 +57,7 @@ for s in sink.all():                         # list[ExtractDataStats | Extractor
 ```
 
 `sink.all()` returns the stats in chronological order. The sink stores only the
-stats object of each run — never the messages, result, or source text — so it
+stats object of each run — never the messages, result, or source text, nor `last_candidate` — so it
 stays PII-light by default.
 
 It works as a plain `with` too, so the synchronous wrappers are covered:

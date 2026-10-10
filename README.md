@@ -249,6 +249,8 @@ stats.item_count        # int — items returned by extract_data_list (else 0)
 stats.format_errors     # int — pure parse / tool-call failures
 stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
 stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
+stats.last_candidate    # last schema-valid but rejected instance (None on success)
+stats.last_rejection    # tuple[FieldIssue, ...] — the issues that rejected it
 
 if not stats.success:
     print(stats.failure_reason, stats.problem_fields)
