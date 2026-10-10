@@ -848,6 +848,10 @@ def validate_invoice(inv: Invoice) -> None:
 invoice, stats = await extract_data_from_text(llm, Invoice, text, validator=validate_invoice)
 ```
 
+To report several findings at once, return a list of `ValidationIssue`s — each gets
+its own `field_path` and rule id in `stats.field_issues`, and `on_mismatch="flag"`
+records a soft finding without consuming a retry.
+
 > Cross-field example and full guide:
 > [`examples/12_external_validator.py`](examples/12_external_validator.py)
 > — [detailed docs](docs/external-validators.md)
