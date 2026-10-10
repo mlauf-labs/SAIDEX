@@ -1001,7 +1001,7 @@ async def extract_data_with_tools(
             used when omitted.
         callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model tried when the primary
-            exhausts its iteration budget.
+            exhausts its iteration or validation budget.
         max_iterations: Maximum LLM invocations per model attempt (default 12).
         max_validation_retries: Max times the final-answer schema may fail
             validation before giving up (default 3).
@@ -1079,9 +1079,9 @@ async def run_extractor_agent(
     history (e.g. multi-turn scenarios or injecting previous context).
 
     Supports an optional *fallback_llm_model*: when the primary model
-    exhausts its iteration budget without producing a valid answer, the
-    fallback model receives a fresh conversation starting from the original
-    messages with a brief hint.
+    exhausts its iteration or validation budget without producing a valid
+    answer, the fallback model receives a fresh conversation starting from
+    the original messages with a brief hint.
 
     Args:
         on_complete: Optional async completion hook — see :func:`extract_data`.
