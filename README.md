@@ -852,6 +852,10 @@ To report several findings at once, return a list of `ValidationIssue`s — each
 its own `field_path` and rule id in `stats.field_issues`, and `on_mismatch="flag"`
 records a soft finding without consuming a retry.
 
+To vary a validator by retry round — strict early, lenient on the last attempt —
+wrap it with `with_context`, which passes a `ValidatorContext` as second argument
+([details](docs/external-validators.md#attempt-context-strict-early-lenient-at-the-end)).
+
 > Cross-field example and full guide:
 > [`examples/12_external_validator.py`](examples/12_external_validator.py)
 > — [detailed docs](docs/external-validators.md)

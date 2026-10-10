@@ -189,6 +189,50 @@ for soft findings you want to count in evals without burning a retry.
 
 ---
 
+## Attempt context — strict early, lenient at the end
+
+A validator only sees the instance. To change its behaviour per round, wrap it
+with `with_context`; it then receives a `ValidatorContext` as second argument:
+
+| Field | Meaning |
+| --- | --- |
+| `attempt` | 1-based position in the current model's budget (parse errors use up a slot too) |
+| `max_attempts` | Size of that budget (`max_primary_retries` / `max_fallback_retries`; `max_validation_retries + 1` in the agent loop) |
+| `is_final` | `True` only on the last allowed attempt of the **whole run** — not on the primary's last attempt when a fallback model will still run |
+| `model_label` | `"primary"` or `"fallback"` |
+| `is_fallback` | Whether the fallback model produced the candidate |
+
+```python
+from saidex import ValidationIssue, ValidatorContext, extract_data, with_context
+
+def strict_then_lenient(inv: Invoice, ctx: ValidatorContext) -> ValidationIssue | None:
+    if abs(sum(line.amount for line in inv.lines) - inv.total) < 0.01:
+        return None
+    return ValidationIssue(
+        message="Line items do not add up to the total.",
+        field_path="total",
+        # Retry while there are attempts left; on the last one, accept and flag.
+        on_mismatch="flag" if ctx.is_final else "retry",
+    )
+
+result, stats = await extract_data(
+    llm, Invoice, messages, validator=with_context(strict_then_lenient)
+)
+```
+
+Plain one-argument validators keep working unchanged. The wrapper is explicit
+on purpose: SAIDEX never inspects a validator's signature. Batch extraction
+passes the same context to every item of an attempt.
+
+!!! note "Agent loop"
+    In `extract_data_with_tools` / `run_extractor_agent`, helper-tool calls
+    consume `max_iterations` too. If `max_iterations` runs out first, the run
+    ends without any validator call having seen `is_final=True`. If the model
+    sends several final answers in one response, each of them may be checked
+    with `is_final=True`.
+
+---
+
 ## Sync or async
 
 The callable may be synchronous or a coroutine function; SAIDEX awaits it when

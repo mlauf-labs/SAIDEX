@@ -283,6 +283,17 @@ nested under the loop alongside the LLM generations. See
 
 ---
 
+## Context-aware validators
+
+`validator=with_context(fn)` works in the agent loop as well. There,
+`ValidatorContext.max_attempts` is `max_validation_retries + 1`, and the attempt
+counter moves only with final answers, not with helper-tool calls. If the model
+sends several final answers in one response, each of them may be checked with
+`is_final=True`. See
+[External Validators → Attempt context](external-validators.md#attempt-context-strict-early-lenient-at-the-end).
+
+---
+
 ## See also
 
 - [Extraction](extraction.md) — single-shot extraction without tools
