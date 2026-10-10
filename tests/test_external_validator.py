@@ -627,10 +627,10 @@ async def test_structured_issues_exhaust_retries_stamp_attempts() -> None:
     assert [i.attempt for i in stats.field_issues] == [0, 0, 1, 1, 2, 2]
 
 
-@pytest.mark.parametrize(
-    "bad_result",
-    [True, {"field": "x"}, ["plain string in a list"], [ValidationIssue("ok"), 42]],
-)
+_INVALID_RESULTS = [True, {"field": "x"}, b"bytes", [ValidationIssue("ok"), 42]]
+
+
+@pytest.mark.parametrize("bad_result", _INVALID_RESULTS)
 @pytest.mark.asyncio
 async def test_invalid_result_type_raises_type_error(bad_result: object) -> None:
     llm = _bound_llm([_tool_response({"name": "Alice", "value": 5})])
@@ -643,6 +643,80 @@ async def test_invalid_result_type_raises_type_error(bad_result: object) -> None
             retry_config=_NO_NETWORK_RETRY,
             validator=lambda _: bad_result,  # type: ignore[arg-type,return-value]
         )
+
+
+@pytest.mark.parametrize("bad_result", _INVALID_RESULTS)
+@pytest.mark.asyncio
+async def test_list_invalid_item_result_raises_type_error(bad_result: object) -> None:
+    llm = _bound_llm([_tool_response({"items": [{"name": "A", "value": 5}]}, "SimpleSchemaList")])
+
+    with pytest.raises(TypeError, match="external validator"):
+        await extract_data_list(
+            llm,
+            SimpleSchema,
+            _messages(),
+            retry_config=_NO_NETWORK_RETRY,
+            validator=lambda _: bad_result,  # type: ignore[arg-type,return-value]
+        )
+    # Raised on the first attempt — no retry was spent on a programming error.
+    assert llm.bind_tools.return_value.ainvoke.await_count == 1
+
+
+@pytest.mark.parametrize("mode", [ExtractionMode.TOOL_CALLING, ExtractionMode.JSON])
+@pytest.mark.asyncio
+async def test_agent_invalid_result_raises_type_error(mode: ExtractionMode) -> None:
+    response = (
+        _agent_final({"result": "x", "score": 1})
+        if mode is ExtractionMode.TOOL_CALLING
+        else _json_response('{"result": "x", "score": 1}')
+    )
+    llm = _agent_llm([response])
+
+    with pytest.raises(TypeError, match="external validator"):
+        await extract_data_with_tools(
+            llm,
+            FinalAnswer,
+            "do it",
+            tools=[],
+            final_answer_mode=mode,
+            retry_config=_NO_NETWORK_RETRY,
+            validator=lambda _: True,  # type: ignore[arg-type,return-value]
+        )
+
+
+@pytest.mark.asyncio
+async def test_sequence_of_strings_becomes_one_issue_each() -> None:
+    # v0.7.0 pattern: collect error strings and return the (possibly empty) list.
+    def collect(instance: SimpleSchema) -> list[str]:
+        errors: list[str] = []
+        if instance.value < 100:
+            errors.append("value too small")
+        if instance.name == "Alice":
+            errors.append("name is a placeholder")
+        return errors
+
+    llm = _bound_llm(
+        [
+            _tool_response({"name": "Alice", "value": 5}),
+            _tool_response({"name": "Bob", "value": 150}),
+        ]
+    )
+
+    result, stats = await extract_data(
+        llm,
+        SimpleSchema,
+        _messages(),
+        retry_config=_NO_NETWORK_RETRY,
+        validator=collect,
+    )
+
+    assert result is not None and result.name == "Bob"
+    assert [(i.field_path, i.message) for i in stats.field_issues] == [
+        ("<external validator>", "value too small"),
+        ("<external validator>", "name is a placeholder"),
+    ]
+    feedback = next(t for t in _feedback_texts(llm) if "additional validation check" in t)
+    assert "  - value too small\n  - name is a placeholder" in feedback
 
 
 @pytest.mark.asyncio

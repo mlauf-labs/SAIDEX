@@ -50,8 +50,9 @@ OnComplete = Callable[[ExtractionEvent], Awaitable[None]]
 
 #: What an external ``validator`` may return: ``None`` (or any falsy value) to
 #: accept, a non-empty string to reject with one message, or one / several
-#: :class:`~saidex.models.ValidationIssue` objects for structured findings.
-ValidatorResult: TypeAlias = str | ValidationIssue | Sequence[ValidationIssue] | None
+#: :class:`~saidex.models.ValidationIssue` objects for structured findings.  A
+#: sequence may also hold plain strings, each becoming one unlocated issue.
+ValidatorResult: TypeAlias = str | ValidationIssue | Sequence[str | ValidationIssue] | None
 
 #: Signature of an external ``validator``: a sync **or** async callable that
 #: receives the freshly validated model instance and returns a
@@ -61,11 +62,22 @@ ValidatorResult: TypeAlias = str | ValidationIssue | Sequence[ValidationIssue] |
 Validator = Callable[[MODEL_T], "ValidatorResult | Awaitable[ValidatorResult]"]
 
 
+class _InvalidValidatorResultError(TypeError):
+    """A validator returned something that is not a :data:`ValidatorResult`.
+
+    A distinct subclass so :func:`_call_validator` can let it escape its broad
+    ``except``: the list wrapper runs item validators *inside* the container
+    validator, and a plain ``TypeError`` there would be mistaken for a rejection.
+    """
+
+
 def _coerce_validator_result(outcome: object) -> list[ValidationIssue]:
     """Normalise a validator's return value into a list of issues.
 
     Falsy values were accepted in v0.7.0 as well, so they stay accepted here
     before any type check (``x.bad and "msg"`` returns ``False`` when fine).
+    Plain strings inside a sequence are kept for the v0.7.0 pattern of
+    returning a list of error messages.
     """
     if not outcome:
         return []
@@ -73,11 +85,17 @@ def _coerce_validator_result(outcome: object) -> list[ValidationIssue]:
         return [ValidationIssue(message=outcome)]
     if isinstance(outcome, ValidationIssue):
         return [outcome]
-    if isinstance(outcome, Sequence) and all(isinstance(i, ValidationIssue) for i in outcome):
-        return list(outcome)
-    raise TypeError(
+    if isinstance(outcome, Sequence):
+        items = list(outcome)
+        if all(isinstance(i, (str, ValidationIssue)) for i in items):
+            return [
+                ValidationIssue(message=i) if isinstance(i, str) else i
+                for i in items
+                if not isinstance(i, str) or i
+            ]
+    raise _InvalidValidatorResultError(
         "external validator must return None, a str, a ValidationIssue or a sequence of "
-        f"ValidationIssue objects; got {outcome!r}"
+        f"str / ValidationIssue objects; got {outcome!r}"
     )
 
 
@@ -90,12 +108,15 @@ async def _call_validator(
 
     A raised exception is a deliberate rejection and becomes one issue.  An
     invalid return value raises :class:`TypeError` — it is a programming error,
-    so it is raised outside the ``try`` and never consumes a retry.
+    so it is re-raised (also from a nested validator, as in the list wrapper)
+    and never consumes a retry.
     """
     try:
         outcome = validator(instance)
         if inspect.isawaitable(outcome):
             outcome = await outcome
+    except _InvalidValidatorResultError:
+        raise
     except Exception as exc:  # noqa: BLE001 — any raise is a deliberate rejection
         message = (
             str(exc) or f"{exc.__class__.__name__} raised by external validator for {schema_name}"
@@ -315,10 +336,14 @@ async def extract_data(
         validator: Optional external validation callable (sync or async).  After
             the model passes Pydantic validation it is handed to *validator*,
             which accepts it by returning ``None`` or rejects it by returning a
-            non-empty error string or raising.  A rejection re-enters the same
-            field-level retry loop with the message surfaced to the model, so it
-            can correct cross-field, stateful, or reference-data problems that
-            Pydantic alone cannot express.
+            non-empty error string or raising.  To report several findings at
+            once, return a list of :class:`~saidex.models.ValidationIssue`
+            objects: each lands in ``stats.field_issues`` with its own field
+            path, ``"retry"`` issues reject the attempt, and ``"flag"`` issues
+            are only recorded.  A rejection re-enters the same field-level retry
+            loop with the findings surfaced to the model, so it can correct
+            cross-field, stateful, or reference-data problems that Pydantic
+            alone cannot express.  An invalid return type raises ``TypeError``.
 
     Returns:
         A tuple of ``(model_instance, stats)``:
@@ -670,9 +695,11 @@ async def extract_data_list(
             ``stats.source_text``, passed to *on_complete*, and included in the
             trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable run on **each** extracted
-            item (sync or async).  Any item it rejects re-enters the shared retry
-            loop with a per-item message (e.g. ``items -> 2: …``) surfaced to the
-            model.  See :func:`extract_data`.
+            item (sync or async).  Each finding is recorded per item with its
+            field path prefixed by the item index (``items -> 2`` or, for a
+            :class:`~saidex.models.ValidationIssue` with ``field_path="amount"``,
+            ``items -> 2 -> amount``); a ``"retry"`` finding on any item
+            re-enters the shared retry loop.  See :func:`extract_data`.
 
     Returns:
         A tuple of ``(items, stats)``:

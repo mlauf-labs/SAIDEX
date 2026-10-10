@@ -164,6 +164,7 @@ The extracted data is structurally valid but failed an additional validation che
 | --- | --- | --- | --- |
 | `None` / `""` / `[]` | accepted | no | — |
 | non-empty `str`, or raises | rejected | yes | one issue, `field_path="<external validator>"` |
+| list of non-empty `str` | rejected | yes | one issue per string, `field_path="<external validator>"` |
 | issues, at least one `on_mismatch="retry"` | rejected | yes | every issue, `flag` ones included |
 | issues, all `on_mismatch="flag"` | accepted | no | every issue |
 
@@ -172,15 +173,16 @@ The extracted data is structurally valid but failed an additional validation che
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `message` | — (required) | What is wrong; shown to the model |
-| `field_path` | `"<external validator>"` | Offending field, e.g. `"body"` or `"items -> 0 -> price"` |
+| `field_path` | `"<external validator>"` | Offending field, e.g. `"body"` or `"lines -> 0 -> price"` — relative to the validated model; batch extraction adds the `items -> {i}` prefix |
 | `category` | `"value"` | Coarse bucket, same vocabulary as `FieldIssue.category` |
 | `error_type` | `"external_validator"` | Free-form rule id — count violations per rule across runs |
 | `on_mismatch` | `"retry"` | `"retry"` rejects and consumes a retry; `"flag"` only records |
 | `received` | `None` | Optional offending value, shown to the model |
 
-A single `ValidationIssue` (without a list) works too.  Returning anything else —
-a dict, `True`, a list of strings — raises `TypeError`: it is treated as a bug in
-the validator, not as a rejection.
+A single `ValidationIssue` (without a list) works too, and a list may mix plain
+strings with issues.  Returning anything else — a dict, `True`, bytes — raises
+`TypeError`: it is treated as a bug in the validator, not as a rejection, and
+never consumes a retry.
 
 `flag` issues mirror [`FieldCheck(on_mismatch="flag")`](source-grounding.md): use them
 for soft findings you want to count in evals without burning a retry.
