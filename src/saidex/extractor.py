@@ -7,10 +7,10 @@ import inspect
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
 
 from json_repair import repair_json
 from langchain_core.callbacks.base import Callbacks
@@ -24,12 +24,14 @@ from pydantic import BaseModel, Field, create_model
 from ._callbacks import _ChainRun
 from .grounding import collect_field_check_issues
 from .models import (
+    EXTERNAL_VALIDATOR_PATH,
     ExtractDataStats,
     ExtractionEvent,
     ExtractionMode,
     ExtractorRunStats,
     FieldIssue,
     ToolCallConfig,
+    ValidationIssue,
 )
 from .observability import dispatch_to_observers
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
@@ -46,60 +48,136 @@ MODEL_T = TypeVar("MODEL_T", bound=BaseModel)
 #: :class:`~saidex.models.ExtractionEvent`.
 OnComplete = Callable[[ExtractionEvent], Awaitable[None]]
 
+#: What an external ``validator`` may return: ``None`` (or any falsy value) to
+#: accept, a non-empty string to reject with one message, or one / several
+#: :class:`~saidex.models.ValidationIssue` objects for structured findings.
+ValidatorResult: TypeAlias = str | ValidationIssue | Sequence[ValidationIssue] | None
+
 #: Signature of an external ``validator``: a sync **or** async callable that
-#: receives the freshly validated model instance and either accepts it (returns
-#: ``None`` / an empty string) or rejects it (returns a non-empty error message
-#: or raises an exception).  A rejection re-enters the existing field-level retry
-#: loop with the message surfaced to the model, exactly like a Pydantic failure.
-Validator = Callable[[MODEL_T], "str | None | Awaitable[str | None]"]
+#: receives the freshly validated model instance and returns a
+#: :data:`ValidatorResult` (or raises to reject).  Every reported issue lands in
+#: ``stats.field_issues``; ``"retry"`` issues re-enter the field-level retry loop
+#: with per-field feedback, ``"flag"`` issues are only recorded.
+Validator = Callable[[MODEL_T], "ValidatorResult | Awaitable[ValidatorResult]"]
 
 
-def _external_validator_issue(schema_name: str, message: str, attempt: int) -> FieldIssue:
-    """Build a :class:`~saidex.models.FieldIssue` for an external-validator rejection."""
-    return FieldIssue(
-        schema_name=schema_name,
-        field_path="<external validator>",
-        category="value",
-        error_type="external_validator",
-        message=message,
-        attempt=attempt,
-        received=None,
+def _coerce_validator_result(outcome: object) -> list[ValidationIssue]:
+    """Normalise a validator's return value into a list of issues.
+
+    Falsy values were accepted in v0.7.0 as well, so they stay accepted here
+    before any type check (``x.bad and "msg"`` returns ``False`` when fine).
+    """
+    if not outcome:
+        return []
+    if isinstance(outcome, str):
+        return [ValidationIssue(message=outcome)]
+    if isinstance(outcome, ValidationIssue):
+        return [outcome]
+    if isinstance(outcome, Sequence) and all(isinstance(i, ValidationIssue) for i in outcome):
+        return list(outcome)
+    raise TypeError(
+        "external validator must return None, a str, a ValidationIssue or a sequence of "
+        f"ValidationIssue objects; got {outcome!r}"
     )
+
+
+async def _call_validator(
+    validator: Validator[MODEL_T],
+    instance: MODEL_T,
+    schema_name: str,
+) -> list[ValidationIssue]:
+    """Run *validator* on *instance* and return its findings (empty = accepted).
+
+    A raised exception is a deliberate rejection and becomes one issue.  An
+    invalid return value raises :class:`TypeError` — it is a programming error,
+    so it is raised outside the ``try`` and never consumes a retry.
+    """
+    try:
+        outcome = validator(instance)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+    except Exception as exc:  # noqa: BLE001 — any raise is a deliberate rejection
+        message = (
+            str(exc) or f"{exc.__class__.__name__} raised by external validator for {schema_name}"
+        )
+        return [ValidationIssue(message=message)]
+    return _coerce_validator_result(outcome)
+
+
+def _validator_feedback(issues: Sequence[ValidationIssue]) -> str | None:
+    """Render the ``"retry"`` issues as feedback text, or ``None`` if there are none.
+
+    A single issue with no field path and no received value is rendered as its
+    bare message, which keeps the v0.7.0 feedback for string validators.
+    """
+    retry = [i for i in issues if i.on_mismatch == "retry"]
+    if not retry:
+        return None
+    if (
+        len(retry) == 1
+        and retry[0].field_path == EXTERNAL_VALIDATOR_PATH
+        and retry[0].received is None
+    ):
+        return retry[0].message
+    by_path: dict[str, list[ValidationIssue]] = {}
+    for issue in retry:
+        by_path.setdefault(issue.field_path, []).append(issue)
+    lines: list[str] = []
+    for path, group in by_path.items():
+        prefix = "" if path == EXTERNAL_VALIDATOR_PATH else f"'{path}': "
+        for issue in group:
+            lines.append(f"  - {prefix}{issue.message}")
+            if issue.received is not None:
+                lines.append(f"    Received: '{issue.received}'")
+    return "\n".join(lines)
+
+
+def _to_field_issues(issues: Sequence[ValidationIssue], schema_name: str) -> list[FieldIssue]:
+    """Convert validator findings to :class:`FieldIssue` records with ``attempt=0``."""
+    return [
+        FieldIssue(
+            schema_name=schema_name,
+            field_path=issue.field_path,
+            category=issue.category,
+            error_type=issue.error_type,
+            message=issue.message,
+            attempt=0,
+            received=issue.received,
+        )
+        for issue in issues
+    ]
 
 
 async def _run_external_validator(
     validator: Validator[MODEL_T] | None,
     instance: MODEL_T,
     schema_name: str,
-) -> str | None:
+) -> tuple[list[FieldIssue], str | None]:
     """Run an optional external *validator* against a validated *instance*.
 
-    The validator may be sync or async.  It signals rejection either by raising
-    any exception or by returning a non-empty string; both are turned into a
-    human-readable message suitable for feeding back to the model.
+    Mirrors :func:`~saidex.grounding.collect_field_check_issues`: every finding
+    (``"retry"`` and ``"flag"``) is returned as a :class:`FieldIssue` with
+    ``attempt=0`` for the caller to re-stamp, and feedback is built only from
+    ``"retry"`` findings.
 
     Args:
         validator: The caller-supplied validation callable, or ``None``.
         instance: The instance that already passed Pydantic validation.
-        schema_name: Used to build a fallback message when an exception carries
-            no text of its own.
+        schema_name: Stamped onto each issue and used for the fallback message
+            of an exception that carries no text of its own.
 
     Returns:
-        ``None`` when the instance is accepted, otherwise the rejection message.
+        ``(issues, feedback)``. ``feedback`` is ``None`` when the instance is
+        accepted — no issues, or only ``"flag"`` issues.
+
+    Raises:
+        TypeError: The validator returned something other than a
+            :data:`ValidatorResult`.
     """
     if validator is None:
-        return None
-    try:
-        outcome = validator(instance)
-        if inspect.isawaitable(outcome):
-            outcome = await outcome
-    except Exception as exc:  # noqa: BLE001 — any raise is a deliberate rejection
-        return (
-            str(exc) or f"{exc.__class__.__name__} raised by external validator for {schema_name}"
-        )
-    if outcome:
-        return str(outcome)
-    return None
+        return [], None
+    issues = await _call_validator(validator, instance, schema_name)
+    return _to_field_issues(issues, schema_name), _validator_feedback(issues)
 
 
 def _source_text_from_messages(messages: list[BaseMessage]) -> str:
@@ -614,7 +692,7 @@ async def extract_data_list(
             """Run the item *validator* over every container item, joining failures."""
             errors: list[str] = []
             for index, item in enumerate(cast(Any, container_instance).items):
-                item_error = await _run_external_validator(item_validator, item, schema.__name__)
+                _, item_error = await _run_external_validator(item_validator, item, schema.__name__)
                 if item_error is not None:
                     errors.append(f"items -> {index}: {item_error}")
             return "\n".join(errors) if errors else None
@@ -1221,15 +1299,13 @@ async def _run_extractor_agent_with_model(
                     messages.append(HumanMessage(content=grounding_error))
                     validation_retries += 1
                     continue
-                validator_error = await _run_external_validator(
+                validator_issues, validator_error = await _run_external_validator(
                     validator, instance, schema.__name__
                 )
+                agent_issues.extend(
+                    replace(i, attempt=validation_retries) for i in validator_issues
+                )
                 if validator_error is not None:
-                    agent_issues.append(
-                        _external_validator_issue(
-                            schema.__name__, validator_error, validation_retries
-                        )
-                    )
                     failure_reason = "validation_exhausted"
                     if validation_retries >= max_validation_retries:
                         break
@@ -1378,15 +1454,13 @@ async def _run_extractor_agent_with_model(
                             )
                             validation_retries += 1
                         continue
-                    validator_error = await _run_external_validator(
+                    validator_issues, validator_error = await _run_external_validator(
                         validator, instance, schema.__name__
                     )
+                    agent_issues.extend(
+                        replace(i, attempt=validation_retries) for i in validator_issues
+                    )
                     if validator_error is not None:
-                        agent_issues.append(
-                            _external_validator_issue(
-                                schema.__name__, validator_error, validation_retries
-                            )
-                        )
                         failure_reason = "validation_exhausted"
                         if validation_retries >= max_validation_retries:
                             tool_result_messages.append(
@@ -1752,7 +1826,11 @@ async def _try_with_model(
             remaining -= 1
             continue
 
-        validator_error = await _run_external_validator(validator, instance, schema.__name__)
+        validator_issues, validator_error = await _run_external_validator(
+            validator, instance, schema.__name__
+        )
+        # Like grounding: record every finding, retry only on a "retry" one.
+        issues.extend(replace(i, attempt=retries) for i in validator_issues)
         if validator_error is not None:
             logger.warning(
                 "%s: external validation failed for %s (attempt %d/%d): %s",
@@ -1762,7 +1840,6 @@ async def _try_with_model(
                 max_retries,
                 validator_error,
             )
-            issues.append(_external_validator_issue(schema.__name__, validator_error, retries))
             failure_reason = "validation_exhausted"
             messages.append(
                 HumanMessage(

@@ -39,6 +39,7 @@ Public API
         OnComplete,
         Validator,
         ValidationIssue,
+        ValidatorResult,
         collect_stats,
         StatsSink,
         on_extraction,
@@ -84,6 +85,7 @@ from .analytics import (
 from .extractor import (
     OnComplete,
     Validator,
+    ValidatorResult,
     extract_data,
     extract_data_from_text,
     extract_data_list,
@@ -184,6 +186,7 @@ __all__ = [
     "OnComplete",
     "Validator",
     "ValidationIssue",
+    "ValidatorResult",
     "collect_stats",
     "StatsSink",
     "on_extraction",
