@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -292,7 +292,8 @@ class _ExtractionStatsBase:
     format_errors: int = 0
     field_issues: tuple[FieldIssue, ...] = ()
     source_text: str | None = None
-    last_candidate: BaseModel | list[BaseModel] | None = None
+    # Excluded from hash/repr: models and lists are unhashable, and repr lands in logs (PII).
+    last_candidate: BaseModel | list[BaseModel] | None = field(default=None, hash=False, repr=False)
     last_rejection: tuple[FieldIssue, ...] = ()
 
     @property
@@ -321,7 +322,8 @@ class ExtractDataStats(_ExtractionStatsBase):
 
     In addition to the fields below, every attribute of
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
-    ``schema_name``, ``format_errors``, ``field_issues``, ``problem_fields``)
+    ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
+    ``last_candidate``, ``last_rejection``, ``problem_fields``)
     is available.
     """
 
@@ -349,7 +351,8 @@ class ExtractorRunStats(_ExtractionStatsBase):
 
     In addition to the fields below, every attribute of
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
-    ``schema_name``, ``format_errors``, ``field_issues``, ``problem_fields``)
+    ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
+    ``last_candidate``, ``last_rejection``, ``problem_fields``)
     is available.
     """
 

@@ -348,3 +348,18 @@ async def test_stats_sink_drops_candidate() -> None:
     assert stats.last_candidate is not None
     assert recorded.last_candidate is None  # type: ignore[union-attr]
     assert recorded.last_rejection == stats.last_rejection  # type: ignore[union-attr]
+
+
+async def test_stats_with_candidate_is_hashable_and_not_in_repr() -> None:
+    _, stats = await extract_data(
+        make_llm([_item(1)]),
+        Item,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_reject_small,
+    )
+    assert stats.last_candidate is not None
+    assert isinstance(hash(stats), int)
+    assert "last_candidate" not in repr(stats)
+    assert "Item(" not in repr(stats)
