@@ -216,7 +216,7 @@ class _ExtractionStatsBase:
             successful run may still carry :attr:`field_issues` from earlier,
             self-corrected attempts.
         failure_reason: Why the run failed, as a :class:`FailureReason`, or
-            ``None`` on success.  Compares equal to its plain string value.
+            ``None`` on success.  Compares equal to its plain string value.  See the *Failure reasons* page in the documentation.
         schema_name: Name of the schema that was extracted.
         format_errors: Number of pure parse/tool-call failures (malformed JSON
             or tool calls) — as opposed to schema-validation mismatches.
