@@ -29,9 +29,11 @@ from .models import (
     ExtractionEvent,
     ExtractionMode,
     ExtractorRunStats,
+    FailureReason,
     FieldIssue,
     ToolCallConfig,
     ValidationIssue,
+    _combine_failure_reasons,
 )
 from .observability import dispatch_to_observers
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
@@ -504,7 +506,9 @@ async def extract_data(
                     fallback_retries=fallback.retries,
                     fallback_used=True,
                     schema_name=schema.__name__,
-                    failure_reason=fallback.failure_reason or primary.failure_reason,
+                    failure_reason=_combine_failure_reasons(
+                        primary.failure_reason, fallback.failure_reason, success=False
+                    ),
                     format_errors=combined_format_errors,
                     field_issues=combined_issues,
                 ),
@@ -1107,7 +1111,11 @@ async def run_extractor_agent(
                 fallback_used=True,
                 success=succeeded,
                 schema_name=schema.__name__,
-                failure_reason=None if succeeded else fallback_stats.failure_reason,
+                failure_reason=_combine_failure_reasons(
+                    primary_stats.failure_reason,
+                    fallback_stats.failure_reason,
+                    success=succeeded,
+                ),
                 format_errors=primary_stats.format_errors + fallback_stats.format_errors,
                 field_issues=(*primary_stats.field_issues, *fallback_stats.field_issues),
             )
@@ -1233,9 +1241,9 @@ async def _run_extractor_agent_with_model(
     validation_retries = 0
     agent_issues: list[FieldIssue] = []
     format_errors = 0
-    failure_reason: str | None = None
+    failure_reason: FailureReason | None = None
 
-    def _stats(success: bool, reason: str | None) -> ExtractorRunStats:
+    def _stats(success: bool, reason: FailureReason | None) -> ExtractorRunStats:
         return ExtractorRunStats(
             iterations=iterations,
             tool_calls=total_tool_calls,
@@ -1264,7 +1272,7 @@ async def _run_extractor_agent_with_model(
                 )
         except Exception as exc:
             logger.error("%s: agent loop LLM invocation error: %s", model_label, exc)
-            failure_reason = "llm_error"
+            failure_reason = FailureReason.LLM_ERROR
             break
 
         iterations += 1
@@ -1284,7 +1292,7 @@ async def _run_extractor_agent_with_model(
                 args, format_error = _parse_json_response(response, schema.__name__, model_label)
                 if format_error is not None:
                     format_errors += 1
-                    failure_reason = "parse_error"
+                    failure_reason = FailureReason.PARSE_ERROR
                     if validation_retries >= max_validation_retries:
                         break
                     messages.append(HumanMessage(content=format_error))
@@ -1296,7 +1304,7 @@ async def _run_extractor_agent_with_model(
                     agent_issues.extend(
                         replace(i, attempt=validation_retries) for i in attempt_issues
                     )
-                    failure_reason = "validation_exhausted"
+                    failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
                         break
                     logger.warning(
@@ -1323,7 +1331,7 @@ async def _run_extractor_agent_with_model(
                     replace(i, attempt=validation_retries) for i in grounding_issues
                 )
                 if grounding_error is not None:
-                    failure_reason = "validation_exhausted"
+                    failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
                         break
                     logger.warning(
@@ -1341,7 +1349,7 @@ async def _run_extractor_agent_with_model(
                     replace(i, attempt=validation_retries) for i in validator_issues
                 )
                 if validator_error is not None:
-                    failure_reason = "validation_exhausted"
+                    failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
                         break
                     logger.warning(
@@ -1364,7 +1372,7 @@ async def _run_extractor_agent_with_model(
                 return instance, _stats(success=True, reason=None)
             else:
                 # TOOL_CALLING mode but no tool calls — ask the LLM to use a tool.
-                failure_reason = "no_tool_call"
+                failure_reason = FailureReason.NO_TOOL_CALL
                 if validation_retries >= max_validation_retries:
                     break
                 tool_names = ", ".join([t.name for t in tools] + [final_tool_name])
@@ -1384,7 +1392,7 @@ async def _run_extractor_agent_with_model(
         # ── Invalid tool calls without any valid ones ─────────────────────
         if invalid_tool_calls and not tool_calls:
             format_errors += 1
-            failure_reason = "parse_error"
+            failure_reason = FailureReason.PARSE_ERROR
             if validation_retries >= max_validation_retries:
                 break
             bad = invalid_tool_calls[0]
@@ -1439,7 +1447,7 @@ async def _run_extractor_agent_with_model(
                     agent_issues.extend(
                         replace(i, attempt=validation_retries) for i in attempt_issues
                     )
-                    failure_reason = "validation_exhausted"
+                    failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
                         tool_result_messages.append(
                             ToolMessage(
@@ -1468,7 +1476,7 @@ async def _run_extractor_agent_with_model(
                         replace(i, attempt=validation_retries) for i in grounding_issues
                     )
                     if grounding_error is not None:
-                        failure_reason = "validation_exhausted"
+                        failure_reason = FailureReason.VALIDATION_EXHAUSTED
                         if validation_retries >= max_validation_retries:
                             tool_result_messages.append(
                                 ToolMessage(
@@ -1496,7 +1504,7 @@ async def _run_extractor_agent_with_model(
                         replace(i, attempt=validation_retries) for i in validator_issues
                     )
                     if validator_error is not None:
-                        failure_reason = "validation_exhausted"
+                        failure_reason = FailureReason.VALIDATION_EXHAUSTED
                         if validation_retries >= max_validation_retries:
                             tool_result_messages.append(
                                 ToolMessage(
@@ -1578,7 +1586,7 @@ async def _run_extractor_agent_with_model(
         total_tool_calls,
         validation_retries,
     )
-    return None, _stats(success=False, reason=failure_reason or "validation_exhausted")
+    return None, _stats(success=False, reason=failure_reason or FailureReason.VALIDATION_EXHAUSTED)
 
 
 #: Keyword arguments of ``bind_tools`` that limited providers are known to reject.
@@ -1669,7 +1677,7 @@ class _ModelAttempt(Generic[MODEL_T]):
     retries: int
     field_issues: list[FieldIssue]
     format_errors: int
-    failure_reason: str | None
+    failure_reason: FailureReason | None
 
 
 async def _try_with_model(
@@ -1715,7 +1723,7 @@ async def _try_with_model(
                     schema.__name__,
                     exc,
                 )
-                return _ModelAttempt(None, 0, [], 0, "llm_error")
+                return _ModelAttempt(None, 0, [], 0, FailureReason.LLM_ERROR)
             logger.warning(
                 "%s: model does not accept the tool-binding flags for %s (%s) — "
                 "re-binding with relaxed flags.",
@@ -1733,7 +1741,7 @@ async def _try_with_model(
                     schema.__name__,
                     relaxed_exc,
                 )
-                return _ModelAttempt(None, 0, [], 0, "llm_error")
+                return _ModelAttempt(None, 0, [], 0, FailureReason.LLM_ERROR)
     else:
         schema_label = schema.__name__
         llm = llm_model
@@ -1744,7 +1752,7 @@ async def _try_with_model(
     remaining = max_retries
     issues: list[FieldIssue] = []
     format_errors = 0
-    failure_reason: str | None = None
+    failure_reason: FailureReason | None = None
 
     while remaining > 0:
         # --- LLM invocation with network-level retries ---
@@ -1780,7 +1788,9 @@ async def _try_with_model(
                         schema.__name__,
                         relaxed_exc,
                     )
-                    return _ModelAttempt(None, retries, issues, format_errors, "llm_error")
+                    return _ModelAttempt(
+                        None, retries, issues, format_errors, FailureReason.LLM_ERROR
+                    )
                 # Deliberately no ``remaining -= 1``: the relaxed re-bind is a
                 # transport-level correction, not a failed extraction attempt.
                 continue
@@ -1790,7 +1800,7 @@ async def _try_with_model(
                 schema.__name__,
                 exc,
             )
-            return _ModelAttempt(None, retries, issues, format_errors, "llm_error")
+            return _ModelAttempt(None, retries, issues, format_errors, FailureReason.LLM_ERROR)
 
         # --- Extract candidate arguments (mode-specific) ---
         if mode is ExtractionMode.TOOL_CALLING:
@@ -1801,7 +1811,7 @@ async def _try_with_model(
         if format_error is not None:
             messages.append(HumanMessage(content=format_error))
             format_errors += 1
-            failure_reason = "parse_error"
+            failure_reason = FailureReason.PARSE_ERROR
             retries += 1
             remaining -= 1
             continue
@@ -1812,7 +1822,7 @@ async def _try_with_model(
             instance, attempt_issues, error_text = create_instance_with_issues(schema, **args)
         except Exception as exc:
             logger.error("%s: unexpected parse error for %s: %s", model_label, schema.__name__, exc)
-            return _ModelAttempt(None, retries, issues, format_errors, "parse_error")
+            return _ModelAttempt(None, retries, issues, format_errors, FailureReason.PARSE_ERROR)
 
         if error_text:
             logger.warning(
@@ -1824,7 +1834,7 @@ async def _try_with_model(
                 error_text,
             )
             issues.extend(replace(i, attempt=retries) for i in attempt_issues)
-            failure_reason = "validation_exhausted"
+            failure_reason = FailureReason.VALIDATION_EXHAUSTED
             messages.append(
                 HumanMessage(
                     content=(
@@ -1855,7 +1865,7 @@ async def _try_with_model(
                 max_retries,
                 grounding_error,
             )
-            failure_reason = "validation_exhausted"
+            failure_reason = FailureReason.VALIDATION_EXHAUSTED
             messages.append(HumanMessage(content=grounding_error))
             retries += 1
             remaining -= 1
@@ -1875,7 +1885,7 @@ async def _try_with_model(
                 max_retries,
                 validator_error,
             )
-            failure_reason = "validation_exhausted"
+            failure_reason = FailureReason.VALIDATION_EXHAUSTED
             messages.append(
                 HumanMessage(
                     content=(
