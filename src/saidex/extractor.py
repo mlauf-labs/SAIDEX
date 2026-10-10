@@ -19,7 +19,8 @@ from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.system import SystemMessage
 from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from pydantic import BaseModel, Field, create_model
+from pydantic import AliasChoices, BaseModel, Field, RootModel, ValidationError, create_model
+from pydantic.fields import FieldInfo
 
 from ._callbacks import _ChainRun
 from .grounding import _collect_field_checks
@@ -40,7 +41,7 @@ from .models import (
 )
 from .observability import dispatch_to_observers
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
-from .utils import create_instance_with_issues
+from .utils import _format_validation_error, create_instance_with_issues
 
 if TYPE_CHECKING:
     from .tools import Tool
@@ -255,6 +256,86 @@ def _to_field_issues(issues: Sequence[ValidationIssue], schema_name: str) -> lis
     ]
 
 
+#: ``model_validate(..., by_name=True)`` exists from Pydantic 2.11 on and
+#: accepts field names for every alias form (``AliasChoices``, ``AliasPath``).
+_VALIDATE_BY_NAME = "by_name" in inspect.signature(BaseModel.model_validate).parameters
+
+
+def _input_key(name: str, info: FieldInfo) -> str:
+    """Return the input key under which field *name* re-validates.
+
+    The field name when ``by_name`` validation is available; otherwise the
+    first string validation alias (Pydantic < 2.11 accepts only aliases unless
+    the schema sets ``populate_by_name``).
+    """
+    if _VALIDATE_BY_NAME:
+        return name
+    alias = info.validation_alias
+    if isinstance(alias, AliasChoices):
+        alias = next((c for c in alias.choices if isinstance(c, str)), None)
+    if isinstance(alias, str):
+        return alias
+    return info.alias or name
+
+
+def _field_values(value: Any) -> Any:
+    """Re-express *value* as validation input built from its stored field values.
+
+    Models are read field by field instead of serialized, so field serializers,
+    ``exclude=True`` and serialization aliases cannot change what is
+    re-validated.  Computed fields are not model fields and are left out, at
+    every depth, so a nested ``extra="forbid"`` model does not reject them.
+    """
+    if isinstance(value, RootModel):
+        return _field_values(value.root)
+    if isinstance(value, BaseModel):
+        stored = value.__dict__
+        data = {
+            _input_key(name, info): _field_values(stored[name])
+            for name, info in type(value).model_fields.items()
+            if name in stored
+        }
+        for key, extra in (value.__pydantic_extra__ or {}).items():
+            data[key] = _field_values(extra)
+        return data
+    if isinstance(value, dict):
+        return {key: _field_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_field_values(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_field_values(item) for item in value)
+    return value
+
+
+def _revalidate(schema: type[MODEL_T], outcome: BaseModel) -> tuple[MODEL_T | None, str | None]:
+    """Validate an ``on_exhausted`` result against *schema* from scratch.
+
+    The primary attempt validates the stored field values (see
+    :func:`_field_values`).  If that fails, the ``model_dump(round_trip=True)``
+    output is tried as well, for schemas whose validators expect serialized
+    input.  Validators may raise any exception on already-parsed values, so
+    every exception counts as a failed attempt here.
+
+    Returns:
+        ``(instance, None)`` when valid, otherwise ``(None, error_text)`` with
+        the primary attempt's error.
+    """
+    data = _field_values(outcome)
+    try:
+        if _VALIDATE_BY_NAME:
+            return schema.model_validate(data, by_name=True), None
+        return schema.model_validate(data), None
+    except ValidationError as exc:
+        error_text = _format_validation_error(schema, exc)
+    except Exception as exc:  # noqa: BLE001 — see docstring
+        error_text = f"{exc.__class__.__name__}: {exc}"
+    try:
+        dumped = outcome.model_dump(by_alias=True, round_trip=True, warnings=False)
+        return schema.model_validate(dumped), None
+    except Exception:  # noqa: BLE001 — see docstring
+        return None, error_text
+
+
 async def _salvage(
     on_exhausted: OnExhausted[MODEL_T],
     schema: type[MODEL_T],
@@ -265,10 +346,11 @@ async def _salvage(
 ) -> tuple[MODEL_T | None, FieldIssue | None]:
     """Run an ``on_exhausted`` hook and re-validate what it returns.
 
-    The returned instance is re-validated against *schema* only: the hook owns
-    the decision, so grounding and the external validator are not re-run.  The
-    round-trip through ``model_dump(by_alias=True)`` catches instances built
-    with ``model_copy(update=...)``, which bypasses validation.
+    The hook receives a deep copy of *candidate*.  The returned instance is
+    re-validated against *schema* only (see :func:`_revalidate`): the hook owns
+    the decision, so grounding and the external validator are not re-run.
+    Re-validation catches instances built with ``model_copy(update=...)`` or
+    ``model_construct``, which bypass validation.
 
     Args:
         on_exhausted: The caller's hook.
@@ -284,7 +366,9 @@ async def _salvage(
     Raises:
         TypeError: The hook returned neither ``None`` nor a model instance.
     """
-    outcome = on_exhausted(candidate, rejection)
+    # A deep copy, so a hook that edits in place cannot rewrite the audit record
+    # (``stats.last_candidate``), which still references the original.
+    outcome = on_exhausted(candidate.model_copy(deep=True), rejection)
     if inspect.isawaitable(outcome):
         outcome = await outcome
     if outcome is None:
@@ -293,10 +377,7 @@ async def _salvage(
         raise TypeError(
             f"on_exhausted must return a {schema.__name__} instance or None; got {outcome!r}"
         )
-    # round_trip drops computed fields at every depth; a nested extra="forbid"
-    # model would otherwise reject them as unknown inputs on re-validation.
-    dumped = outcome.model_dump(by_alias=True, round_trip=True)
-    instance, _, error_text = create_instance_with_issues(schema, **dumped)
+    instance, error_text = _revalidate(schema, outcome)
     if instance is not None:
         return instance, None
     logger.warning("on_exhausted returned an invalid %s: %s", schema.__name__, error_text)
@@ -1117,7 +1198,16 @@ async def extract_data_list(
         )
         # Report the item schema name (not the internal ``…List`` container) so
         # the stats group under the schema the caller actually passed.
-        item_issues = tuple(replace(i, schema_name=schema.__name__) for i in stats.field_issues)
+        item_issues = tuple(
+            replace(
+                i,
+                schema_name=schema.__name__,
+                message=i.message.replace(f"'{container.__name__}'", f"'list[{schema.__name__}]'")
+                if i.error_type == "on_exhausted_invalid"
+                else i.message,
+            )
+            for i in stats.field_issues
+        )
         container_candidate = stats.last_candidate
         stats = replace(
             stats,
