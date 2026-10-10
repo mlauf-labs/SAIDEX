@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from saidex import (
     ExtractionMode,
+    ValidationIssue,
     extract_data,
     extract_data_list,
     extract_data_sync,
@@ -391,3 +392,28 @@ def test_validator_sync_wrapper() -> None:
     assert result is not None
     assert result.value == 150
     assert stats.primary_retries == 1
+
+
+# ---------------------------------------------------------------------------
+# ValidationIssue
+# ---------------------------------------------------------------------------
+
+
+def test_validation_issue_defaults() -> None:
+    issue = ValidationIssue(message="bad")
+    assert issue.field_path == "<external validator>"
+    assert issue.category == "value"
+    assert issue.error_type == "external_validator"
+    assert issue.on_mismatch == "retry"
+    assert issue.received is None
+
+
+def test_validation_issue_rejects_unknown_on_mismatch() -> None:
+    with pytest.raises(ValueError, match="on_mismatch"):
+        ValidationIssue(message="bad", on_mismatch="ignore")  # type: ignore[arg-type]
+
+
+def test_validation_issue_is_frozen() -> None:
+    issue = ValidationIssue(message="bad")
+    with pytest.raises(AttributeError):
+        issue.message = "other"  # type: ignore[misc]
