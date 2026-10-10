@@ -14,8 +14,10 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    RootModel,
     computed_field,
     field_serializer,
+    field_validator,
 )
 
 import saidex.extractor
@@ -926,3 +928,78 @@ async def test_salvage_without_by_name_validation(
     )
     assert stats.salvaged, stats.field_issues[-1].message
     assert result == stats.last_candidate
+
+
+class _Tag(RootModel[str]):
+    pass
+
+
+class _Containers(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    by_key: dict[str, Finding]
+    pair: tuple[Finding, ...]
+    tag: _Tag
+
+
+_CONTAINER_ARGS = {
+    "by_key": {"a": {"speaker": "x", "quote": "q"}},
+    "pair": [{"speaker": "y", "quote": "r"}],
+    "tag": "t",
+    "note": "extra field",
+}
+
+
+async def _salvage_containers(hook: Any) -> tuple[Any, Any]:
+    return await extract_data(
+        make_llm([make_response([_call(_CONTAINER_ARGS, "_Containers")])]),
+        _Containers,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=lambda m: "no",
+        on_exhausted=hook,
+    )
+
+
+async def test_salvage_walks_dicts_tuples_root_models_and_extras() -> None:
+    result, stats = await _salvage_containers(lambda m, issues: m)
+    assert stats.salvaged
+    assert result is not None and result.model_dump() == stats.last_candidate.model_dump()
+    assert result.model_extra == {"note": "extra field"}
+
+
+async def test_corruption_inside_a_dict_value_is_caught() -> None:
+    def corrupt(m: _Containers, issues: tuple[FieldIssue, ...]) -> _Containers:
+        bad = m.by_key["a"].model_copy(update={"quote": 5})
+        return m.model_copy(update={"by_key": {"a": bad}})
+
+    result, stats = await _salvage_containers(corrupt)
+    assert result is None and not stats.salvaged
+    assert stats.field_issues[-1].error_type == "on_exhausted_invalid"
+
+
+class _Priced(BaseModel):
+    amount: int
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def _parse(cls, value: Any) -> Any:
+        return int(value.split()[0])  # only handles the serialized "5 EUR" form
+
+    @field_serializer("amount")
+    def _with_currency(self, value: int) -> str:
+        return f"{value} EUR"
+
+
+async def test_round_trip_fallback_for_validators_expecting_serialized_input() -> None:
+    result, stats = await extract_data(
+        make_llm([make_response([_call({"amount": "5 EUR"}, "_Priced")])]),
+        _Priced,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=lambda m: "no",
+        on_exhausted=lambda m, issues: m,
+    )
+    assert stats.salvaged
+    assert result is not None and result.amount == 5
