@@ -34,6 +34,7 @@ from .models import (
     ToolCallConfig,
     ValidationIssue,
     ValidatorContext,
+    _combine_candidates,
     _combine_failure_reasons,
 )
 from .observability import dispatch_to_observers
@@ -1307,6 +1308,9 @@ async def run_extractor_agent(
                 is_last_model=True,
             )
             succeeded = result is not None
+            last_candidate, last_rejection = _combine_candidates(
+                primary_stats, fallback_stats, success=succeeded
+            )
             combined = ExtractorRunStats(
                 iterations=primary_stats.iterations + fallback_stats.iterations,
                 tool_calls=primary_stats.tool_calls + fallback_stats.tool_calls,
@@ -1323,6 +1327,8 @@ async def run_extractor_agent(
                 ),
                 format_errors=primary_stats.format_errors + fallback_stats.format_errors,
                 field_issues=(*primary_stats.field_issues, *fallback_stats.field_issues),
+                last_candidate=last_candidate,
+                last_rejection=last_rejection,
             )
             if succeeded:
                 logger.info("Fallback model succeeded for agent loop (%s).", schema.__name__)
@@ -1448,6 +1454,8 @@ async def _run_extractor_agent_with_model(
     agent_issues: list[FieldIssue] = []
     format_errors = 0
     failure_reason: FailureReason | None = None
+    candidate: MODEL_T | None = None
+    rejection: tuple[FieldIssue, ...] = ()
 
     def _stats(success: bool, reason: FailureReason | None) -> ExtractorRunStats:
         return ExtractorRunStats(
@@ -1459,6 +1467,8 @@ async def _run_extractor_agent_with_model(
             failure_reason=None if success else reason,
             format_errors=format_errors,
             field_issues=tuple(agent_issues),
+            last_candidate=None if success else candidate,
+            last_rejection=() if success else rejection,
         )
 
     while iterations < max_iterations:
@@ -1545,6 +1555,7 @@ async def _run_extractor_agent_with_model(
                 )
                 agent_issues.extend(check.issues)
                 if check.feedback is not None:
+                    candidate, rejection = instance, tuple(check.rejecting)
                     failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
                         break
@@ -1696,6 +1707,7 @@ async def _run_extractor_agent_with_model(
                         found_final_answer = instance
                         final_answer_valid = True
                     else:
+                        candidate, rejection = instance, tuple(check.rejecting)
                         failure_reason = FailureReason.VALIDATION_EXHAUSTED
                         at_limit = validation_retries >= max_validation_retries
                         tool_result_messages.append(

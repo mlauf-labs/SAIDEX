@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from saidex import (
+    ExtractionMode,
+    ExtractorRunStats,
     GroundedStr,
     ValidationIssue,
     extract_data,
     extract_data_list,
     extract_data_sync,
+    extract_data_with_tools,
 )
 from saidex.retry import RetryConfig
 from tests._mock_llm import make_llm, make_response
@@ -190,3 +194,79 @@ def test_sync_wrapper_exposes_candidate() -> None:
         validator=_reject_small,
     )
     assert stats.last_candidate == Item(name="a", value=1)
+
+
+class Answer(BaseModel):
+    result: str
+
+
+def _final(result: str, call_id: str) -> Any:
+    return make_response([_call({"result": result}, name="Answer", call_id=call_id)])
+
+
+def _reject_answers(answer: Answer) -> str | None:
+    return None if answer.result == "ok" else "not ok"
+
+
+async def test_agent_tool_calling_candidate() -> None:
+    llm = make_llm([_final("first", "f0"), _final("second", "f1")])
+    _, stats = await extract_data_with_tools(
+        llm,
+        Answer,
+        "task",
+        tools=[],
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_reject_answers,
+    )
+    assert stats.last_candidate == Answer(result="second")
+    assert [i.message for i in stats.last_rejection] == ["not ok"]
+
+
+async def test_agent_json_candidate() -> None:
+    llm = make_llm([make_response(content=json.dumps({"result": "nope"}))] * 2)
+    _, stats = await extract_data_with_tools(
+        llm,
+        Answer,
+        "task",
+        tools=[],
+        final_answer_mode=ExtractionMode.JSON,
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_reject_answers,
+    )
+    assert stats.last_candidate == Answer(result="nope")
+
+
+async def test_agent_success_has_no_candidate() -> None:
+    llm = make_llm([_final("bad", "f0"), _final("ok", "f1")])
+    result, stats = await extract_data_with_tools(
+        llm, Answer, "task", tools=[], retry_config=_NO_RETRY, validator=_reject_answers
+    )
+    assert result is not None
+    assert stats.last_candidate is None and stats.last_rejection == ()
+
+
+async def test_agent_fallback_without_candidate_keeps_primary() -> None:
+    _, stats = await extract_data_with_tools(
+        make_llm([_final("primary", "p")]),
+        Answer,
+        "task",
+        tools=[],
+        fallback_llm_model=make_llm([RuntimeError("down")]),
+        max_validation_retries=0,
+        retry_config=_NO_RETRY,
+        validator=_reject_answers,
+    )
+    assert stats.failure_reason == "llm_error"
+    assert stats.last_candidate == Answer(result="primary")
+
+
+def test_add_combines_candidates() -> None:
+    a = ExtractorRunStats(last_candidate=Answer(result="a"), last_rejection=())
+    b = ExtractorRunStats()
+    assert (a + b).last_candidate == Answer(result="a")
+    c = ExtractorRunStats(last_candidate=Answer(result="c"))
+    assert (a + c).last_candidate == Answer(result="c")
+    ok = ExtractorRunStats(success=True)
+    assert (a + ok).last_candidate is None
