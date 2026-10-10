@@ -224,6 +224,12 @@ Plain one-argument validators keep working unchanged. The wrapper is explicit
 on purpose: SAIDEX never inspects a validator's signature. Batch extraction
 passes the same context to every item of an attempt.
 
+`ValidatorContext.attempt` is 1-based, while `FieldIssue.attempt` in the stats is
+0-based: for the same round, `ctx.attempt == issue.attempt + 1`.
+
+A variable annotated `Validator[...]` may now hold a `WithContext`, which is not
+directly callable. Pass it to the API rather than calling it yourself.
+
 !!! note "Agent loop"
     In `extract_data_with_tools` / `run_extractor_agent`, helper-tool calls
     consume `max_iterations` too. If `max_iterations` runs out first, the run

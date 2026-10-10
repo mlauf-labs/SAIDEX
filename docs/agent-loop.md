@@ -287,9 +287,27 @@ nested under the loop alongside the LLM generations. See
 
 `validator=with_context(fn)` works in the agent loop as well. There,
 `ValidatorContext.max_attempts` is `max_validation_retries + 1`, and the attempt
-counter moves only with final answers, not with helper-tool calls. If the model
-sends several final answers in one response, each of them may be checked with
-`is_final=True`. See
+counter moves only with final-answer attempts (including malformed ones), not
+with helper-tool calls. If the model sends several final answers in one
+response, each of them may be checked with `is_final=True`.
+
+```python
+def fn(inv: Invoice, ctx: ValidatorContext) -> ValidatorResult:
+    if inv.total == sum(line.amount for line in inv.lines):
+        return None
+    return ValidationIssue(
+        message="total does not match the line items",
+        field_path="total",
+        on_mismatch="flag" if ctx.is_final else "retry",
+    )
+
+
+result, stats = await extract_data_with_tools(
+    llm, Invoice, text, tools=[lookup_tool], validator=with_context(fn)
+)
+```
+
+See
 [External Validators → Attempt context](external-validators.md#attempt-context-strict-early-lenient-at-the-end).
 
 ---
