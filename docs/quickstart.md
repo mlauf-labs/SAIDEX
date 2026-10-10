@@ -67,7 +67,7 @@ without tool-calling support.  See [Extraction Modes](extraction-modes.md).
 result, stats = await extract_data_from_text(...)
 
 stats.success           # bool — did the run produce a validated instance?
-stats.failure_reason    # str | None — why it failed (None on success)
+stats.failure_reason    # FailureReason | None — why it failed (None on success)
 stats.primary_retries   # int — retries on the primary model
 stats.fallback_retries  # int — retries on the fallback model
 stats.total_retries     # int — sum of both
