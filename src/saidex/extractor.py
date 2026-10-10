@@ -22,7 +22,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field, create_model
 
 from ._callbacks import _ChainRun
-from .grounding import collect_field_check_issues
+from .grounding import _collect_field_checks
 from .models import (
     EXTERNAL_VALIDATOR_PATH,
     ExtractDataStats,
@@ -249,7 +249,7 @@ async def _run_external_validator(
     instance: MODEL_T,
     schema_name: str,
     context: ValidatorContext,
-) -> tuple[list[FieldIssue], str | None]:
+) -> tuple[list[FieldIssue], list[FieldIssue], str | None]:
     """Run an optional external *validator* against a validated *instance*.
 
     Mirrors :func:`~saidex.grounding.collect_field_check_issues`: every finding
@@ -265,7 +265,8 @@ async def _run_external_validator(
         context: Attempt context, handed to :class:`WithContext` validators.
 
     Returns:
-        ``(issues, feedback)``. ``feedback`` is ``None`` when the instance is
+        ``(issues, rejecting, feedback)``. ``rejecting`` is the ``"retry"``-level
+        subset of ``issues``. ``feedback`` is ``None`` when the instance is
         accepted — no issues, or only ``"flag"`` issues.
 
     Raises:
@@ -273,9 +274,14 @@ async def _run_external_validator(
             :data:`ValidatorResult`.
     """
     if validator is None:
-        return [], None
+        return [], [], None
     issues = await _call_validator(validator, instance, schema_name, context)
-    return _to_field_issues(issues, schema_name), _validator_feedback(issues)
+    rejecting = [i for i in issues if i.on_mismatch == "retry"]
+    return (
+        _to_field_issues(issues, schema_name),
+        _to_field_issues(rejecting, schema_name),
+        _validator_feedback(issues),
+    )
 
 
 @dataclass(frozen=True)
@@ -285,11 +291,14 @@ class _CandidateCheck:
     Attributes:
         issues: Every finding (``"retry"`` and ``"flag"``), stamped with the
             attempt index — grounding findings first, then validator findings.
+        rejecting: The ``"retry"``-level subset of ``issues`` that rejected the
+            candidate; empty when accepted.
         feedback: Feedback text for the model, or ``None`` when accepted.
         stage: The check that rejected the candidate, or ``None`` when accepted.
     """
 
     issues: list[FieldIssue]
+    rejecting: list[FieldIssue]
     feedback: str | None
     stage: Literal["grounding", "validator"] | None
 
@@ -321,19 +330,21 @@ async def _check_candidate(
     Returns:
         A :class:`_CandidateCheck`; ``feedback is None`` means accepted.
     """
-    grounding_issues, grounding_feedback = collect_field_check_issues(
+    grounding_issues, grounding_rejecting, grounding_feedback = _collect_field_checks(
         instance, source_text, schema_name
     )
     issues = [replace(i, attempt=attempt) for i in grounding_issues]
     if grounding_feedback is not None:
-        return _CandidateCheck(issues, grounding_feedback, "grounding")
-    validator_issues, validator_feedback = await _run_external_validator(
+        rejecting = [replace(i, attempt=attempt) for i in grounding_rejecting]
+        return _CandidateCheck(issues, rejecting, grounding_feedback, "grounding")
+    validator_issues, validator_rejecting, validator_feedback = await _run_external_validator(
         validator, instance, schema_name, context
     )
     issues.extend(replace(i, attempt=attempt) for i in validator_issues)
     if validator_feedback is not None:
-        return _CandidateCheck(issues, validator_feedback, "validator")
-    return _CandidateCheck(issues, None, None)
+        rejecting = [replace(i, attempt=attempt) for i in validator_rejecting]
+        return _CandidateCheck(issues, rejecting, validator_feedback, "validator")
+    return _CandidateCheck(issues, [], None, None)
 
 
 def _validator_context(

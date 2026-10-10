@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel
 
 from saidex import ExtractionContext, FieldCheck, Grounded, GroundedField, GroundedStr
-from saidex.grounding import collect_field_check_issues
+from saidex.grounding import _collect_field_checks, collect_field_check_issues, field_check
 
 # ---------------------------------------------------------------------------
 # Configuration surfaces — both land the marker in FieldInfo.metadata
@@ -275,3 +275,20 @@ class TestFlagMode:
 
     def test_default_on_mismatch_is_retry(self) -> None:
         assert Grounded().on_mismatch == "retry"
+
+
+def test_collect_field_checks_separates_rejecting_issues() -> None:
+    class Mixed(BaseModel):
+        strict_vendor: GroundedStr
+        soft_vendor: str = field_check(Grounded(on_mismatch="flag"))
+
+    issues, rejecting, feedback = _collect_field_checks(
+        Mixed(strict_vendor="Globex", soft_vendor="Initech"), "We bought from ACME", "Mixed"
+    )
+
+    assert [i.field_path for i in issues] == ["strict_vendor", "soft_vendor"]
+    assert [i.field_path for i in rejecting] == ["strict_vendor"]
+    assert feedback is not None
+    assert (issues, feedback) == collect_field_check_issues(
+        Mixed(strict_vendor="Globex", soft_vendor="Initech"), "We bought from ACME", "Mixed"
+    )
