@@ -376,3 +376,65 @@ async def test_list_hook_may_return_empty_list() -> None:
     )
     assert items == []
     assert stats.item_count == 0 and stats.salvaged
+
+
+async def test_list_salvage_with_computed_field_on_forbid_item() -> None:
+    class It(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        net: int
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def gross(self) -> int:
+            return self.net * 2
+
+    items, stats = await extract_data_list(
+        make_llm([make_response([_call({"items": [{"net": 1}]}, "ItList")])]),
+        It,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=lambda i: "no",
+        on_exhausted=lambda items, issues: items,
+    )
+    assert items is not None and items[0].gross == 2
+    assert stats.salvaged
+
+
+async def test_salvage_with_nested_computed_field_on_forbid_model() -> None:
+    class Inner(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+        net: int
+
+        @computed_field  # type: ignore[prop-decorator]
+        @property
+        def gross(self) -> int:
+            return self.net * 2
+
+    class Outer(BaseModel):
+        inner: Inner
+
+    result, stats = await extract_data(
+        make_llm([make_response([_call({"inner": {"net": 3}}, "Outer")])]),
+        Outer,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=lambda o: "no",
+        on_exhausted=lambda o, issues: o,
+    )
+    assert result is not None and result.inner.gross == 6
+    assert stats.salvaged
+
+
+async def test_list_hook_returning_non_instances_raises() -> None:
+    with pytest.raises(TypeError, match="on_exhausted.*Finding"):
+        await extract_data_list(
+            make_llm([_list_resp(QUOTES)]),
+            Finding,
+            _msgs(),
+            max_primary_retries=1,
+            retry_config=_NO_RETRY,
+            validator=_not_verbatim_item,
+            on_exhausted=lambda items, issues: [{"speaker": "x", "quote": "we ship on Monday"}],  # type: ignore[arg-type,return-value]
+        )

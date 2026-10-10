@@ -293,11 +293,9 @@ async def _salvage(
         raise TypeError(
             f"on_exhausted must return a {schema.__name__} instance or None; got {outcome!r}"
         )
-    # Computed fields are dumped too, but a schema with extra="forbid" would
-    # reject them as unknown inputs on re-validation.
-    dumped = outcome.model_dump(
-        by_alias=True, exclude=set(type(outcome).model_computed_fields) or None
-    )
+    # round_trip drops computed fields at every depth; a nested extra="forbid"
+    # model would otherwise reject them as unknown inputs on re-validation.
+    dumped = outcome.model_dump(by_alias=True, round_trip=True)
     instance, _, error_text = create_instance_with_issues(schema, **dumped)
     if instance is not None:
         return instance, None
@@ -1076,6 +1074,12 @@ async def extract_data_list(
             if not isinstance(kept, list):
                 raise TypeError(
                     f"on_exhausted must return a list of {schema.__name__} or None; got {kept!r}"
+                )
+            wrong = next((k for k in kept if not isinstance(k, schema)), None)
+            if wrong is not None:
+                raise TypeError(
+                    f"on_exhausted must return a list of {schema.__name__} instances; "
+                    f"got an element {wrong!r}"
                 )
             return container.model_construct(items=kept)
 
