@@ -97,8 +97,8 @@ asyncio.run(main())
 3. When the LLM submits the final answer, it is validated with Pydantic. On
    failure, the field-level error report is sent back and the loop continues.
 4. The loop ends with a validated instance — or `None` once `max_iterations`
-   or `max_validation_retries` is exhausted (after optionally retrying on a
-   fallback model).
+   is reached or a final answer is rejected with no validation retries left
+   (`max_validation_retries`), after optionally retrying on a fallback model.
 
 Two failure-safety properties worth knowing:
 

@@ -1495,6 +1495,7 @@ async def _run_extractor_agent_with_model(
         tool_result_messages: list[ToolMessage] = []
         found_final_answer: MODEL_T | None = None
         final_answer_valid = False
+        budget_spent = False
 
         for tc in tool_calls:
             tc_name: str = tc.get("name", "")
@@ -1518,6 +1519,7 @@ async def _run_extractor_agent_with_model(
                     )
                     failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
+                        budget_spent = True
                         tool_result_messages.append(
                             ToolMessage(
                                 content=f"Schema validation failed: {error_text}",
@@ -1566,7 +1568,9 @@ async def _run_extractor_agent_with_model(
                                 tool_call_id=tc_id,
                             )
                         )
-                        if not at_limit:
+                        if at_limit:
+                            budget_spent = True
+                        else:
                             validation_retries += 1
 
             # ── Helper tool ───────────────────────────────────────────────
@@ -1608,11 +1612,10 @@ async def _run_extractor_agent_with_model(
             )
             return found_final_answer, _stats(success=True, reason=None)
 
-        # Check if we already hit the validation limit for a bad final answer.
-        if validation_retries >= max_validation_retries and not final_answer_valid:
-            # Give the model one last iteration only when tool_calls were present
-            # (otherwise we already broke out above).
-            pass
+        if budget_spent:
+            # Same contract as the JSON final-answer path: a final answer
+            # rejected with no validation retries left ends this model's run.
+            break
 
     logger.error(
         "%s: agent loop exhausted budget for %s "
