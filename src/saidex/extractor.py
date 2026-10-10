@@ -46,6 +46,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 MODEL_T = TypeVar("MODEL_T", bound=BaseModel)
+# WithContext only consumes the model, so a validator typed for a base schema is
+# usable wherever a subclass schema is expected.
+_MODEL_CONTRA = TypeVar("_MODEL_CONTRA", bound=BaseModel, contravariant=True)
 
 #: Signature of an ``on_complete`` hook: an async callable receiving a single
 #: :class:`~saidex.models.ExtractionEvent`.
@@ -66,7 +69,7 @@ ContextValidator = Callable[
 
 
 @dataclass(frozen=True)
-class WithContext(Generic[MODEL_T]):
+class WithContext(Generic[_MODEL_CONTRA]):
     """An external validator that wants a :class:`~saidex.models.ValidatorContext`.
 
     Build it with :func:`with_context` and pass it wherever ``validator=`` is
@@ -78,7 +81,7 @@ class WithContext(Generic[MODEL_T]):
         fn: The wrapped ``(instance, ctx)`` callable, sync or async.
     """
 
-    fn: ContextValidator[MODEL_T]
+    fn: Callable[[_MODEL_CONTRA, ValidatorContext], "ValidatorResult | Awaitable[ValidatorResult]"]
 
 
 def with_context(fn: ContextValidator[MODEL_T]) -> WithContext[MODEL_T]:
