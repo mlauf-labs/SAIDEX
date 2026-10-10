@@ -111,8 +111,9 @@ if result is None and stats.last_candidate is not None:
 
 !!! warning "PII"
     The candidate is extracted source data. It stays on the stats object and is
-    visible to `on_complete` hooks and listeners. Traces only get
-    `has_last_candidate`, and `collect_stats()` sinks drop it.
+    visible to `on_complete` hooks and listeners. The enclosing chain-run
+    span's output only gets `has_last_candidate` (nested LLM spans still contain
+    the raw model output), and `collect_stats()` sinks drop it.
 
 ---
 

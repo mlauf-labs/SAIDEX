@@ -29,6 +29,7 @@ elif stats.failure_reason == "validation_exhausted":   # same thing, as a string
     instance that the external validator rejects, and attempt 2 may then return
     malformed JSON: the run ends with `parse_error` even though a schema-valid
     candidate existed.
+
 `stats.last_candidate` is the authoritative check — see
 [External Validators](external-validators.md#when-every-attempt-fails-last_candidate).
 

@@ -57,8 +57,8 @@ for s in sink.all():                         # list[ExtractDataStats | Extractor
 ```
 
 `sink.all()` returns the stats in chronological order. The sink stores only the
-stats object of each run — never the messages, result, or source text, nor `last_candidate` — so it
-stays PII-light by default.
+stats object of each run, with `last_candidate` removed — never the messages,
+result, or source text — so it stays PII-light by default.
 
 It works as a plain `with` too, so the synchronous wrappers are covered:
 
@@ -90,7 +90,14 @@ There is no overhead and no global state when no `collect_stats` block is active
 For process-wide observability (logging, tracing, metrics) register a listener
 with `on_extraction`. It fires once per top-level extraction — on success and
 failure — with the full `ExtractionEvent` (stats, result, messages, source
-text). The callback may be sync or async:
+text). The callback may be sync or async.
+
+!!! warning "PII"
+    On a failed run `event.last_candidate` / `stats.last_candidate` holds the
+    rejected instance, i.e. extracted source data. Handle it like the source
+    text; see
+    [External Validators](external-validators.md#when-every-attempt-fails-last_candidate).
+    Chain-run span outputs carry only `has_last_candidate`.
 
 ```python
 import logging
