@@ -23,6 +23,8 @@ from pydantic import BaseModel
 
 from .extractor import (
     OnComplete,
+    OnExhausted,
+    OnExhaustedList,
     Validator,
     extract_data,
     extract_data_from_text,
@@ -88,6 +90,7 @@ def extract_data_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data`.
 
@@ -107,6 +110,7 @@ def extract_data_sync(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, stats)`` — see :func:`~saidex.extract_data`.
@@ -129,6 +133,7 @@ def extract_data_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
         ),
         sync_name="extract_data_sync",
         async_name="extract_data",
@@ -151,6 +156,7 @@ def extract_data_from_text_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_from_text`.
 
@@ -171,6 +177,7 @@ def extract_data_from_text_sync(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, stats)`` — see :func:`~saidex.extract_data_from_text`.
@@ -194,6 +201,7 @@ def extract_data_from_text_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
         ),
         sync_name="extract_data_from_text_sync",
         async_name="extract_data_from_text",
@@ -215,6 +223,7 @@ def extract_data_list_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhaustedList[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list`.
 
@@ -234,6 +243,7 @@ def extract_data_list_sync(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
 
     Returns:
         ``(items, stats)`` — see :func:`~saidex.extract_data_list`.
@@ -256,6 +266,7 @@ def extract_data_list_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
         ),
         sync_name="extract_data_list_sync",
         async_name="extract_data_list",
@@ -278,6 +289,7 @@ def extract_data_list_from_text_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhaustedList[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list_from_text`.
 
@@ -298,6 +310,7 @@ def extract_data_list_from_text_sync(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
 
     Returns:
         ``(items, stats)`` — see :func:`~saidex.extract_data_list_from_text`.
@@ -321,6 +334,7 @@ def extract_data_list_from_text_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
         ),
         sync_name="extract_data_list_from_text_sync",
         async_name="extract_data_list_from_text",
@@ -343,6 +357,7 @@ def extract_data_with_tools_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_with_tools`.
 
@@ -362,6 +377,7 @@ def extract_data_with_tools_sync(
         max_iterations: Maximum LLM invocations per model attempt.
         max_validation_retries: Max final-answer validation failures tolerated.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — see :func:`~saidex.extract_data_with_tools`.
@@ -385,6 +401,7 @@ def extract_data_with_tools_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
         ),
         sync_name="extract_data_with_tools_sync",
         async_name="extract_data_with_tools",
@@ -406,6 +423,7 @@ def run_extractor_agent_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.run_extractor_agent`.
 
@@ -424,6 +442,7 @@ def run_extractor_agent_sync(
         max_iterations: Maximum LLM invocations per model attempt.
         max_validation_retries: Max final-answer validation failures tolerated.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — see :func:`~saidex.run_extractor_agent`.
@@ -446,6 +465,7 @@ def run_extractor_agent_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
         ),
         sync_name="run_extractor_agent_sync",
         async_name="run_extractor_agent",

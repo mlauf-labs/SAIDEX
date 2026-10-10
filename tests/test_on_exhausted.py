@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -11,11 +12,16 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from saidex import (
     ExtractionEvent,
+    ExtractionMode,
     FieldIssue,
     ValidationIssue,
     extract_data,
     extract_data_from_text,
     extract_data_list,
+    extract_data_list_sync,
+    extract_data_sync,
+    extract_data_with_tools,
+    extract_data_with_tools_sync,
     issue_item_index,
 )
 from saidex.retry import RetryConfig
@@ -438,3 +444,98 @@ async def test_list_hook_returning_non_instances_raises() -> None:
             validator=_not_verbatim_item,
             on_exhausted=lambda items, issues: [{"speaker": "x", "quote": "we ship on Monday"}],  # type: ignore[arg-type,return-value]
         )
+
+
+def _agent_final(quotes: list[str], call_id: str) -> Any:
+    return _findings_resp(quotes, call_id)
+
+
+async def test_agent_tool_calling_salvage() -> None:
+    llm = make_llm([_agent_final(QUOTES, f"f{i}") for i in range(2)])
+    result, stats = await extract_data_with_tools(
+        llm,
+        Findings,
+        SOURCE,
+        tools=[],
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_verbatim,
+        on_exhausted=_drop_rejected,
+    )
+    assert result is not None and len(result.findings) == 2
+    assert stats.salvaged and stats.success and stats.failure_reason is None
+
+
+async def test_agent_json_salvage() -> None:
+    content = json.dumps({"findings": [{"speaker": "x", "quote": q} for q in QUOTES]})
+    llm = make_llm([make_response(content=content)] * 2)
+    result, stats = await extract_data_with_tools(
+        llm,
+        Findings,
+        SOURCE,
+        tools=[],
+        final_answer_mode=ExtractionMode.JSON,
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_verbatim,
+        on_exhausted=_drop_rejected,
+    )
+    assert result is not None and stats.salvaged
+
+
+async def test_agent_salvage_after_fallback() -> None:
+    calls: list[Findings] = []
+
+    def hook(doc: Findings, issues: tuple[FieldIssue, ...]) -> Findings:
+        calls.append(doc)
+        return _drop_rejected(doc, issues)
+
+    result, stats = await extract_data_with_tools(
+        make_llm([_agent_final(QUOTES, "p")]),
+        Findings,
+        SOURCE,
+        tools=[],
+        fallback_llm_model=make_llm([RuntimeError("down")]),
+        max_validation_retries=0,
+        retry_config=_NO_RETRY,
+        validator=_verbatim,
+        on_exhausted=hook,
+    )
+    assert len(calls) == 1
+    assert result is not None and stats.salvaged and stats.fallback_used
+
+
+def test_sync_wrappers_forward_on_exhausted() -> None:
+    result, stats = extract_data_sync(
+        make_llm([_findings_resp(QUOTES)]),
+        Findings,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_verbatim,
+        on_exhausted=_drop_rejected,
+    )
+    assert result is not None and stats.salvaged
+
+    items, list_stats = extract_data_list_sync(
+        make_llm([_list_resp(QUOTES)]),
+        Finding,
+        _msgs(),
+        max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_not_verbatim_item,
+        on_exhausted=_drop_items,
+    )
+    assert items is not None and list_stats.salvaged
+
+    agent_result, agent_stats = extract_data_with_tools_sync(
+        make_llm([_agent_final(QUOTES, "f")]),
+        Findings,
+        SOURCE,
+        tools=[],
+        max_validation_retries=0,
+        retry_config=_NO_RETRY,
+        validator=_verbatim,
+        on_exhausted=_drop_rejected,
+    )
+    assert agent_result is not None and agent_stats.salvaged

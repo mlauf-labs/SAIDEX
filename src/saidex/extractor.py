@@ -1261,6 +1261,7 @@ async def extract_data_with_tools(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Run an agentic tool-loop to produce a validated Pydantic model.
 
@@ -1303,6 +1304,7 @@ async def extract_data_with_tools(
             :class:`~saidex.models.ValidatorContext` whose ``max_attempts`` is
             ``max_validation_retries + 1``; ``max_iterations`` can end the loop
             before any attempt is final.
+        on_exhausted: Optional salvage hook — see :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -1342,6 +1344,7 @@ async def extract_data_with_tools(
         on_complete=on_complete,
         capture_source_text=capture_source_text,
         validator=validator,
+        on_exhausted=on_exhausted,
     )
 
 
@@ -1360,6 +1363,7 @@ async def run_extractor_agent(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Low-level agent loop that accepts a full message list.
 
@@ -1380,6 +1384,7 @@ async def run_extractor_agent(
             in the trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable applied to the final
             answer — see :func:`extract_data_with_tools`.
+        on_exhausted: Optional salvage hook — see :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -1419,6 +1424,26 @@ async def run_extractor_agent(
         )
         await trace.end(_agent_outputs(result, stats))
         return result, stats
+
+    async def _fail(stats: ExtractorRunStats) -> tuple[MODEL_T | None, ExtractorRunStats]:
+        candidate = cast("MODEL_T | None", stats.last_candidate)
+        if on_exhausted is None or candidate is None:
+            return await _finish(None, stats)
+        salvaged, invalid = await _salvage(
+            on_exhausted,
+            schema,
+            candidate,
+            stats.last_rejection,
+            attempt=stats.validation_retries,
+        )
+        if salvaged is not None:
+            logger.info("on_exhausted salvaged a result for agent loop (%s).", schema.__name__)
+            return await _finish(
+                salvaged, replace(stats, success=True, failure_reason=None, salvaged=True)
+            )
+        if invalid is not None:
+            stats = replace(stats, field_issues=(*stats.field_issues, invalid))
+        return await _finish(None, stats)
 
     try:
         result, primary_stats = await _run_extractor_agent_with_model(
@@ -1501,14 +1526,16 @@ async def run_extractor_agent(
                     schema.__name__,
                     combined.iterations,
                 )
-            return await _finish(result, combined)
+            if succeeded:
+                return await _finish(result, combined)
+            return await _fail(combined)
 
         logger.error(
             "Agent loop failed for %s after %d iterations (no fallback configured).",
             schema.__name__,
             primary_stats.iterations,
         )
-        return await _finish(None, primary_stats)
+        return await _fail(primary_stats)
     except BaseException as exc:
         # BaseException so a task cancellation (asyncio.CancelledError) still
         # closes the chain span instead of leaking it open in the tracer.
