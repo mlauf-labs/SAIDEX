@@ -1104,6 +1104,10 @@ async def extract_data_with_tools(
         validator: Optional external validation callable applied to the final
             answer (sync or async).  A rejection keeps the agent loop running
             with the message surfaced to the model — see :func:`extract_data`.
+            Wrapped with :func:`with_context`, it receives a
+            :class:`~saidex.models.ValidatorContext` whose ``max_attempts`` is
+            ``max_validation_retries + 1``; ``max_iterations`` can end the loop
+            before any attempt is final.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -1235,6 +1239,7 @@ async def run_extractor_agent(
             retry_config=effective_retry_config,
             validator=validator,
             source_text=grounding_source,
+            is_last_model=fallback_llm_model is None,
         )
 
         if result is not None:
@@ -1268,6 +1273,7 @@ async def run_extractor_agent(
                 retry_config=effective_retry_config,
                 validator=validator,
                 source_text=grounding_source,
+                is_last_model=True,
             )
             succeeded = result is not None
             combined = ExtractorRunStats(
@@ -1378,9 +1384,9 @@ async def _run_extractor_agent_with_model(
     max_validation_retries: int,
     model_label: str,
     retry_config: RetryConfig,
+    is_last_model: bool,
     validator: Validator[MODEL_T] | None = None,
     source_text: str | None = None,
-    is_last_model: bool = True,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Execute the agent loop with one model; return (instance, stats)."""
     from .tools import Tool as ToolType  # noqa: F401 – used for type clarity only
@@ -1833,10 +1839,10 @@ async def _try_with_model(
     model_label: str,
     retry_config: RetryConfig,
     mode: ExtractionMode,
+    is_last_model: bool,
     tool_config: ToolCallConfig | None = None,
     validator: Validator[MODEL_T] | None = None,
     source_text: str | None = None,
-    is_last_model: bool = True,
 ) -> _ModelAttempt[MODEL_T]:
     """Attempt structured extraction with one model, with validation retries.
 

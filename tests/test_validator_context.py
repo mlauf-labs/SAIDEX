@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import json
 from typing import Any
 
 import pytest
@@ -12,6 +13,8 @@ from pydantic import BaseModel
 
 import saidex
 from saidex import (
+    ExtractionMode,
+    Tool,
     ValidationIssue,
     Validator,
     ValidatorContext,
@@ -19,6 +22,8 @@ from saidex import (
     extract_data,
     extract_data_list,
     extract_data_sync,
+    extract_data_with_tools,
+    extract_data_with_tools_sync,
     with_context,
 )
 from saidex.retry import RetryConfig
@@ -297,6 +302,122 @@ def test_sync_wrapper_passes_context() -> None:
         Item,
         _msgs(),
         max_primary_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_recording(seen, reject=False),
+    )
+    assert seen == [(1, 1, True, "primary", False)]
+
+
+class Answer(BaseModel):
+    result: str
+
+
+class _Args(BaseModel):
+    name: str
+
+
+async def _noop(**kwargs: Any) -> dict[str, Any]:
+    return {"ok": True}
+
+
+def _final(i: int) -> Any:
+    return make_response([_call({"result": "x"}, name="Answer", call_id=f"f{i}")])
+
+
+async def test_agent_tool_calling_contexts() -> None:
+    seen: list[Ctx] = []
+    await extract_data_with_tools(
+        make_llm([_final(i) for i in range(5)]),
+        Answer,
+        "task",
+        tools=[],
+        max_validation_retries=2,
+        retry_config=_NO_RETRY,
+        validator=_recording(seen),
+    )
+    assert seen == [
+        (1, 3, False, "primary", False),
+        (2, 3, False, "primary", False),
+        (3, 3, True, "primary", False),
+    ]
+
+
+async def test_agent_json_contexts() -> None:
+    seen: list[Ctx] = []
+    responses = [make_response(content=json.dumps({"result": "x"})) for _ in range(5)]
+    await extract_data_with_tools(
+        make_llm(responses),
+        Answer,
+        "task",
+        tools=[],
+        final_answer_mode=ExtractionMode.JSON,
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_recording(seen),
+    )
+    assert seen == [(1, 2, False, "primary", False), (2, 2, True, "primary", False)]
+
+
+async def test_agent_attempt_ignores_helper_tool_iterations() -> None:
+    seen: list[Ctx] = []
+    tool = Tool(name="lookup", description=".", parameters=_Args, handler=_noop)
+    helper = make_response([_call({"name": "q"}, name="lookup", call_id="h")])
+    responses = [helper, helper, _final(0), helper, _final(1)]
+    await extract_data_with_tools(
+        make_llm(responses),
+        Answer,
+        "task",
+        tools=[tool],
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_recording(seen),
+    )
+    assert [c[0] for c in seen] == [1, 2]
+
+
+async def test_agent_fallback_contexts() -> None:
+    seen: list[Ctx] = []
+    await extract_data_with_tools(
+        make_llm([_final(i) for i in range(5)]),
+        Answer,
+        "task",
+        tools=[],
+        fallback_llm_model=make_llm([_final(i) for i in range(5)]),
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_recording(seen),
+    )
+    assert seen == [
+        (1, 2, False, "primary", False),
+        (2, 2, False, "primary", False),
+        (1, 2, False, "fallback", True),
+        (2, 2, True, "fallback", True),
+    ]
+
+
+async def test_agent_max_iterations_can_end_before_final() -> None:
+    seen: list[Ctx] = []
+    await extract_data_with_tools(
+        make_llm([_final(i) for i in range(5)]),
+        Answer,
+        "task",
+        tools=[],
+        max_iterations=2,
+        max_validation_retries=3,
+        retry_config=_NO_RETRY,
+        validator=_recording(seen),
+    )
+    assert seen == [(1, 4, False, "primary", False), (2, 4, False, "primary", False)]
+
+
+def test_agent_sync_wrapper_passes_context() -> None:
+    seen: list[Ctx] = []
+    extract_data_with_tools_sync(
+        make_llm([_final(0)]),
+        Answer,
+        "task",
+        tools=[],
+        max_validation_retries=0,
         retry_config=_NO_RETRY,
         validator=_recording(seen, reject=False),
     )
