@@ -155,6 +155,38 @@ class ValidationIssue:
             raise ValueError(f"on_mismatch must be 'retry' or 'flag', got {self.on_mismatch!r}")
 
 
+@dataclass(frozen=True)
+class ValidatorContext:
+    """Where one external-validator call sits in the run's retry budget.
+
+    Passed as the second argument to validators wrapped with
+    :func:`~saidex.with_context`, so a validator can, for example, be strict
+    in early rounds and lenient on the final one.
+
+    Attributes:
+        attempt: 1-based position of this attempt in the current model's
+            budget.  Attempts used up by parse errors count too, so this is
+            not the number of validator calls.
+        max_attempts: Size of the current model's budget
+            (``max_primary_retries`` / ``max_fallback_retries``, or
+            ``max_validation_retries + 1`` in the agent loop).
+        is_final: ``True`` only on the last allowed attempt of the whole run:
+            the fallback's last attempt when a fallback model will run,
+            otherwise the primary's.  In the agent loop, ``max_iterations``
+            can end a run before any attempt is final.  If the model sends
+            several final answers in one response, each of them may be checked
+            with ``is_final=True``.
+        model_label: ``"primary"`` or ``"fallback"``.
+        is_fallback: Whether the fallback model produced the candidate.
+    """
+
+    attempt: int
+    max_attempts: int
+    is_final: bool
+    model_label: str
+    is_fallback: bool
+
+
 class FailureReason(StrEnum):
     """Why an extraction run ended without a result.
 

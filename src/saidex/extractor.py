@@ -33,6 +33,7 @@ from .models import (
     FieldIssue,
     ToolCallConfig,
     ValidationIssue,
+    ValidatorContext,
     _combine_failure_reasons,
 )
 from .observability import dispatch_to_observers
@@ -56,12 +57,69 @@ OnComplete = Callable[[ExtractionEvent], Awaitable[None]]
 #: sequence may also hold plain strings, each becoming one unlocated issue.
 ValidatorResult: TypeAlias = str | ValidationIssue | Sequence[str | ValidationIssue] | None
 
+#: Signature of a context-aware validator: like a plain validator, plus a
+#: :class:`~saidex.models.ValidatorContext` as second argument.  Wrap it with
+#: :func:`with_context` before passing it as ``validator=``.
+ContextValidator = Callable[
+    [MODEL_T, ValidatorContext], "ValidatorResult | Awaitable[ValidatorResult]"
+]
+
+
+@dataclass(frozen=True)
+class WithContext(Generic[MODEL_T]):
+    """An external validator that wants a :class:`~saidex.models.ValidatorContext`.
+
+    Build it with :func:`with_context` and pass it wherever ``validator=`` is
+    accepted.  An explicit wrapper instead of signature inspection, which is
+    unreliable for ``functools.partial``, callable objects and parameters with
+    defaults.
+
+    Attributes:
+        fn: The wrapped ``(instance, ctx)`` callable, sync or async.
+    """
+
+    fn: ContextValidator[MODEL_T]
+
+
+def with_context(fn: ContextValidator[MODEL_T]) -> WithContext[MODEL_T]:
+    """Mark *fn* as a validator that receives the attempt context.
+
+    Args:
+        fn: A sync or async callable taking ``(instance, ctx)`` and returning a
+            :data:`ValidatorResult` (or raising to reject), exactly like a
+            plain validator.
+
+    Returns:
+        A :class:`WithContext` to pass as ``validator=``.
+
+    Example::
+
+        def strict_then_lenient(inv: Invoice, ctx: ValidatorContext) -> ValidatorResult:
+            if inv.total == sum(line.amount for line in inv.lines):
+                return None
+            return ValidationIssue(
+                message="total does not match the line items",
+                field_path="total",
+                on_mismatch="flag" if ctx.is_final else "retry",
+            )
+
+        result, stats = await extract_data(
+            llm, Invoice, messages, validator=with_context(strict_then_lenient)
+        )
+    """
+    return WithContext(fn)
+
+
 #: Signature of an external ``validator``: a sync **or** async callable that
 #: receives the freshly validated model instance and returns a
-#: :data:`ValidatorResult` (or raises to reject).  Every reported issue lands in
+#: :data:`ValidatorResult` (or raises to reject), or a :class:`WithContext`
+#: built by :func:`with_context` whose callable also receives a
+#: :class:`~saidex.models.ValidatorContext`.  Every reported issue lands in
 #: ``stats.field_issues``; ``"retry"`` issues re-enter the field-level retry loop
 #: with per-field feedback, ``"flag"`` issues are only recorded.
-Validator = Callable[[MODEL_T], "ValidatorResult | Awaitable[ValidatorResult]"]
+Validator = (
+    Callable[[MODEL_T], "ValidatorResult | Awaitable[ValidatorResult]"] | WithContext[MODEL_T]
+)
 
 
 class _InvalidValidatorResultError(TypeError):
@@ -105,16 +163,21 @@ async def _call_validator(
     validator: Validator[MODEL_T],
     instance: MODEL_T,
     schema_name: str,
+    context: ValidatorContext,
 ) -> list[ValidationIssue]:
     """Run *validator* on *instance* and return its findings (empty = accepted).
 
-    A raised exception is a deliberate rejection and becomes one issue.  An
+    A :class:`WithContext` validator additionally receives *context*.  A raised
+    exception is a deliberate rejection and becomes one issue.  An
     invalid return value raises :class:`TypeError` — it is a programming error,
     so it is re-raised (also from a nested validator, as in the list wrapper)
     and never consumes a retry.
     """
     try:
-        outcome = validator(instance)
+        if isinstance(validator, WithContext):
+            outcome = validator.fn(instance, context)
+        else:
+            outcome = validator(instance)
         if inspect.isawaitable(outcome):
             outcome = await outcome
     except _InvalidValidatorResultError:
@@ -182,6 +245,7 @@ async def _run_external_validator(
     validator: Validator[MODEL_T] | None,
     instance: MODEL_T,
     schema_name: str,
+    context: ValidatorContext,
 ) -> tuple[list[FieldIssue], str | None]:
     """Run an optional external *validator* against a validated *instance*.
 
@@ -195,6 +259,7 @@ async def _run_external_validator(
         instance: The instance that already passed Pydantic validation.
         schema_name: Stamped onto each issue and used for the fallback message
             of an exception that carries no text of its own.
+        context: Attempt context, handed to :class:`WithContext` validators.
 
     Returns:
         ``(issues, feedback)``. ``feedback`` is ``None`` when the instance is
@@ -206,7 +271,7 @@ async def _run_external_validator(
     """
     if validator is None:
         return [], None
-    issues = await _call_validator(validator, instance, schema_name)
+    issues = await _call_validator(validator, instance, schema_name, context)
     return _to_field_issues(issues, schema_name), _validator_feedback(issues)
 
 
@@ -230,6 +295,7 @@ async def _check_candidate(
     instance: MODEL_T,
     *,
     attempt: int,
+    context: ValidatorContext,
     source_text: str | None,
     validator: Validator[MODEL_T] | None,
     schema_name: str,
@@ -244,6 +310,7 @@ async def _check_candidate(
     Args:
         instance: The instance that already passed Pydantic validation.
         attempt: Attempt index stamped onto every issue.
+        context: Attempt context, handed to :class:`WithContext` validators.
         source_text: Text to ground against; falsy disables grounding.
         validator: The caller's external validator, or ``None``.
         schema_name: Stamped onto each issue.
@@ -258,12 +325,30 @@ async def _check_candidate(
     if grounding_feedback is not None:
         return _CandidateCheck(issues, grounding_feedback, "grounding")
     validator_issues, validator_feedback = await _run_external_validator(
-        validator, instance, schema_name
+        validator, instance, schema_name, context
     )
     issues.extend(replace(i, attempt=attempt) for i in validator_issues)
     if validator_feedback is not None:
         return _CandidateCheck(issues, validator_feedback, "validator")
     return _CandidateCheck(issues, None, None)
+
+
+def _validator_context(
+    *,
+    attempt_index: int,
+    max_attempts: int,
+    model_label: str,
+    is_last_model: bool,
+) -> ValidatorContext:
+    """Build the :class:`ValidatorContext` for the attempt at *attempt_index* (0-based)."""
+    attempt = attempt_index + 1
+    return ValidatorContext(
+        attempt=attempt,
+        max_attempts=max_attempts,
+        is_final=is_last_model and attempt >= max_attempts,
+        model_label=model_label,
+        is_fallback=model_label == "fallback",
+    )
 
 
 def _final_answer_rejection(
@@ -505,6 +590,7 @@ async def extract_data(
             tool_config=tool_config,
             validator=validator,
             source_text=grounding_source,
+            is_last_model=fallback_llm_model is None or max_fallback_retries <= 0,
         )
 
         if primary.instance is not None:
@@ -549,6 +635,7 @@ async def extract_data(
                 tool_config=tool_config,
                 validator=validator,
                 source_text=grounding_source,
+                is_last_model=True,
             )
 
             combined_issues = (*primary.field_issues, *fallback.field_issues)
@@ -780,7 +867,9 @@ async def extract_data_list(
             field path prefixed by the item index (``items -> 2`` or, for a
             :class:`~saidex.models.ValidationIssue` with ``field_path="amount"``,
             ``items -> 2 -> amount``); a ``"retry"`` finding on any item
-            re-enters the shared retry loop.  See :func:`extract_data`.
+            re-enters the shared retry loop.  Wrap it with :func:`with_context` to
+            receive the attempt context; every item of one attempt gets the same
+            context.  See :func:`extract_data`.
 
     Returns:
         A tuple of ``(items, stats)``:
@@ -803,17 +892,19 @@ async def extract_data_list(
     if validator is not None:
         item_validator = validator
 
-        async def _validate_each_item(container_instance: BaseModel) -> list[ValidationIssue]:
+        async def _validate_each_item(
+            container_instance: BaseModel, context: ValidatorContext
+        ) -> list[ValidationIssue]:
             """Run the item *validator* over every container item, locating each finding."""
             issues: list[ValidationIssue] = []
             for index, item in enumerate(cast(Any, container_instance).items):
-                for issue in await _call_validator(item_validator, item, schema.__name__):
+                for issue in await _call_validator(item_validator, item, schema.__name__, context):
                     issues.append(
                         replace(issue, field_path=_item_issue_path(index, issue.field_path))
                     )
             return issues
 
-        container_validator = _validate_each_item
+        container_validator = WithContext(_validate_each_item)
 
     # Computed lazily: the list-level source text only feeds the trace inputs
     # (the inner extract_data derives its own copy for grounding).
@@ -1289,6 +1380,7 @@ async def _run_extractor_agent_with_model(
     retry_config: RetryConfig,
     validator: Validator[MODEL_T] | None = None,
     source_text: str | None = None,
+    is_last_model: bool = True,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Execute the agent loop with one model; return (instance, stats)."""
     from .tools import Tool as ToolType  # noqa: F401 – used for type clarity only
@@ -1404,6 +1496,12 @@ async def _run_extractor_agent_with_model(
                 check = await _check_candidate(
                     instance,
                     attempt=validation_retries,
+                    context=_validator_context(
+                        attempt_index=validation_retries,
+                        max_attempts=max_validation_retries + 1,
+                        model_label=model_label,
+                        is_last_model=is_last_model,
+                    ),
                     source_text=source_text,
                     validator=validator,
                     schema_name=schema.__name__,
@@ -1543,6 +1641,12 @@ async def _run_extractor_agent_with_model(
                     check = await _check_candidate(
                         instance,
                         attempt=validation_retries,
+                        context=_validator_context(
+                            attempt_index=validation_retries,
+                            max_attempts=max_validation_retries + 1,
+                            model_label=model_label,
+                            is_last_model=is_last_model,
+                        ),
                         source_text=source_text,
                         validator=validator,
                         schema_name=schema.__name__,
@@ -1732,6 +1836,7 @@ async def _try_with_model(
     tool_config: ToolCallConfig | None = None,
     validator: Validator[MODEL_T] | None = None,
     source_text: str | None = None,
+    is_last_model: bool = True,
 ) -> _ModelAttempt[MODEL_T]:
     """Attempt structured extraction with one model, with validation retries.
 
@@ -1739,6 +1844,9 @@ async def _try_with_model(
     :attr:`ExtractionMode.JSON` mode.  Returns a :class:`_ModelAttempt` capturing
     the instance (or ``None``), the retry count, the structured field issues seen
     across attempts, the pure parse/format-error count, and a failure reason.
+
+    *is_last_model* is ``False`` when another model runs if this one fails; it
+    decides ``ValidatorContext.is_final``.
     """
     flags = tool_config or ToolCallConfig.OPENAI
     #: Set once the schema tool has been re-bound with relaxed flags, so a
@@ -1893,6 +2001,12 @@ async def _try_with_model(
         check = await _check_candidate(
             instance,
             attempt=retries,
+            context=_validator_context(
+                attempt_index=retries,
+                max_attempts=max_retries,
+                model_label=model_label,
+                is_last_model=is_last_model,
+            ),
             source_text=source_text,
             validator=validator,
             schema_name=schema.__name__,

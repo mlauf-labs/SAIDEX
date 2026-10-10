@@ -41,6 +41,10 @@ Public API
         Validator,
         ValidationIssue,
         ValidatorResult,
+        ValidatorContext,
+        ContextValidator,
+        WithContext,
+        with_context,
         collect_stats,
         StatsSink,
         on_extraction,
@@ -84,15 +88,18 @@ from .analytics import (
     summarize_field_issues,
 )
 from .extractor import (
+    ContextValidator,
     OnComplete,
     Validator,
     ValidatorResult,
+    WithContext,
     extract_data,
     extract_data_from_text,
     extract_data_list,
     extract_data_list_from_text,
     extract_data_with_tools,
     run_extractor_agent,
+    with_context,
 )
 from .grounding import (
     ExtractionContext,
@@ -114,6 +121,7 @@ from .models import (
     ToolNodeEvent,
     ToolNodeStats,
     ValidationIssue,
+    ValidatorContext,
 )
 from .observability import (
     ExtractionListener,
@@ -190,6 +198,10 @@ __all__ = [
     "Validator",
     "ValidationIssue",
     "ValidatorResult",
+    "ContextValidator",
+    "ValidatorContext",
+    "WithContext",
+    "with_context",
     "collect_stats",
     "StatsSink",
     "on_extraction",
