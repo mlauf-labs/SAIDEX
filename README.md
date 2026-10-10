@@ -245,6 +245,7 @@ stats.primary_retries   # int — retries against the primary model
 stats.fallback_retries  # int — retries against the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — was the fallback model invoked?
+stats.salvaged         # bool — result produced by an on_exhausted hook
 stats.item_count        # int — items returned by extract_data_list (else 0)
 stats.format_errors     # int — pure parse / tool-call failures
 stats.problem_fields    # tuple[str, ...] — fields that ever failed validation

@@ -117,6 +117,43 @@ if result is None and stats.last_candidate is not None:
 
 ---
 
+## Salvaging a partial result — `on_exhausted`
+
+For schemas made of independent items (findings, line items, contacts), "one
+item is wrong" should not mean "the whole run failed". Pass `on_exhausted`: it
+runs **once**, after every attempt (and the fallback) failed, whenever a
+schema-valid candidate exists. Return what you can keep:
+
+```python
+from saidex import FieldIssue, extract_data, issue_item_index
+
+def drop_rejected(doc: Findings, issues: tuple[FieldIssue, ...]) -> Findings | None:
+    bad = {issue_item_index(i, "findings") for i in issues}
+    kept = [f for i, f in enumerate(doc.findings) if i not in bad]
+    return Findings(findings=kept) if kept else None
+
+result, stats = await extract_data(
+    llm, Findings, messages, validator=check_quotes, on_exhausted=drop_rejected
+)
+if stats.salvaged:
+    log.info("kept %d findings after dropping rejected ones", len(result.findings))
+```
+
+- A returned instance ends the run with `success=True`, `failure_reason=None`
+  and **`salvaged=True`**. `field_issues`, `last_candidate` and
+  `last_rejection` keep the original rejection for auditing.
+- The returned instance is re-validated against the schema, but **not** by
+  source grounding or your validator. The hook owns that decision.
+- Return `None` to let the run fail as before. Exceptions raised by the hook
+  propagate.
+- The hook runs even when the last attempt ended with `parse_error` or
+  `llm_error`, as long as an earlier attempt produced a candidate.
+- Batch variants pass the `list` of items and accept the list to keep (`[]`
+  included); `issue_item_index(issue)` maps `items -> 3 -> quote` to `3`.
+- The agent loop and every `*_sync` wrapper accept `on_exhausted` too.
+
+---
+
 ## Signal: raise or return
 
 Both styles work; pick whichever reads best.
