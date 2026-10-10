@@ -706,8 +706,13 @@ async def extract_data(
             candidate exists (``stats.last_candidate``).  It receives that
             candidate and ``stats.last_rejection`` and returns a salvaged
             instance (the run then succeeds with ``stats.salvaged=True``) or
-            ``None``.  The returned instance is re-validated against *schema*
-            only, not by grounding or *validator*.  Exceptions propagate.
+            ``None``.  The hook gets a deep copy, so editing it in place never
+            changes ``stats.last_candidate``.  The returned instance is
+            re-validated against *schema* only, not by grounding or
+            *validator*, from its stored field values (computed fields left
+            out), so aliases and field serializers do not interfere; an invalid
+            result keeps the run failed and adds an ``on_exhausted_invalid``
+            issue.  Exceptions propagate.
 
     Returns:
         A tuple of ``(model_instance, stats)``:
@@ -1100,7 +1105,10 @@ async def extract_data_list(
         on_exhausted: Optional salvage hook receiving the last rejected ``list`` of
             items and the issues that rejected it (paths ``items -> i``, item
             schema name).  Return the items to keep (``[]`` is allowed) or
-            ``None``.  See :func:`extract_data`.
+            ``None``; every element must be a *schema* instance, anything else
+            (a ``dict`` included) raises ``TypeError``.  The items are copies,
+            and the kept list is re-validated like a single result — see
+            :func:`extract_data`.
 
     Returns:
         A tuple of ``(items, stats)``:

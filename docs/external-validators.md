@@ -106,7 +106,9 @@ if result is None and stats.last_candidate is not None:
 - With a fallback model, the fallback's candidate wins if it produced one.
 - `last_rejection` holds only the issues that rejected it; `"flag"` issues stay
   in `field_issues`.
-- On success both are empty (`None` / `()`).
+- On a clean success both are empty (`None` / `()`). A run salvaged by
+  [`on_exhausted`](#salvaging-a-partial-result-on_exhausted) keeps them, as
+  the record of what the hook received.
 - Batch variants expose a `list` of items, with paths like `items -> 3 -> quote`.
 
 !!! warning "PII"
@@ -118,6 +120,8 @@ if result is None and stats.last_candidate is not None:
 ---
 
 ## Salvaging a partial result — `on_exhausted`
+
+> **Runnable example:** [`examples/17_salvage_partial_results.py`](../examples/17_salvage_partial_results.py)
 
 For schemas made of independent items (findings, line items, contacts), "one
 item is wrong" should not mean "the whole run failed". Pass `on_exhausted`: it
@@ -142,14 +146,30 @@ if stats.salvaged:
 - A returned instance ends the run with `success=True`, `failure_reason=None`
   and **`salvaged=True`**. `field_issues`, `last_candidate` and
   `last_rejection` keep the original rejection for auditing.
+- The hook receives a **copy** of the candidate: editing it in place
+  (`doc.findings = kept; return doc`) is fine and never changes
+  `stats.last_candidate`.
 - The returned instance is re-validated against the schema, but **not** by
   source grounding or your validator. The hook owns that decision.
+  Re-validation reads the stored field values (computed fields are left
+  out at every depth), not the serialized output, so aliases
+  (`validation_alias`, `AliasChoices`), field serializers and
+  `exclude=True` fields do not get in the way. Returning the candidate
+  unchanged, or a `model_copy(update=...)` with a subset of its items,
+  works as long as the schema's own validators accept already-validated
+  values (a `mode="before"` validator that only handles raw strings may
+  not); a value that bypassed validation
+  (`model_copy(update={"total": -5})`, `model_construct`) is caught. An
+  invalid result keeps the run failed and adds an `on_exhausted_invalid`
+  issue (path `<on_exhausted>`) to `field_issues`.
 - Return `None` to let the run fail as before. Exceptions raised by the hook
   propagate.
 - The hook runs even when the last attempt ended with `parse_error` or
   `llm_error`, as long as an earlier attempt produced a candidate.
 - Batch variants pass the `list` of items and accept the list to keep (`[]`
   included); `issue_item_index(issue)` maps `items -> 3 -> quote` to `3`.
+  Every element must be an instance of the item schema: anything else,
+  including a plain `dict`, raises `TypeError`.
 - The agent loop and every `*_sync` wrapper accept `on_exhausted` too.
 
 ---

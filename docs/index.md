@@ -45,6 +45,7 @@ All examples are runnable Python files in the [`examples/`](../examples/) direct
 | [`13_source_grounding.py`](../examples/13_source_grounding.py) | Source grounding: `Grounded` / `GroundedField` verify values against the text |
 | [`15_openai_compatible_gateway.py`](../examples/15_openai_compatible_gateway.py) | `ToolCallConfig`: tool calling against gateways that reject OpenAI-only flags |
 | [`16_langgraph_toolnode.py`](../examples/16_langgraph_toolnode.py) | `SaidexToolNode`: validated tool calling in a LangGraph agent |
+| [`17_salvage_partial_results.py`](../examples/17_salvage_partial_results.py) | `on_exhausted`: keep the valid items when every retry fails |
 
 ---
 

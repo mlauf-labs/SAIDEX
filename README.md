@@ -245,12 +245,13 @@ stats.primary_retries   # int — retries against the primary model
 stats.fallback_retries  # int — retries against the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — was the fallback model invoked?
-stats.salvaged         # bool — result produced by an on_exhausted hook
+stats.salvaged          # bool — result produced by an on_exhausted hook
 stats.item_count        # int — items returned by extract_data_list (else 0)
 stats.format_errors     # int — pure parse / tool-call failures
 stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
 stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
-stats.last_candidate    # last schema-valid but rejected instance (None on success)
+stats.last_candidate    # last schema-valid but rejected instance
+                        # (None on a clean success; kept when salvaged)
 stats.last_rejection    # tuple[FieldIssue, ...] — the issues that rejected it
 
 if not stats.success:
@@ -858,6 +859,12 @@ records a soft finding without consuming a retry.
 To vary a validator by retry round — strict early, lenient on the last attempt —
 wrap it with `with_context`, which passes a `ValidatorContext` as second argument
 ([details](docs/external-validators.md#attempt-context-strict-early-lenient-at-the-end)).
+
+When every retry fails, an `on_exhausted` hook can still keep the part that
+passed — e.g. drop the rejected items — and the run succeeds with
+`stats.salvaged=True`
+([details](docs/external-validators.md#salvaging-a-partial-result-on_exhausted),
+[`examples/17_salvage_partial_results.py`](examples/17_salvage_partial_results.py)).
 
 > Cross-field example and full guide:
 > [`examples/12_external_validator.py`](examples/12_external_validator.py)
