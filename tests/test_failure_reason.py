@@ -6,6 +6,7 @@ import json
 from typing import Any
 from unittest.mock import MagicMock
 
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
@@ -152,3 +153,61 @@ async def test_agent_fallback_combination_uses_shared_rule() -> None:
     )
     assert stats.fallback_used
     assert stats.failure_reason is FailureReason.LLM_ERROR
+
+
+async def test_extract_data_double_failure_reports_fallback_reason() -> None:
+    primary = make_llm([make_response(invalid=True)])
+    fallback = make_llm([make_response([_call({"name": "a", "value": "x"})])])
+    _, stats = await extract_data(
+        primary,
+        Item,
+        _msgs(),
+        fallback_llm_model=fallback,
+        max_primary_retries=1,
+        max_fallback_retries=1,
+        retry_config=_NO_RETRY,
+    )
+    assert stats.fallback_used
+    assert stats.failure_reason is FailureReason.VALIDATION_EXHAUSTED
+
+
+class _Capture(AsyncCallbackHandler):
+    def __init__(self) -> None:
+        self.outputs: list[dict[str, Any]] = []
+
+    async def on_chain_end(self, outputs: dict[str, Any], **kwargs: Any) -> None:
+        self.outputs.append(outputs)
+
+
+def _failure_reasons(handler: _Capture) -> list[Any]:
+    return [o["failure_reason"] for o in handler.outputs if "failure_reason" in o]
+
+
+async def test_extract_data_trace_output_failure_reason_is_plain_str() -> None:
+    handler = _Capture()
+    llm = make_llm([make_response(invalid=True)])
+    await extract_data(
+        llm, Item, _msgs(), max_primary_retries=1, retry_config=_NO_RETRY, callbacks=[handler]
+    )
+    reasons = _failure_reasons(handler)
+    assert reasons
+    assert all(type(r) is str for r in reasons)
+    assert reasons[-1] == "parse_error"
+
+
+async def test_agent_trace_output_failure_reason_is_plain_str() -> None:
+    handler = _Capture()
+    llm = make_llm([make_response(tool_calls=[])] * 3)
+    await extract_data_with_tools(
+        llm,
+        Item,
+        "text",
+        tools=[],
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        callbacks=[handler],
+    )
+    reasons = _failure_reasons(handler)
+    assert reasons
+    assert all(type(r) is str for r in reasons)
+    assert reasons[-1] == "no_tool_call"

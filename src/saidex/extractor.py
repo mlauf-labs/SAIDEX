@@ -1171,7 +1171,7 @@ def _common_outputs(result: Any, stats: ExtractDataStats | ExtractorRunStats) ->
     return {
         "result": result,
         "success": stats.success,
-        "failure_reason": stats.failure_reason,
+        "failure_reason": None if stats.failure_reason is None else stats.failure_reason.value,
         "fallback_used": stats.fallback_used,
         "problem_fields": list(stats.problem_fields),
         "format_errors": stats.format_errors,
