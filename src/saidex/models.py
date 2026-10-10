@@ -258,6 +258,14 @@ class _ExtractionStatsBase:
         source_text: The input text the run was performed on, or ``None``.  Only
             populated when the caller opts in via ``capture_source_text=True``
             (off by default for PII/memory reasons).
+        last_candidate: On failure, the most recent instance that passed schema
+            validation but was rejected by source grounding or the external
+            validator — kept even when later attempts failed differently.  A
+            ``list`` of items for the batch variants.  ``None`` on success or
+            when no attempt produced a schema-valid instance.  Contains
+            extracted source data: treat it like ``source_text`` (PII).
+        last_rejection: The ``"retry"``-level issues that rejected
+            :attr:`last_candidate`; ``()`` when there is none.
     """
 
     success: bool = False
@@ -266,6 +274,8 @@ class _ExtractionStatsBase:
     format_errors: int = 0
     field_issues: tuple[FieldIssue, ...] = ()
     source_text: str | None = None
+    last_candidate: BaseModel | list[BaseModel] | None = None
+    last_rejection: tuple[FieldIssue, ...] = ()
 
     @property
     def problem_fields(self) -> tuple[str, ...]:
