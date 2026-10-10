@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 if TYPE_CHECKING:
@@ -155,6 +155,54 @@ class ValidationIssue:
             raise ValueError(f"on_mismatch must be 'retry' or 'flag', got {self.on_mismatch!r}")
 
 
+class FailureReason(StrEnum):
+    """Why an extraction run ended without a result.
+
+    A ``StrEnum``: every member *is* its string value, so comparisons such as
+    ``stats.failure_reason == "parse_error"`` keep working and the value
+    serialises to JSON as a plain string.
+
+    The reason describes only the run's **last** attempt.  An earlier attempt
+    may still have produced a schema-valid candidate that a later check
+    rejected.  See the *Failure reasons* page in the documentation for what
+    each value means and whether a later retry makes sense.
+
+    Attributes:
+        VALIDATION_EXHAUSTED: The last attempt produced parseable output that
+            failed schema validation, source grounding or the external
+            validator, and no retries were left.
+        PARSE_ERROR: The last attempt's output could not be parsed into
+            arguments — malformed JSON or an invalid tool call.
+        LLM_ERROR: The model call failed after all network retries, or the
+            provider rejected the tool binding.
+        NO_TOOL_CALL: Agent loop with tool-calling final answers only: the
+            model replied with plain text instead of calling a tool, and no
+            retries were left.
+    """
+
+    VALIDATION_EXHAUSTED = "validation_exhausted"
+    PARSE_ERROR = "parse_error"
+    LLM_ERROR = "llm_error"
+    NO_TOOL_CALL = "no_tool_call"
+
+
+def _combine_failure_reasons(
+    primary: FailureReason | None,
+    fallback: FailureReason | None,
+    *,
+    success: bool,
+) -> FailureReason | None:
+    """Combine the failure reasons of a primary and a fallback model run.
+
+    The single rule used by every entry point: a successful combined run has no
+    reason; otherwise the fallback's reason wins and the primary's is used when
+    the fallback reported none (e.g. it was configured with zero attempts).
+    """
+    if success:
+        return None
+    return fallback if fallback is not None else primary
+
+
 @dataclass(frozen=True)
 class _ExtractionStatsBase:
     """Fields shared by every extraction-stats type.
@@ -167,9 +215,8 @@ class _ExtractionStatsBase:
         success: Whether the run produced a validated instance.  Note that a
             successful run may still carry :attr:`field_issues` from earlier,
             self-corrected attempts.
-        failure_reason: Why the run failed, or ``None`` on success.  One of
-            ``"validation_exhausted"``, ``"parse_error"``, ``"llm_error"`` or
-            ``"no_tool_call"``.
+        failure_reason: Why the run failed, as a :class:`FailureReason`, or
+            ``None`` on success.  Compares equal to its plain string value.
         schema_name: Name of the schema that was extracted.
         format_errors: Number of pure parse/tool-call failures (malformed JSON
             or tool calls) — as opposed to schema-validation mismatches.
@@ -182,7 +229,7 @@ class _ExtractionStatsBase:
     """
 
     success: bool = False
-    failure_reason: str | None = None
+    failure_reason: FailureReason | None = None
     schema_name: str = ""
     format_errors: int = 0
     field_issues: tuple[FieldIssue, ...] = ()
@@ -255,13 +302,16 @@ class ExtractorRunStats(_ExtractionStatsBase):
         """Merge two stats instances (used when combining primary + fallback)."""
         if not isinstance(other, ExtractorRunStats):
             return NotImplemented
+        success = self.success or other.success
         return ExtractorRunStats(
             iterations=self.iterations + other.iterations,
             tool_calls=self.tool_calls + other.tool_calls,
             validation_retries=self.validation_retries + other.validation_retries,
             fallback_used=self.fallback_used or other.fallback_used,
-            success=self.success or other.success,
-            failure_reason=other.failure_reason if other.failure_reason else self.failure_reason,
+            success=success,
+            failure_reason=_combine_failure_reasons(
+                self.failure_reason, other.failure_reason, success=success
+            ),
             schema_name=self.schema_name or other.schema_name,
             format_errors=self.format_errors + other.format_errors,
             field_issues=(*self.field_issues, *other.field_issues),
