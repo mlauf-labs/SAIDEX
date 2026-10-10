@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from saidex import (
     ExtractDataStats,
     ExtractorRunStats,
@@ -220,3 +222,35 @@ def test_report_escapes_pipe_in_sample() -> None:
     summary = summarize_field_issues([_run(_issue("raw", received="a|b"), success=False)])
     report = summary.to_markdown()
     assert r"`a\|b`" in report
+
+
+def test_salvaged_runs_are_counted_separately() -> None:
+    runs = [
+        ExtractDataStats(schema_name="Invoice", success=True),
+        ExtractDataStats(
+            schema_name="Invoice", success=True, salvaged=True, field_issues=(_issue("total"),)
+        ),
+        ExtractDataStats(schema_name="Invoice", success=False, field_issues=(_issue("total"),)),
+    ]
+    schema = summarize_field_issues(runs).schemas[0]
+    assert schema.total_runs == 3
+    assert schema.failed_runs == 1
+    assert schema.salvaged_runs == 1
+    assert schema.success_rate == pytest.approx(2 / 3)
+    assert schema.clean_success_rate == pytest.approx(1 / 3)
+    fp = schema.field_problems[0]
+    assert fp.salvaged_runs_with_problem == 1
+    assert fp.recovery_rate == 0.0
+    assert fp.occurrences_on_successful_runs == 0
+
+
+def test_report_mentions_salvaged_runs_only_when_present() -> None:
+    salvaged = ExtractDataStats(
+        schema_name="Invoice", success=True, salvaged=True, field_issues=(_issue("total"),)
+    )
+    report = render_field_issue_report(summarize_field_issues([salvaged]))
+    assert "## Invoice — 100% success (0/1 runs failed, 1 salvaged)" in report
+    clean = render_field_issue_report(
+        summarize_field_issues([ExtractDataStats(schema_name="Clean", success=True)])
+    )
+    assert "salvaged" not in clean

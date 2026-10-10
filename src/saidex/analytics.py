@@ -39,10 +39,12 @@ class FieldProblemStat:
             as runs and are excluded here.
         failed_runs_with_problem: Subset of ``runs_with_problem`` whose run
             ultimately failed.
+        salvaged_runs_with_problem: Subset of ``runs_with_problem`` that only
+            succeeded because an ``on_exhausted`` hook salvaged them.
         occurrences_on_successful_runs: Issues for this field that occurred in
             runs which still succeeded (self-corrected).
-        recovery_rate: Fraction of ``runs_with_problem`` that still succeeded.
-            ``0.0`` when there were no runs (bare issues only).
+        recovery_rate: Fraction of ``runs_with_problem`` that succeeded
+            **cleanly** (salvaged runs do not count as recovered). ``0.0`` when there were no runs (bare issues only).
         by_category: Issue count per coarse category.
         by_error_type: Issue count per raw Pydantic error type.
         first_error_attempt_avg: Mean of the earliest attempt index at which the
@@ -60,6 +62,7 @@ class FieldProblemStat:
     failed_runs_with_problem: int
     occurrences_on_successful_runs: int
     recovery_rate: float
+    salvaged_runs_with_problem: int = 0
     by_category: dict[str, int] = field(default_factory=dict)
     by_error_type: dict[str, int] = field(default_factory=dict)
     first_error_attempt_avg: float = 0.0
@@ -79,6 +82,9 @@ class SchemaProblemSummary:
         success_rate: ``(total_runs - failed_runs) / total_runs``; ``0.0`` when
             there were no runs (bare issues only).
         field_problems: Field stats sorted by descending severity.
+        salvaged_runs: Runs that succeeded only through an ``on_exhausted`` hook
+            (counted as successes in ``success_rate``).
+        clean_success_rate: Share of runs that succeeded without salvage.
     """
 
     schema_name: str
@@ -86,6 +92,8 @@ class SchemaProblemSummary:
     failed_runs: int
     success_rate: float
     field_problems: tuple[FieldProblemStat, ...] = ()
+    salvaged_runs: int = 0
+    clean_success_rate: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -122,6 +130,7 @@ class _FieldAccumulator:
     total_occurrences: int = 0
     runs_with_problem: int = 0
     failed_runs_with_problem: int = 0
+    salvaged_runs_with_problem: int = 0
     occurrences_on_successful_runs: int = 0
     by_category: Counter[str] = field(default_factory=Counter)
     by_error_type: Counter[str] = field(default_factory=Counter)
@@ -155,8 +164,8 @@ def summarize_field_issues(runs: Iterable[StatsOrIssue]) -> FieldIssueSummary:
         :class:`SchemaProblemSummary` per distinct schema, most problematic
         schema first, each holding its fields sorted by descending severity.
     """
-    # Per schema: run records (success, issues) and the set of seen schema names.
-    run_records: dict[str, list[tuple[bool, list[FieldIssue]]]] = defaultdict(list)
+    # Per schema: run records (success, salvaged, issues) and the set of seen schema names.
+    run_records: dict[str, list[tuple[bool, bool, list[FieldIssue]]]] = defaultdict(list)
     bare_issues: dict[str, list[FieldIssue]] = defaultdict(list)
     schema_names: set[str] = set()
 
@@ -165,7 +174,9 @@ def summarize_field_issues(runs: Iterable[StatsOrIssue]) -> FieldIssueSummary:
             bare_issues[item.schema_name].append(item)
             schema_names.add(item.schema_name)
         else:
-            run_records[item.schema_name].append((item.success, list(item.field_issues)))
+            run_records[item.schema_name].append(
+                (item.success, item.salvaged, list(item.field_issues))
+            )
             schema_names.add(item.schema_name)
 
     summaries: list[SchemaProblemSummary] = []
@@ -173,11 +184,12 @@ def summarize_field_issues(runs: Iterable[StatsOrIssue]) -> FieldIssueSummary:
         records = run_records.get(schema_name, [])
         loose = bare_issues.get(schema_name, [])
         total_runs = len(records)
-        failed_runs = sum(1 for success, _ in records if not success)
+        failed_runs = sum(1 for success, _, _ in records if not success)
+        salvaged_runs = sum(1 for success, salvaged, _ in records if success and salvaged)
 
         accumulators: dict[str, _FieldAccumulator] = defaultdict(_FieldAccumulator)
 
-        for success, issues in records:
+        for success, salvaged, issues in records:
             by_field: dict[str, list[FieldIssue]] = defaultdict(list)
             for issue in issues:
                 by_field[issue.field_path].append(issue)
@@ -187,6 +199,8 @@ def summarize_field_issues(runs: Iterable[StatsOrIssue]) -> FieldIssueSummary:
                 acc.runs_with_problem += 1
                 if not success:
                     acc.failed_runs_with_problem += 1
+                elif salvaged:
+                    acc.salvaged_runs_with_problem += 1
                 else:
                     acc.occurrences_on_successful_runs += len(field_issues)
                 acc.first_attempts.append(min(i.attempt for i in field_issues))
@@ -210,6 +224,9 @@ def summarize_field_issues(runs: Iterable[StatsOrIssue]) -> FieldIssueSummary:
         field_problems.sort(key=lambda f: (-f.severity, f.field_path))
 
         success_rate = (total_runs - failed_runs) / total_runs if total_runs else 0.0
+        clean_success_rate = (
+            (total_runs - failed_runs - salvaged_runs) / total_runs if total_runs else 0.0
+        )
         summaries.append(
             SchemaProblemSummary(
                 schema_name=schema_name,
@@ -217,6 +234,8 @@ def summarize_field_issues(runs: Iterable[StatsOrIssue]) -> FieldIssueSummary:
                 failed_runs=failed_runs,
                 success_rate=success_rate,
                 field_problems=tuple(field_problems),
+                salvaged_runs=salvaged_runs,
+                clean_success_rate=clean_success_rate,
             )
         )
 
@@ -232,21 +251,23 @@ def summarize_field_issues(runs: Iterable[StatsOrIssue]) -> FieldIssueSummary:
 
 def _finalize_field(schema_name: str, field_path: str, acc: _FieldAccumulator) -> FieldProblemStat:
     """Convert a mutable accumulator into an immutable :class:`FieldProblemStat`."""
+    unrecovered = acc.failed_runs_with_problem + acc.salvaged_runs_with_problem
     recovery_rate = (
-        (acc.runs_with_problem - acc.failed_runs_with_problem) / acc.runs_with_problem
+        (acc.runs_with_problem - unrecovered) / acc.runs_with_problem
         if acc.runs_with_problem
         else 0.0
     )
     first_error_attempt_avg = (
         sum(acc.first_attempts) / len(acc.first_attempts) if acc.first_attempts else 0.0
     )
-    severity = acc.failed_runs_with_problem * _SEVERITY_FAILED_WEIGHT + acc.total_occurrences
+    severity = unrecovered * _SEVERITY_FAILED_WEIGHT + acc.total_occurrences
     return FieldProblemStat(
         schema_name=schema_name,
         field_path=field_path,
         total_occurrences=acc.total_occurrences,
         runs_with_problem=acc.runs_with_problem,
         failed_runs_with_problem=acc.failed_runs_with_problem,
+        salvaged_runs_with_problem=acc.salvaged_runs_with_problem,
         occurrences_on_successful_runs=acc.occurrences_on_successful_runs,
         recovery_rate=recovery_rate,
         by_category=dict(acc.by_category),
@@ -292,9 +313,10 @@ def render_field_issue_report(summary: FieldIssueSummary) -> str:
         return "\n".join(lines)
 
     for schema in summary.schemas:
+        salvage_note = f", {schema.salvaged_runs} salvaged" if schema.salvaged_runs else ""
         lines.append(
             f"## {schema.schema_name} — {schema.success_rate:.0%} success "
-            f"({schema.failed_runs}/{schema.total_runs} runs failed)"
+            f"({schema.failed_runs}/{schema.total_runs} runs failed{salvage_note})"
         )
         lines.append("")
         if not schema.field_problems:
