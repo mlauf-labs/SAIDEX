@@ -81,7 +81,7 @@ class WithContext(Generic[_MODEL_CONTRA]):
         fn: The wrapped ``(instance, ctx)`` callable, sync or async.
     """
 
-    fn: Callable[[_MODEL_CONTRA, ValidatorContext], "ValidatorResult | Awaitable[ValidatorResult]"]
+    fn: Callable[[_MODEL_CONTRA, ValidatorContext], ValidatorResult | Awaitable[ValidatorResult]]
 
 
 def with_context(fn: ContextValidator[MODEL_T]) -> WithContext[MODEL_T]:
