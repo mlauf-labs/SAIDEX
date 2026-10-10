@@ -38,6 +38,7 @@ Public API
         ToolNodeStats,
         ToolNodeEvent,
         OnComplete,
+        OnExhausted,
         Validator,
         ValidationIssue,
         ValidatorResult,
@@ -90,6 +91,7 @@ from .analytics import (
 from .extractor import (
     ContextValidator,
     OnComplete,
+    OnExhausted,
     Validator,
     ValidatorResult,
     WithContext,
@@ -195,6 +197,7 @@ __all__ = [
     "ToolNodeStats",
     "ToolNodeEvent",
     "OnComplete",
+    "OnExhausted",
     "Validator",
     "ValidationIssue",
     "ValidatorResult",

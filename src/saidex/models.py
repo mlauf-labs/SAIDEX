@@ -119,6 +119,10 @@ class FieldIssue:
 #: ``field_path`` of an external-validator issue that is not tied to a field.
 EXTERNAL_VALIDATOR_PATH = "<external validator>"
 
+#: ``field_path`` of the issue recorded when an ``on_exhausted`` hook returns an
+#: instance that fails schema validation.
+ON_EXHAUSTED_PATH = "<on_exhausted>"
+
 
 @dataclass(frozen=True)
 class ValidationIssue:
@@ -284,6 +288,10 @@ class _ExtractionStatsBase:
             extracted source data: treat it like ``source_text`` (PII).
         last_rejection: The ``"retry"``-level issues that rejected
             :attr:`last_candidate`; ``()`` when there is none.
+        salvaged: ``True`` when the run's retries were exhausted and an
+            ``on_exhausted`` hook turned the last candidate into the result.
+            Such a run reports ``success=True`` and ``failure_reason=None``;
+            check this flag to tell it apart from a clean success.
     """
 
     success: bool = False
@@ -295,6 +303,7 @@ class _ExtractionStatsBase:
     # Excluded from hash/repr: models and lists are unhashable, and repr lands in logs (PII).
     last_candidate: BaseModel | list[BaseModel] | None = field(default=None, hash=False, repr=False)
     last_rejection: tuple[FieldIssue, ...] = ()
+    salvaged: bool = False
 
     @property
     def problem_fields(self) -> tuple[str, ...]:
