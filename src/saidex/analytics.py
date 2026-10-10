@@ -44,14 +44,16 @@ class FieldProblemStat:
         occurrences_on_successful_runs: Issues for this field that occurred in
             runs which still succeeded (self-corrected).
         recovery_rate: Fraction of ``runs_with_problem`` that succeeded
-            **cleanly** (salvaged runs do not count as recovered). ``0.0`` when there were no runs (bare issues only).
+            **cleanly** (salvaged runs do not count as recovered). ``0.0`` when there were no
+            runs (bare issues only).
         by_category: Issue count per coarse category.
         by_error_type: Issue count per raw Pydantic error type.
         first_error_attempt_avg: Mean of the earliest attempt index at which the
             field failed (per run); lower means the model tends to get it wrong
             up front.
         sample_received: Up to five distinct offending values, first seen first.
-        severity: Sort score — dominated by ``failed_runs_with_problem`` and
+        severity: Sort score — dominated by failed plus salvaged runs
+            (``failed_runs_with_problem`` + ``salvaged_runs_with_problem``) and
             tie-broken by ``total_occurrences``.  Higher is more urgent.
     """
 
