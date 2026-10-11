@@ -19,12 +19,14 @@ pytest.importorskip("langgraph")
 from langchain_core.callbacks.base import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage  # noqa: E402
 from langchain_core.messages.utils import convert_to_openai_messages  # noqa: E402
+from langchain_core.runnables import RunnableConfig  # noqa: E402
 from langchain_core.tools import BaseTool, InjectedToolCallId, StructuredTool, tool  # noqa: E402
+from langgraph.checkpoint.memory import InMemorySaver  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
 from langgraph.prebuilt import InjectedState, ToolNode  # noqa: E402
 from langgraph.runtime import Runtime  # noqa: E402
-from langgraph.types import Command  # noqa: E402
+from langgraph.types import Command, interrupt  # noqa: E402
 from pydantic import BaseModel, SecretStr  # noqa: E402
 
 from saidex import (  # noqa: E402
@@ -140,7 +142,9 @@ def _agent_node(_state: MessagesState) -> dict[str, list[BaseMessage]]:
     }
 
 
-def _build_tool_call_graph(tools_node: Any) -> CompiledStateGraph[Any, Any, Any, Any]:
+def _build_tool_call_graph(
+    tools_node: Any, checkpointer: InMemorySaver | None = None
+) -> CompiledStateGraph[Any, Any, Any, Any]:
     """Minimal ``StateGraph(MessagesState)``: agent emits a tool call, tools node runs it.
 
     Used to prove ``SaidexToolNode`` behaves as a true drop-in when Pregel
@@ -153,7 +157,7 @@ def _build_tool_call_graph(tools_node: Any) -> CompiledStateGraph[Any, Any, Any,
     graph.add_edge(START, "agent")
     graph.add_edge("agent", "tools")
     graph.add_edge("tools", END)
-    return graph.compile()
+    return graph.compile(checkpointer=checkpointer)
 
 
 # ---------------------------------------------------------------------------
@@ -2005,6 +2009,37 @@ def test_ctor_rejects_validator_for_dict_schema_tool() -> None:
     )
     with pytest.raises(ValueError, match="Pydantic"):
         SaidexToolNode([raw], validators={"raw": _no_negative})
+
+
+def _approval_validator(args: Any, ctx: ToolCallValidatorContext) -> str | None:
+    decision = interrupt("approve?")
+    return None if decision == "yes" else "not approved"
+
+
+def test_interrupt_in_tool_validator_pauses_and_resumes_the_graph() -> None:
+    node = SaidexToolNode([add], validators={"add": _approval_validator})
+    app = _build_tool_call_graph(node, checkpointer=InMemorySaver())
+    config: RunnableConfig = {"configurable": {"thread_id": "t1"}}
+
+    paused = app.invoke({"messages": [HumanMessage(content="please add")]}, config=config)
+    assert [pending.value for pending in paused["__interrupt__"]] == ["approve?"]
+    assert _tool_messages(paused) == []
+    assert EXECUTED == []
+
+    resumed = app.invoke(Command(resume="yes"), config=config)
+    assert [m.content for m in _tool_messages(resumed)] == ["7"]
+    assert EXECUTED == ["add:3+4"]
+
+
+@pytest.mark.asyncio
+async def test_interrupt_in_tool_validator_reaches_langgraph_on_async_path() -> None:
+    node = SaidexToolNode([add], validators={"add": _approval_validator})
+    app = _build_tool_call_graph(node, checkpointer=InMemorySaver())
+    config: RunnableConfig = {"configurable": {"thread_id": "t2"}}
+
+    paused = await app.ainvoke({"messages": [HumanMessage(content="please add")]}, config=config)
+    assert [pending.value for pending in paused["__interrupt__"]] == ["approve?"]
+    assert EXECUTED == []
 
 
 # ---------------------------------------------------------------------------

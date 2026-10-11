@@ -174,6 +174,11 @@ runs after Pydantic validation on the model's own arguments
 When several calls are corrected at once, their validators can run
 concurrently, so a validator should not share mutable state without protection.
 
+A validator may call LangGraph's `interrupt()`, for example to let a human
+approve a call: the graph pauses as with any node (a checkpointer is
+required). On resume LangGraph runs the node again from the start, so earlier
+validators and corrections run again too.
+
 ## Clean message history
 
 - **Correction traffic never enters state.** The correction conversation is

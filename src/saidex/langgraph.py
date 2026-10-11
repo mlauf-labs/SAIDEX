@@ -25,6 +25,7 @@ from langchain_core.runnables import Runnable, RunnableConfig
 from pydantic import BaseModel
 
 try:
+    from langgraph.errors import GraphBubbleUp
     from langgraph.prebuilt import ToolNode
 except ImportError as exc:  # keep langgraph an optional dependency
     raise ImportError(
@@ -179,7 +180,7 @@ class SaidexToolNode(Runnable[Any, Any]):
             :data:`~saidex.ValidatorResult` like ``extract_data``'s ``validator=``.
             They run after Pydantic validation — on the model's own args, inside
             the correction cycle and on salvaged args — and never at execution
-            time.
+            time. ``interrupt()`` inside a validator pauses the graph as usual.
         strip_thinking: Strip ``<think>`` blocks from raw invalid-call args
             before parsing.
         json_repair: Apply ``json-repair`` to raw invalid-call args that do not
@@ -273,6 +274,7 @@ class SaidexToolNode(Runnable[Any, Any]):
             json_repair=json_repair,
             on_unresolved=on_unresolved,
             validators=validators,
+            passthrough_exceptions=(GraphBubbleUp,),
         )
         for tool_name in validators or {}:
             if tool_name not in self._pipeline.tool_names:

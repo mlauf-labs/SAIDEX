@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import inspect
 import json
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Literal, TypeAlias
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
+from typing import Any, Literal, ParamSpec, TypeAlias, TypeVar
 
 from json_repair import repair_json
 from langchain_core.callbacks.base import Callbacks
@@ -278,6 +279,37 @@ class ToolCallValidationError(Exception):
         )
 
 
+class _Passthrough(BaseException):
+    """Carries a passthrough exception from a tool validator to the pipeline boundary.
+
+    A ``BaseException`` so the broad ``except Exception`` handlers in between —
+    validator rejection, correction failure — cannot swallow it.
+    """
+
+    def __init__(self, original: BaseException) -> None:
+        super().__init__(original)
+        self.original = original
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _unwrap_passthrough(
+    method: Callable[_P, Coroutine[Any, Any, _R]],
+) -> Callable[_P, Coroutine[Any, Any, _R]]:
+    """Re-raise the original exception of a :class:`_Passthrough` leaving *method*."""
+
+    @functools.wraps(method)
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return await method(*args, **kwargs)
+        except _Passthrough as carrier:
+            raise carrier.original from None
+
+    return wrapper
+
+
 def _input_keys(schema: type[BaseModel]) -> set[str]:
     """Every key under which *schema* accepts input: field names plus string aliases."""
     keys: set[str] = set()
@@ -318,6 +350,9 @@ class ToolCallPipeline:
             args, a custom feedback text, or ``None`` for the default feedback.
         validators: Per-tool validators keyed by tool name; they run after
             Pydantic validation in every phase.
+        passthrough_exceptions: Exception types raised by tool validators that
+            must propagate unchanged instead of rejecting the call (the
+            LangGraph adapter passes ``GraphBubbleUp``, so ``interrupt()`` works).
     """
 
     def __init__(
@@ -333,6 +368,7 @@ class ToolCallPipeline:
         json_repair: bool,
         on_unresolved: OnUnresolved = "feedback",
         validators: Mapping[str, ToolValidator] | None = None,
+        passthrough_exceptions: tuple[type[BaseException], ...] = (),
     ) -> None:
         self._correction_model = correction_model
         self._max_correction_retries = max_correction_retries
@@ -343,6 +379,7 @@ class ToolCallPipeline:
         self._json_repair = json_repair
         self._on_unresolved = on_unresolved
         self._validators: dict[str, ToolValidator] = dict(validators or {})
+        self._passthrough_exceptions = passthrough_exceptions
         self._tools_by_name = _build_registry(tools)
 
     @property
@@ -385,6 +422,7 @@ class ToolCallPipeline:
             return True
         return bool(set(plan.call["args"]) - _input_keys(schema))
 
+    @_unwrap_passthrough
     async def plan(self, message: AIMessage, ctx: CallContext) -> list[CallPlan]:
         """Classify every call on *message* into an executable/invalid plan.
 
@@ -534,7 +572,7 @@ class ToolCallPipeline:
         tool_ctx = self._validator_context(plan, ctx, phase=phase, is_final=is_final)
 
         def check(args: BaseModel, _attempt: ValidatorContext) -> Any:
-            return fn(args, tool_ctx)
+            return self._call_tool_validator(fn, args, tool_ctx)
 
         issues, _, feedback = await _run_external_validator(
             WithContext(check),
@@ -559,7 +597,8 @@ class ToolCallPipeline:
             return None
 
         def check(args: BaseModel, attempt: ValidatorContext) -> Any:
-            return fn(
+            return self._call_tool_validator(
+                fn,
                 args,
                 self._validator_context(
                     plan,
@@ -572,6 +611,25 @@ class ToolCallPipeline:
             )
 
         return WithContext(check)
+
+    def _call_tool_validator(
+        self, fn: ToolValidator, args: BaseModel, tool_ctx: ToolCallValidatorContext
+    ) -> Any:
+        """Call *fn*, carrying a passthrough exception past the rejection handling."""
+        try:
+            outcome = fn(args, tool_ctx)
+        except self._passthrough_exceptions as exc:
+            raise _Passthrough(exc) from None
+        if inspect.isawaitable(outcome):
+            return self._await_tool_validator(outcome)
+        return outcome
+
+    async def _await_tool_validator(self, pending: Awaitable[ValidatorResult]) -> ValidatorResult:
+        """Await an async validator's result like :meth:`_call_tool_validator` calls it."""
+        try:
+            return await pending
+        except self._passthrough_exceptions as exc:
+            raise _Passthrough(exc) from None
 
     def _validator_context(
         self,
@@ -698,6 +756,7 @@ class ToolCallPipeline:
         plan.executable = True
         plan.outcome = "corrected"
 
+    @_unwrap_passthrough
     async def correct(
         self,
         plans: list[CallPlan],
@@ -751,6 +810,7 @@ class ToolCallPipeline:
             await asyncio.gather(*tasks, return_exceptions=True)
             raise
 
+    @_unwrap_passthrough
     async def resolve(self, plans: list[CallPlan], ctx: CallContext) -> list[ToolMessage]:
         """Apply ``on_unresolved`` and finalize every plan's ``outcome``.
 
