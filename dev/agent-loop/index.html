@@ -1622,8 +1622,8 @@ are simpler and cheaper.</p>
 <li>When the LLM submits the final answer, it is validated with Pydantic. On
    failure, the field-level error report is sent back and the loop continues.</li>
 <li>The loop ends with a validated instance — or <code>None</code> once <code>max_iterations</code>
-   or <code>max_validation_retries</code> is exhausted (after optionally retrying on a
-   fallback model).</li>
+   is reached or a final answer is rejected with no validation retries left
+   (<code>max_validation_retries</code>), after optionally retrying on a fallback model.</li>
 </ol>
 <p>Two failure-safety properties worth knowing:</p>
 <ul>
