@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from langchain_core.messages import HumanMessage
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from saidex import ExtractionMode, extract_data, extract_data_list, extract_data_with_tools
 from saidex.extractor import _parse_json_response
@@ -217,3 +217,73 @@ async def test_extract_data_single_list_field_schema_accepts_bare_array() -> Non
     )
     assert result is not None
     assert result.goods[0].price == 1.5
+
+
+# --- container wrapped in an array, validation_alias -------------------------
+
+
+class OptItem(BaseModel):
+    name: str | None = None
+    age: int | None = None
+
+
+class OptBasket(BaseModel):
+    goods: list[OptItem]
+
+
+class AliasedBasket(BaseModel):
+    goods: list[Item] = Field(validation_alias="Goods")
+
+
+WRAPPED = '[{"%s": [{"name": "A", "age": 1}, {"name": "B", "age": 2}]}]'
+
+
+def test_container_wrapped_in_array_is_unwrapped_not_double_wrapped() -> None:
+    args, feedback = _parse_json_response(
+        _resp(WRAPPED % "goods"), "OptBasket", "m", schema=OptBasket
+    )
+    assert feedback is None
+    assert args is not None
+    assert len(args["goods"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_extract_data_list_container_wrapped_in_array_keeps_both_items() -> None:
+    llm = _json_llm([WRAPPED % "items"])
+    result, _ = await extract_data_list(
+        llm,
+        OptItem,
+        [HumanMessage(content="x")],
+        mode=ExtractionMode.JSON,
+        retry_config=_RETRY,
+    )
+    assert result is not None
+    assert [r.name for r in result] == ["A", "B"]
+
+
+def test_array_wrap_key_honours_validation_alias() -> None:
+    args, feedback = _parse_json_response(
+        _resp(TWO_ITEMS), "AliasedBasket", "m", schema=AliasedBasket
+    )
+    assert feedback is None
+    assert args is not None
+    assert len(args["Goods"]) == 2
+
+
+class ChoiceBasket(BaseModel):
+    goods: list[Item] = Field(validation_alias=AliasChoices("Goods", "products"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("schema", [AliasedBasket, ChoiceBasket])
+async def test_extract_data_bare_array_with_validation_alias(schema: type[BaseModel]) -> None:
+    llm = _json_llm([TWO_ITEMS])
+    result, _ = await extract_data(
+        llm,
+        schema,
+        [HumanMessage(content="x")],
+        mode=ExtractionMode.JSON,
+        retry_config=_RETRY,
+    )
+    assert result is not None
+    assert len(result.goods) == 2  # type: ignore[attr-defined]

@@ -25,6 +25,10 @@ from saidex.extractor import (
         (r'{"a": "q\" // still string"}', r'{"a": "q\" // still string"}'),
         (r"{'a': 'it\'s // ok'}", r"{'a': 'it\'s // ok'}"),
         ("[1/*x*/2]", "[1 2]"),
+        ("{'u': http://x.com/a // c\n}", "{'u': http://x.com/a \n}"),
+        ("{u: s3://bucket/key, v: ftp://h/p}", "{u: s3://bucket/key, v: ftp://h/p}"),
+        ("{} //c", "{} "),
+        ('{"a": 1}// c', '{"a": 1}'),
     ],
 )
 def test_strip_json_comments(text: str, expected: str) -> None:
@@ -71,4 +75,21 @@ def test_extract_valid_json_with_comment_markers_in_string_unchanged() -> None:
     ],
 )
 def test_prose_before_json_does_not_corrupt_values(raw: str, expected: dict[str, object]) -> None:
+    assert _extract_json_from_content(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            """{'name': 'O'Brien', 'url': 'http://x.com/a', 'age': 3}""",
+            {"name": "O'Brien", "url": "http://x.com/a", "age": 3},
+        ),
+        (
+            """{"name": "Ada", "url": https://a.b/c, "age": 3}""",
+            {"name": "Ada", "url": "https://a.b/c", "age": 3},
+        ),
+    ],
+)
+def test_urls_inside_malformed_json_survive(raw: str, expected: dict[str, object]) -> None:
     assert _extract_json_from_content(raw) == expected

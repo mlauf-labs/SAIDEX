@@ -2977,6 +2977,27 @@ def _field_keys(info: FieldInfo, name: str) -> set[str]:
     return keys
 
 
+def _constructor_key(name: str, info: FieldInfo) -> str:
+    """Key under which ``schema(**data)`` accepts field *name* (aliases win over names)."""
+    alias = info.validation_alias
+    if isinstance(alias, AliasChoices):
+        alias = next((c for c in alias.choices if isinstance(c, str)), None)
+    if isinstance(alias, str):
+        return alias
+    return info.alias or name
+
+
+def _schema_input_keys(schema: Any) -> set[str] | None:
+    """Every key a JSON object may use for *schema*'s fields; ``None`` if not a model."""
+    if not (inspect.isclass(schema) and issubclass(schema, BaseModel)):
+        return None
+    return {
+        key
+        for name, info in schema.model_fields.items()
+        for key in (*_field_keys(info, name), _constructor_key(name, info))
+    }
+
+
 def _sole_model_list_field(schema: Any) -> str | None:
     """JSON key of the only field when it is a ``list`` of models, else ``None``."""
     if not (inspect.isclass(schema) and issubclass(schema, BaseModel)):
@@ -2991,7 +3012,7 @@ def _sole_model_list_field(schema: Any) -> str | None:
     args = [a for a in get_args(annotation) if a is not Ellipsis]
     if not args or not all(inspect.isclass(a) and issubclass(a, BaseModel) for a in args):
         return None
-    return info.alias or (info.validation_alias if isinstance(info.validation_alias, str) else name)
+    return _constructor_key(name, info)
 
 
 def _unwrap_json_array(
@@ -3004,20 +3025,18 @@ def _unwrap_json_array(
     """
     if not all(isinstance(item, dict) for item in parsed):
         return parsed, None
+    if len(parsed) == 1:
+        known = _schema_input_keys(schema)
+        if known is None or known & set(parsed[0]):
+            logger.debug(
+                "%s: JSON response for %s was a single object wrapped in an array; unwrapping.",
+                model_label,
+                schema_name,
+            )
+            return parsed[0], None
     list_key = _sole_model_list_field(schema)
     if list_key is not None:
         return {list_key: parsed}, None
-    if len(parsed) == 1:
-        if inspect.isclass(schema) and issubclass(schema, BaseModel):
-            known = {k for n, i in schema.model_fields.items() for k in _field_keys(i, n)}
-            if not known & set(parsed[0]):
-                return parsed, None
-        logger.debug(
-            "%s: JSON response for %s was a single object wrapped in an array; unwrapping.",
-            model_label,
-            schema_name,
-        )
-        return parsed[0], None
     if len(parsed) >= 2:
         logger.warning(
             "%s: JSON response for %s contained %d separate objects.",
@@ -3219,6 +3238,10 @@ def _split_concatenated_objects(text: str) -> list[dict[str, Any]] | None:
     return objects if len(objects) >= 2 else None
 
 
+#: Text ending in a URL scheme (``http:``, ``s3:``); a following ``//`` belongs to the URL.
+_URL_SCHEME_BEFORE = re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*:$")
+
+
 def _strip_json_comments(text: str) -> str:
     """Remove ``//`` and ``/* */`` comments that sit outside string literals.
 
@@ -3251,7 +3274,7 @@ def _strip_json_comments(text: str) -> str:
             quote = ch
             out.append(ch)
             i += 1
-        elif text.startswith("//", i):
+        elif text.startswith("//", i) and not _URL_SCHEME_BEFORE.search(text[max(0, i - 40) : i]):
             end = text.find("\n", i)
             i = n if end == -1 else end
         elif text.startswith("/*", i):
