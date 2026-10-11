@@ -21,7 +21,6 @@ parsed. Review every diff deliberately before committing; do not regenerate blin
 
 ## Surprising current behaviour (kept as golden)
 
-- `block_comments`: a value after an inline `/* ... */` comment is lost (`"age": ""` instead of 36).
 - `two_objects`: two concatenated objects become a list of both, not "the first wins".
 - `truncated_string`: the cut-off string is kept as-is (`"Mathematician and wri"`).
 - `number_formats`: the leading `+` is dropped and `1.5e3` becomes the float `1500.0`.

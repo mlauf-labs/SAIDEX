@@ -3049,6 +3049,15 @@ def _extract_json_from_content(content: Any) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError as json_exc:
+        # json-repair mangles values that follow a comment (``"age": /* x */ 36`` becomes
+        # ``""``), so comments go before every fallback; valid JSON is never touched.
+        stripped = _strip_json_comments(text)
+        if stripped != text:
+            try:
+                return json.loads(stripped)
+            except json.JSONDecodeError:
+                text = stripped
+
         # Fallback 1: isolate the outermost { ... } block and retry.
         start = text.find("{")
         end = text.rfind("}")
@@ -3070,6 +3079,51 @@ def _extract_json_from_content(content: Any) -> Any:
         raise ValueError(
             f"json-repair could not produce a dict/list from content: {text[:200]!r}"
         ) from json_exc
+
+
+def _strip_json_comments(text: str) -> str:
+    """Remove ``//`` and ``/* */`` comments that sit outside string literals.
+
+    Both ``"…"`` and ``'…'`` strings (with backslash escapes) are skipped, so URLs
+    and comment-like text inside values survive. A block comment becomes a single
+    space so neighbouring tokens do not merge; an unterminated one runs to the end.
+
+    Args:
+        text: Raw JSON-ish text, possibly containing comments.
+
+    Returns:
+        The text without comments.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    quote = ""
+    while i < n:
+        ch = text[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+        elif ch in "\"'":
+            quote = ch
+            out.append(ch)
+            i += 1
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            out.append(" ")
+            i = n if end == -1 else end + 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
 
 
 def _strip_code_fences(text: str) -> str:
