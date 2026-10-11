@@ -2347,7 +2347,7 @@ async def _try_with_model(
                         FailureReason.LLM_ERROR,
                         candidate,
                         rejection,
-                        ModelErrorKind.INVALID_REQUEST,
+                        llm_error_kind=ModelErrorKind.INVALID_REQUEST,
                     )
                 # Deliberately no ``remaining -= 1``: the relaxed re-bind is a
                 # transport-level correction, not a failed extraction attempt.
