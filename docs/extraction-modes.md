@@ -80,11 +80,54 @@ tool_config=ToolCallConfig(strict=False)
 tool_config=ToolCallConfig(strict=None)
 ```
 
+### Strict tool schemas
+
+With `strict=True` (the default `ToolCallConfig.OPENAI`) the schema tool is
+really sent as a strict structured-output tool: `"strict": true` on the
+function, `additionalProperties: false` at every object level, **every property
+listed in `required`**, and the unsupported `default` keyword removed (a
+removed default is appended to the property's `description`, e.g.
+`Default: 0`, so the model still sees it).
+
+What this changes for your schemas:
+
+- Optional fields are nullable unions and always present, so the model sends
+  `null` for a value it does not have instead of omitting the key.  An
+  `Optional[int] = 5` field therefore becomes `None`, **not** `5`.
+- Fields with a default must be sent explicitly by the model.
+- `mode="before"` validators that check for a *missing* key now see `null`.
+
+If omission semantics matter for your schema, use
+`tool_config=ToolCallConfig.COMPATIBLE` (or `ExtractionMode.JSON`).  Some
+integrations also log their own warnings for strict keywords they ignore (for
+example langchain-google-genai: "Key 'additionalProperties' is not supported in
+schema, ignoring"); `COMPATIBLE` avoids those too.
+
+Some shapes cannot be expressed in strict mode.  For those, SAIDEX binds the
+plain (non-strict) schema instead and logs **one warning per schema** naming the
+reason (later calls log at DEBUG):
+
+- `dict[...]` / bare `dict` / `Mapping` fields, at any depth (free-form keys
+  would collapse to an empty object);
+- `Any` / `object` fields and `TypedDict` types (optional keys);
+- recursive models (a model reachable from itself);
+- fields whose default is pydantic's `MISSING` sentinel (strict makes every
+  field required, so it could never be omitted).
+
+Dataclass fields are inspected like model fields.
+
+If a provider rejects the strict schema anyway (for example an HTTP 400 such as
+"Invalid schema for function ..." or Anthropic's "Schema is too complex for
+compilation"), SAIDEX logs a warning and re-binds the plain schema **once**,
+keeping `tool_choice` and `parallel_tool_calls`, without consuming a validation
+retry.  This costs one extra failed request per call for such schemas; avoid it
+by choosing `COMPATIBLE` or JSON mode up front.  `auto_relax=False` disables it.
+
 ### Automatic recovery
 
 You usually do not have to configure anything.  When a provider rejects the
 bound flags — an HTTP 400 naming `strict` / `tool_choice` /
-`parallel_tool_calls`, or a `TypeError` from a `bind_tools` implementation that
+`parallel_tool_calls`, a 400 saying the tool schema is invalid, or a `TypeError` from a `bind_tools` implementation that
 never accepted them — SAIDEX re-binds the schema tool **once** with
 `ToolCallConfig.COMPATIBLE`, logs a warning, and carries on **without consuming a
 validation retry**.  A second failure ends the attempt as `llm_error` as before.

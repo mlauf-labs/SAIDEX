@@ -54,12 +54,16 @@ class ToolCallConfig:
         tool_choice: ``"forced"`` sends the schema tool's name (the model *must*
             call it), ``"auto"`` lets the model decide, ``None`` omits the
             keyword argument.
-        strict: Value for the ``strict`` keyword (OpenAI structured outputs), or
-            ``None`` to omit it.
+        strict: Value for the ``strict`` keyword, or ``None`` to omit it.  With
+            ``True`` the schema tool itself is converted strictly (all properties
+            required, ``additionalProperties: false``, optionals nullable, no
+            ``default``).  Schemas strict cannot express (``dict[...]`` or
+            ``MISSING``-default fields) are bound non-strict with a warning.
         parallel_tool_calls: Value for the ``parallel_tool_calls`` keyword, or
             ``None`` to omit it.
         auto_relax: When ``True`` (default) and the provider rejects the bound
-            flags — an HTTP 400 naming one of them, or a ``TypeError`` from a
+            flags — an HTTP 400 naming one of them or reporting an invalid tool
+            schema, or a ``TypeError`` from a
             ``bind_tools`` implementation that does not accept them — the schema
             tool is re-bound **once** with :attr:`COMPATIBLE` and the attempt
             continues, without consuming a validation retry.
