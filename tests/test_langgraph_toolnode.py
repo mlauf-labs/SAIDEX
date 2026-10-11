@@ -38,7 +38,7 @@ from saidex import (  # noqa: E402
     on_extraction,
     on_tool_node,
 )
-from saidex.langgraph import SaidexToolNode, ToolCallValidationError  # noqa: E402
+from saidex.langgraph import OnUnresolved, SaidexToolNode, ToolCallValidationError  # noqa: E402
 from tests._mock_llm import make_llm, make_response  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -2438,3 +2438,75 @@ async def test_corrected_secret_reaches_the_tool_but_is_masked_in_history() -> N
     assert updated is not None
     assert updated.tool_calls[0]["args"] == {"token": "**********"}
     convert_to_openai_messages([updated])
+
+
+# ---------------------------------------------------------------------------
+# Every answerable id is answered exactly once, in every mode and policy
+# ---------------------------------------------------------------------------
+
+
+def _content_keyed_correction_llm() -> Any:
+    """Correction mock that fixes only the call with ``"a": "one"``, whatever the order."""
+
+    async def respond(messages: list[BaseMessage], *_args: Any, **_kwargs: Any) -> Any:
+        if '"one"' in str(messages[0].content):
+            return make_response(tool_calls=[{"args": {"a": 1, "b": 1}, "name": "add", "id": "x"}])
+        return make_response(invalid=True)
+
+    llm = make_llm([])
+    llm.bind_tools.return_value.ainvoke = AsyncMock(side_effect=respond)
+    return llm
+
+
+def _mixed_batch_state() -> dict[str, Any]:
+    return {
+        "messages": [
+            _ai(
+                [
+                    _call("add", {"a": 1, "b": 2}, "ok"),
+                    _call("add", {"a": "one", "b": 2}, "fixable"),
+                    _call("add", {"a": "two", "b": 2}, "unfixable"),
+                ],
+                invalid=[
+                    _invalid("add", "utter garbage", "junk"),
+                    _invalid_no_id("add", "more garbage"),
+                ],
+            )
+        ]
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("policy", ["feedback", "hook-str", "hook-none", "hook-dict"])
+@pytest.mark.parametrize("mode", ["agent", "saidex"])
+async def test_every_answerable_id_answered_once_in_every_mode_and_policy(
+    mode: str, policy: str
+) -> None:
+    hook_calls: list[str] = []
+    decisions: dict[str, dict[str, Any] | str | None] = {
+        "hook-str": "custom feedback",
+        "hook-none": None,
+        "hook-dict": {"a": 5, "b": 5},
+    }
+
+    def hook(call: UnresolvedToolCall) -> dict[str, Any] | str | None:
+        hook_calls.append(call.tool_call_id)
+        return decisions[policy]
+
+    on_unresolved: OnUnresolved = "feedback" if policy == "feedback" else hook
+    correction = _content_keyed_correction_llm() if mode == "saidex" else None
+    node = SaidexToolNode(
+        [add], correction_model=correction, max_correction_retries=1, on_unresolved=on_unresolved
+    )
+    result = await node.ainvoke(
+        _mixed_batch_state(), config={"max_concurrency": 1}, runtime=_NO_GRAPH_RUNTIME
+    )
+
+    tool_messages = _tool_messages(result)
+    assert [m.tool_call_id for m in tool_messages] == ["ok", "fixable", "unfixable", "junk"]
+    unresolved = ["unfixable", "junk"] if mode == "saidex" else ["fixable", "unfixable", "junk"]
+    assert hook_calls == ([] if policy == "feedback" else unresolved)
+    executed = {"ok"} | ({"fixable"} if mode == "saidex" else set())
+    if policy == "hook-dict":
+        executed |= set(unresolved)
+    assert {m.tool_call_id for m in tool_messages if m.status != "error"} == executed
