@@ -33,6 +33,7 @@ from langchain_core.tools import BaseTool
 
 from ._tool_calls import (
     CallContext,
+    CallPlan,
     OnUnresolved,
     ToolCallPipeline,
     ToolCallValidationError,
@@ -57,6 +58,18 @@ logger = logging.getLogger(__name__)
 _UNSET: Any = object()
 
 OnInvalid = Literal["feedback", "correct", "raise"]
+
+
+@dataclasses.dataclass
+class _Prepared:
+    """Everything the pre-execution phase decided for one invocation."""
+
+    shape: str
+    ai_message: AIMessage
+    plans: list[CallPlan]
+    feedback: list[BaseMessage]
+    execute: bool
+    inner_input: Any
 
 
 class SaidexToolNode(Runnable[Any, Any]):
@@ -124,11 +137,11 @@ class SaidexToolNode(Runnable[Any, Any]):
     already-extracted ``ToolCall`` with no surrounding ``AIMessage`` to
     repair, validate, correct or sanitize. These two shapes are detected up
     front (see :func:`_is_send_api_payload`) and delegated straight to the
-    internal stock ``ToolNode`` with ``config``/``kwargs`` passed through
-    unmodified; the result is returned unchanged. No ``ToolNodeEvent`` is
-    emitted on this path — no ``CallPlan`` ever exists to report, consistent
-    with "we did not process any call" (the same convention the ``"raise"``
-    policy's fail-fast path follows).
+    internal stock ``ToolNode`` (``invoke`` or ``ainvoke``) with
+    ``config``/``kwargs`` passed through unmodified; the result is returned
+    unchanged. No ``ToolNodeEvent`` is emitted on this path — no ``CallPlan``
+    ever exists to report, consistent with "we did not process any call" (the
+    same convention the ``"raise"`` policy's fail-fast path follows).
 
     Args:
         tools: The tools available for execution — ``BaseTool`` instances or
@@ -270,11 +283,14 @@ class SaidexToolNode(Runnable[Any, Any]):
                 )
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
-        """Synchronous entry point; runs the pipeline through a blocking bridge.
+        """Synchronous entry point.
 
-        See :meth:`ainvoke` for the input and output shapes.  Works inside an
-        already running event loop too (e.g. ``graph.invoke`` from a Jupyter
-        cell) — the pipeline then runs on a short-lived worker thread.
+        Repair, validation, correction and ``on_unresolved`` run through a
+        blocking bridge (also inside an already running event loop, e.g.
+        ``graph.invoke`` from a Jupyter cell). Valid calls then execute on the
+        stock ``ToolNode``'s sync path: a thread pool bounded by
+        ``config["max_concurrency"]``, so ``max_concurrency=1`` runs them one
+        after another. Async-only tools fail here exactly as with the stock node.
 
         Args:
             input: Graph state — a message list, a dict containing
@@ -286,7 +302,15 @@ class SaidexToolNode(Runnable[Any, Any]):
             Tool results in the same shape the stock ``ToolNode`` produces, as
             described in :meth:`ainvoke`.
         """
-        return _run_blocking(self._arun(input, config, **kwargs))
+        if _is_send_api_payload(input):
+            return self._inner.invoke(input, config, **kwargs)
+        prepared = _run_blocking(self._prepare(input, config))
+        inner_output = (
+            self._inner.invoke(prepared.inner_input, config, **kwargs) if prepared.execute else None
+        )
+        output, event = self._finish(prepared, inner_output)
+        _run_blocking(dispatch_tool_node_event(event))
+        return output
 
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         """Repair, validate and execute the last ``AIMessage``'s tool calls.
@@ -303,40 +327,47 @@ class SaidexToolNode(Runnable[Any, Any]):
             plus policy feedback messages and, when ``sanitize_messages``
             applies, the updated ``AIMessage``.
         """
-        return await self._arun(input, config, **kwargs)
-
-    # ------------------------------------------------------------------
-    # Core pipeline
-    # ------------------------------------------------------------------
-
-    async def _arun(self, input: Any, config: RunnableConfig | None, **kwargs: Any) -> Any:
         if _is_send_api_payload(input):
             # No AIMessage exists in either shape — nothing to repair, validate
             # or sanitize — so this is a pure pass-through. See the class
             # docstring's "Send-API fan-out payloads" note for the stats
             # decision (no ToolNodeEvent on this path).
             return await self._inner.ainvoke(input, config, **kwargs)
+        prepared = await self._prepare(input, config)
+        inner_output = (
+            await self._inner.ainvoke(prepared.inner_input, config, **kwargs)
+            if prepared.execute
+            else None
+        )
+        output, event = self._finish(prepared, inner_output)
+        await dispatch_tool_node_event(event)
+        return output
+
+    # ------------------------------------------------------------------
+    # Core pipeline
+    # ------------------------------------------------------------------
+
+    async def _prepare(self, input: Any, config: RunnableConfig | None) -> _Prepared:
+        """Plan, correct and resolve the calls — everything before execution."""
         messages, shape = _extract_messages(input, self._messages_key)
         ai_message, ai_index = _last_ai_message(messages)
         ctx = CallContext(messages=tuple(messages), ai_index=ai_index, state=input)
         plans = await self._pipeline.plan(ai_message, ctx)
-
         await self._pipeline.correct(
             plans,
             ctx,
             callbacks=(config or {}).get("callbacks"),
             max_concurrency=(config or {}).get("max_concurrency"),
         )
-
         feedback: list[BaseMessage] = list(await self._pipeline.resolve(plans, ctx))
 
         executable_calls = [plan.call for plan in plans if plan.executable]
-        inner_output: Any = None
+        inner_input: Any = None
         if executable_calls:
-            # A correction mutates plan.call["args"] in place without touching
-            # plan.repaired (that flag means "deterministically recovered from
-            # invalid_tool_calls" — see ToolCallStats.repaired), so it must be
-            # counted here explicitly. Otherwise a corrected call originating
+            # A correction or salvage mutates plan.call["args"] in place
+            # without touching plan.repaired (that flag means
+            # "deterministically recovered from invalid_tool_calls"), so both
+            # outcomes must be counted here explicitly. Otherwise such a call
             # from tool_calls (same id count, repaired=False) would look
             # unchanged and the inner node would run the ORIGINAL bad args.
             changed = any(
@@ -351,30 +382,35 @@ class SaidexToolNode(Runnable[Any, Any]):
                 )
             else:
                 inner_input = input
-            inner_output = await self._inner.ainvoke(inner_input, config, **kwargs)
-
-        extra: list[BaseMessage] = list(feedback)
-        sanitized = (
-            self._pipeline.sanitize(ai_message, plans)
-            if self._sanitize_messages and ai_message.id is not None
-            else None
+        return _Prepared(
+            shape=shape,
+            ai_message=ai_message,
+            plans=plans,
+            feedback=feedback,
+            execute=bool(executable_calls),
+            inner_input=inner_input,
         )
-        if sanitized is not None:
-            extra.append(sanitized)
 
+    def _finish(self, prepared: _Prepared, inner_output: Any) -> tuple[Any, ToolNodeEvent]:
+        """Merge executor output with feedback and the sanitized message; build the event."""
+        extra: list[BaseMessage] = list(prepared.feedback)
+        if self._sanitize_messages and prepared.ai_message.id is not None:
+            sanitized = self._pipeline.sanitize(prepared.ai_message, prepared.plans)
+            if sanitized is not None:
+                extra.append(sanitized)
         order = {
             call_id: index
             for index, call_id in enumerate(
-                [c.get("id") for c in ai_message.tool_calls]
-                + [c.get("id") for c in ai_message.invalid_tool_calls]
+                [c.get("id") for c in prepared.ai_message.tool_calls]
+                + [c.get("id") for c in prepared.ai_message.invalid_tool_calls]
             )
             if call_id is not None
         }
-
-        stats = self._pipeline.build_stats(plans)
-        await dispatch_tool_node_event(ToolNodeEvent(node_name=self._node_name, stats=stats))
-
-        return _merge_output(inner_output, extra, shape, self._messages_key, order)
+        event = ToolNodeEvent(
+            node_name=self._node_name, stats=self._pipeline.build_stats(prepared.plans)
+        )
+        output = _merge_output(inner_output, extra, prepared.shape, self._messages_key, order)
+        return output, event
 
 
 # ---------------------------------------------------------------------------

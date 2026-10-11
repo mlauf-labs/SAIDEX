@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import threading
 from typing import Annotated, Any, get_type_hints
 from unittest.mock import AsyncMock, MagicMock
 
@@ -52,7 +53,7 @@ EXECUTED: list[str] = []
 # `ainvoke` (langgraph/_internal/_runnable.py) only fall back to that
 # config-based lookup when `runtime` is absent from `kwargs` — an explicit
 # `runtime=` kwarg would short-circuit that path and silently paper over a
-# regression where `_arun` stops forwarding `config` to the inner node.
+# regression where the node stops forwarding `config` to the inner node.
 _NO_GRAPH_RUNTIME: Runtime[None] = Runtime()
 
 
@@ -494,7 +495,7 @@ async def test_send_api_payload_config_callbacks_reach_inner_tool() -> None:
 # explicitly. langgraph's RunnableCallable.invoke/ainvoke skip the
 # config-based runtime lookup entirely whenever `runtime` is already present
 # in kwargs (see langgraph/_internal/_runnable.py), so those tests would keep
-# passing even if a future change broke config propagation from _arun to the
+# passing even if a future change broke config propagation from the node to the
 # inner ToolNode. The tests below close that gap: they run SaidexToolNode
 # inside a compiled StateGraph, exactly as documented in the class docstring
 # (`graph.add_node("tools", SaidexToolNode(tools))`), so Pregel is the one
@@ -1197,7 +1198,7 @@ async def test_correct_policy_survives_bind_tools_raising_not_implemented() -> N
     extractor._try_with_model, so NotImplementedError escapes _try_with_model,
     is re-raised by extract_data's `except BaseException: raise`, and without
     a try/except around the extract_data(...) call in _correct_plan would
-    propagate out of _correct_plan/_arun and kill the graph node — directly
+    propagate out of _correct_plan/_prepare and kill the graph node — directly
     contradicting "the graph must never crash because correction failed."
     Must instead degrade to the normal feedback ToolMessage, execute nothing,
     and never raise out of the node."""
@@ -1499,7 +1500,7 @@ async def test_on_tool_node_fires_and_correction_emits_no_extraction_event() -> 
 
 @pytest.mark.asyncio
 async def test_raise_policy_emits_no_event() -> None:
-    """The raise policy exits _arun before the stats-dispatch point — no
+    """The raise policy exits _prepare before the stats-dispatch point — no
     ToolNodeEvent may fire on that path."""
     tool_events: list[Any] = []
     sub_tool = on_tool_node(tool_events.append)
@@ -1555,7 +1556,7 @@ async def test_command_returning_tool_passes_through() -> None:
     # SaidexToolNode mangled the Command's goto or injected extra messages
     # into its update (both would still produce a `list` containing a
     # `Command`). All valid calls with no repair/correction take the
-    # unchanged-input fast path in _arun (`inner_input = input`), so the
+    # unchanged-input fast path in _prepare (`inner_input = input`), so the
     # inner stock ToolNode runs on the exact same input as the standalone
     # `stock` call below — the Command payloads must therefore be identical,
     # not just same-typed.
@@ -2206,3 +2207,80 @@ async def test_negative_max_concurrency_is_unbounded() -> None:
         _two_bad_calls(), config={"max_concurrency": -1}, runtime=_NO_GRAPH_RUNTIME
     )
     assert [m.content for m in _tool_messages(result)] == ["2", "2"]
+
+
+# ---------------------------------------------------------------------------
+# Sync path parity with the stock ToolNode
+# ---------------------------------------------------------------------------
+
+
+def test_sync_invoke_runs_tools_on_stock_sync_executor() -> None:
+    threads: list[str] = []
+
+    @tool
+    def where(x: int) -> str:
+        """Report the executing thread."""
+        threads.append(threading.current_thread().name)
+        return "ok"
+
+    SaidexToolNode([where]).invoke(
+        {"messages": [_ai([_call("where", {"x": 1}, "c1")])]}, runtime=_NO_GRAPH_RUNTIME
+    )
+    assert threads[0].startswith("ThreadPoolExecutor")
+
+
+def test_sync_invoke_async_only_tool_matches_stock() -> None:
+    async def _fetch(x: int) -> str:
+        return "ok"
+
+    async_only = StructuredTool.from_function(coroutine=_fetch, name="fetch", description="Fetch.")
+    state = {"messages": [_ai([_call("fetch", {"x": 1}, "c1")])]}
+    with pytest.raises(NotImplementedError):
+        ToolNode([async_only]).invoke(state, runtime=_NO_GRAPH_RUNTIME)
+    with pytest.raises(NotImplementedError):
+        SaidexToolNode([async_only]).invoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+
+def test_sync_send_api_payload_matches_stock() -> None:
+    payload = [_call("add", {"a": 1, "b": 2}, "c1")]
+    ours = SaidexToolNode([add]).invoke(payload, runtime=_NO_GRAPH_RUNTIME)
+    stock = ToolNode([add]).invoke(payload, runtime=_NO_GRAPH_RUNTIME)
+    assert [m.content for m in _tool_messages(ours)] == [m.content for m in _tool_messages(stock)]
+
+
+def test_sync_invoke_with_correction() -> None:
+    node = SaidexToolNode([add], correction_model=_correction_llm([{"a": 5, "b": 2}]))
+    result = node.invoke(
+        {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]},
+        runtime=_NO_GRAPH_RUNTIME,
+    )
+    assert _tool_messages(result)[0].content == "7"
+
+
+def test_sync_invoke_raise_policy() -> None:
+    with pytest.raises(ToolCallValidationError):
+        SaidexToolNode([add], on_unresolved="raise").invoke(
+            {"messages": [_ai([_call("add", {"a": "x", "b": 2}, "c1")])]}
+        )
+
+
+def test_sync_invoke_dispatches_event_to_collect_stats() -> None:
+    with collect_stats() as sink:
+        SaidexToolNode([add]).invoke(
+            {"messages": [_ai([_call("add", {"a": 1, "b": 1}, "c1")])]},
+            runtime=_NO_GRAPH_RUNTIME,
+        )
+    assert len(sink) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_invoke_inside_running_loop_with_async_hook_and_validator() -> None:
+    async def hook(call: UnresolvedToolCall) -> dict[str, Any]:
+        return {"a": 1, "b": 1}
+
+    async def no_negative(args: Any, ctx: ToolCallValidatorContext) -> str | None:
+        return "a must not be negative" if args.a < 0 else None
+
+    node = SaidexToolNode([add], on_unresolved=hook, validators={"add": no_negative})
+    result = node.invoke(_ok_state(a=-1), runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].content == "2"
