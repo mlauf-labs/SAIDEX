@@ -727,47 +727,25 @@ class ToolCallPipeline:
             else None
         )
 
-        tasks: list[asyncio.Task[None]] = []
-        exception_to_raise: BaseException | None = None
-        exception_lock = asyncio.Lock()
-
         async def run(plan: CallPlan) -> None:
-            nonlocal exception_to_raise
-            try:
-                if limit is None:
-                    try:
-                        await self.correct_one(plan, ctx, callbacks)
-                    except BaseException as exc:
-                        async with exception_lock:
-                            if exception_to_raise is None:
-                                exception_to_raise = exc
-                            # Cancel before propagating, so siblings don't acquire resources.
-                            for task in tasks:
-                                if task is not asyncio.current_task():
-                                    task.cancel()
-                        raise
-                else:
-                    async with limit:
-                        try:
-                            await self.correct_one(plan, ctx, callbacks)
-                        except BaseException as exc:
-                            async with exception_lock:
-                                if exception_to_raise is None:
-                                    exception_to_raise = exc
-                                # Cancel before releasing semaphore, so siblings
-                                # don't start their model calls.
-                                for task in tasks:
-                                    if task is not asyncio.current_task():
-                                        task.cancel()
-                            raise
-            except BaseException:
-                raise
+            if limit is None:
+                await self.correct_one(plan, ctx, callbacks)
+                return
+            async with limit:
+                try:
+                    await self.correct_one(plan, ctx, callbacks)
+                except BaseException:
+                    # Cancel the waiting siblings before the slot is released,
+                    # so none of them starts its model call.
+                    for task in tasks:
+                        if task is not asyncio.current_task():
+                            task.cancel()
+                    raise
 
         tasks = [asyncio.ensure_future(run(plan)) for plan in targets]
         try:
             await asyncio.gather(*tasks)
         except BaseException:
-            # Safety net: cancel any remaining tasks and re-raise.
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
