@@ -1,12 +1,15 @@
 """``SaidexToolNode`` — a validating, correcting drop-in for LangGraph's ``ToolNode``.
 
 Requires the optional ``saidex[langgraph]`` extra.  The node repairs
-``invalid_tool_calls`` (think-tag stripping, json-repair), validates tool-call
-arguments against each tool's Pydantic schema *before* execution, and applies a
-configurable policy to invalid calls: structured feedback, an LLM correction
-cycle, or fail-fast raising.  Valid calls are executed by an internal stock
-``langgraph.prebuilt.ToolNode``, so parallel execution, ``handle_tool_errors``,
-``Command`` returns and injected state keep working unchanged.
+``invalid_tool_calls`` (think-tag stripping, json-repair) and validates tool-call
+arguments *before* execution — against each tool's Pydantic schema and optional
+per-tool validators.  An invalid call is then either corrected by SAIDEX (with a
+``correction_model``; the correction never enters graph state) or answered with
+structured feedback so the agent corrects it.  Calls that stay invalid follow
+``on_unresolved``: feedback, raising, or a custom hook.  Valid calls are executed
+by an internal stock ``langgraph.prebuilt.ToolNode``, so parallel execution,
+``handle_tool_errors``, ``Command`` returns and injected state keep working
+unchanged.
 """
 
 from __future__ import annotations

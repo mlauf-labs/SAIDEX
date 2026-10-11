@@ -125,7 +125,10 @@ When you use [`SaidexToolNode`](langgraph-toolnode.md), each node invocation
 emits a `ToolNodeEvent`. Active `collect_stats()` sinks record its
 `ToolNodeStats` alongside extraction stats, and `on_tool_node()` registers a
 process-wide listener — the tool-node counterpart to `on_extraction()`
-(extraction listeners do not receive tool-node events).
+(extraction listeners do not receive tool-node events). Per call,
+`ToolCallStats` reports the `outcome` (`executed`, `corrected`, `salvaged`,
+`feedback`, `dropped`), whether the correction cycle ran
+(`correction_attempted`) and the field issues found by validation.
 
 ---
 

@@ -357,9 +357,12 @@ from saidex.langgraph import SaidexToolNode
 graph.add_node("tools", SaidexToolNode(tools))   # instead of ToolNode(tools)
 ```
 
-It repairs malformed JSON, validates arguments against each tool's Pydantic
-schema before execution, and — by policy — answers bad calls with structured
-field-level feedback, runs a bounded LLM correction cycle, or fails fast.
+It repairs malformed JSON and validates arguments against each tool's Pydantic
+schema (plus optional per-tool validators) before execution. Invalid calls are
+either answered with structured field-level feedback so the agent fixes them,
+or — with a `correction_model` — corrected inside the node without adding the
+correction to the message history. Calls that stay invalid follow
+`on_unresolved`: feedback, fail fast, or your own hook.
 
 > Full guide: [`docs/langgraph-toolnode.md`](docs/langgraph-toolnode.md) —
 > runnable example: [`examples/16_langgraph_toolnode.py`](examples/16_langgraph_toolnode.py)
