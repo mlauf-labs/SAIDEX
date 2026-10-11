@@ -2656,8 +2656,12 @@ async def _try_with_model(
                     invoke_result.retry_count,
                 )
         except Exception as exc:
+            # A rejected reasoning_effort is also a "client error"; relaxing the tool
+            # binding cannot fix it, so it must reach the final classification below.
+            effort_rejected = level is not None and _is_reasoning_effort_rejection(exc)
             if (
-                flags.auto_relax
+                not effort_rejected
+                and flags.auto_relax
                 and strict_bound
                 and not strict_relaxed
                 and _is_strict_schema_rejection(exc)
@@ -2691,7 +2695,12 @@ async def _try_with_model(
                         rejection,
                     )
                 continue
-            if relax_rebind is not None and not relaxed and _is_tool_flag_rejection(exc):
+            if (
+                not effort_rejected
+                and relax_rebind is not None
+                and not relaxed
+                and _is_tool_flag_rejection(exc)
+            ):
                 logger.warning(
                     "%s: provider rejected the tool-calling flags for %s (%s) — "
                     "re-binding with relaxed flags and retrying.",

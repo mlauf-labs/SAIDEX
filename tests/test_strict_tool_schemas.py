@@ -457,3 +457,29 @@ def test_enforce_strict_objects_normalises_nested_objects_and_field_named_proper
     assert inner["required"] == ["a", "b"]
     assert inner["additionalProperties"] is False
     assert "additionalProperties" not in out["properties"]["properties"]["properties"]
+
+
+async def test_rejected_reasoning_effort_does_not_relax_strict_schema(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    rejection = TypeError("create() got an unexpected keyword argument 'reasoning_effort'")
+    llm = _llm_with_binds(rejection, _ok("OptStr", {"x": "v"}))
+
+    with caplog.at_level(logging.WARNING, logger="saidex.extractor"):
+        result, stats = await extract_data(llm, OptStr, _msgs(), reasoning_escalation=["low"])
+
+    assert result is None
+    assert stats.failure_reason == "llm_error"
+    assert stats.llm_error_kind == "invalid_request"
+    assert llm.bind_tools.call_count == 1
+    assert "strict tool schema" not in caplog.text
+
+
+async def test_strict_schema_rejection_still_relaxes_with_escalation_on() -> None:
+    llm = _llm_with_binds(_ClientError("Schema is too complex"), _ok("OptStr", {"x": "v"}))
+
+    result, stats = await extract_data(llm, OptStr, _msgs(), reasoning_escalation=["low"])
+
+    assert stats.success
+    assert result == OptStr(x="v")
+    assert llm.bind_tools.call_count == 2
