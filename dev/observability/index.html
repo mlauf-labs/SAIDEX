@@ -1767,7 +1767,7 @@ their own spans:</p>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">)</span>
 </code></pre></div>
 <p><strong>What reaches the handlers:</strong> the chain-run span closes with the validated
-result and run metrics as its outputs — the same data the handler already sees
+result and run metrics (<code>success</code>, <code>failure_reason</code>, <code>salvaged</code>, …) as its outputs — the same data the handler already sees
 inside the LLM generations, packaged once per extraction. The raw source text
 is <strong>not</strong> part of the trace unless you opt in with <code>capture_source_text=True</code>,
 which then also includes it in the span's inputs. If your handler exports to an

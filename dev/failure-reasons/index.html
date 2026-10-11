@@ -814,6 +814,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#salvaged-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Salvaged runs
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1276,6 +1287,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#salvaged-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Salvaged runs
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1371,6 +1393,8 @@ fresh attempts. If both fail, the combined reason is the <strong>fallback's</str
 the <strong>primary's</strong> only when the fallback reported none, e.g. because it was
 configured with zero attempts. The same rule applies to <code>extract_data*</code>, the
 batch variants and the agent loop.</p>
+<h2 id="salvaged-runs">Salvaged runs<a class="headerlink" href="#salvaged-runs" title="Permanent link">&para;</a></h2>
+<p>A run salvaged by <code>on_exhausted</code> reports <code>success=True</code>, <code>failure_reason=None</code> and <code>salvaged=True</code>; the original rejection stays in <code>last_rejection</code>.</p>
 
 
 

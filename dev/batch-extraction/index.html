@@ -1558,6 +1558,7 @@ when the document genuinely contains no records.</p>
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
 <a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">stats</span><span class="o">.</span><span class="n">item_count</span><span class="si">}</span><span class="s2"> items, </span><span class="si">{</span><span class="n">stats</span><span class="o">.</span><span class="n">total_retries</span><span class="si">}</span><span class="s2"> retries&quot;</span><span class="p">)</span>
 </code></pre></div>
+<p>Pass <code>on_exhausted</code> to keep the valid items when some are rejected — see <a href="../external-validators/#salvaging-a-partial-result-on_exhausted">External Validators → on_exhausted</a>.</p>
 <p>On failure, <code>stats.last_candidate</code> is the last rejected <code>list</code> of items:
 <code>items = cast(list[Item], stats.last_candidate)</code>.</p>
 <p><code>ExtractDataStats.item_count</code> reports how many items were returned (it is <code>0</code> for

@@ -1403,6 +1403,7 @@ prompt-tuning signal.</p>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">summary</span> <span class="o">=</span> <span class="n">summarize_field_issues</span><span class="p">(</span><span class="n">runs</span><span class="p">)</span>
 </code></pre></div>
+<p>Runs salvaged by an <a href="../external-validators/#salvaging-a-partial-result-on_exhausted"><code>on_exhausted</code></a> hook count as successes in <code>success_rate</code>, but are tracked separately: <code>salvaged_runs</code> counts them and <code>clean_success_rate</code> is the share of runs that succeeded without salvage.</p>
 <p><code>summarize_field_issues</code> accepts a heterogeneous iterable: stats objects
 ([<code>ExtractDataStats</code>][saidex.ExtractDataStats] or
 [<code>ExtractorRunStats</code>][saidex.ExtractorRunStats]) <strong>and/or</strong> bare
@@ -1445,8 +1446,12 @@ occurrence metrics, because they carry no run outcome.</p>
 <td>Issues that were self-corrected.</td>
 </tr>
 <tr>
+<td><code>salvaged_runs_with_problem</code></td>
+<td>Runs that only succeeded through an <code>on_exhausted</code> hook.</td>
+</tr>
+<tr>
 <td><code>recovery_rate</code></td>
-<td>Share of <code>runs_with_problem</code> that still succeeded.</td>
+<td>Share of <code>runs_with_problem</code> that succeeded cleanly (salvaged runs do not count).</td>
 </tr>
 <tr>
 <td><code>by_category</code> / <code>by_error_type</code></td>
@@ -1462,7 +1467,7 @@ occurrence metrics, because they carry no run outcome.</p>
 </tr>
 <tr>
 <td><code>severity</code></td>
-<td>Sort score: dominated by <code>failed_runs_with_problem</code>, tie-broken by <code>total_occurrences</code>.</td>
+<td>Sort score: dominated by failed plus salvaged runs, tie-broken by <code>total_occurrences</code>.</td>
 </tr>
 </tbody>
 </table>
