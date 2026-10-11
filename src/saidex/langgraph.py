@@ -131,8 +131,8 @@ class SaidexToolNode(Runnable[Any, Any]):
     failing correction degrades deterministically instead of retrying
     silently on top of its own retry budget. A transient provider error
     (e.g. a 429) on a correction call therefore does not retry at the
-    transport level either: it degrades straight to the ``"feedback"``
-    policy for that call rather than crashing the node.
+    transport level either: the call is left unresolved and follows
+    ``on_unresolved`` rather than crashing the node.
 
     **Send-API fan-out payloads bypass the pipeline entirely.** LangGraph's
     ``Send("tools", tool_call)`` fan-out delivers either a bare
@@ -144,7 +144,7 @@ class SaidexToolNode(Runnable[Any, Any]):
     ``config``/``kwargs`` passed through unmodified; the result is returned
     unchanged. No ``ToolNodeEvent`` is emitted on this path — no ``CallPlan``
     ever exists to report, consistent with "we did not process any call" (the
-    same convention the ``"raise"`` policy's fail-fast path follows).
+    same convention the ``on_unresolved="raise"`` path follows).
 
     Args:
         tools: The tools available for execution — ``BaseTool`` instances or
@@ -185,14 +185,15 @@ class SaidexToolNode(Runnable[Any, Any]):
         json_repair: Apply ``json-repair`` to raw invalid-call args that do not
             parse as JSON.
         sanitize_messages: Return an updated copy of the ``AIMessage`` (same
-            ``id``) whose tool calls carry the repaired/corrected args, so the
-            standard ``add_messages`` reducer replaces the malformed message in
-            state.  Set to ``False`` for message channels with a plain append
-            reducer.  Only ``tool_calls``/``invalid_tool_calls`` are rewritten,
-            never ``AIMessage.content`` — fully effective for providers that
-            serialize from ``tool_calls`` (e.g. ``langchain-openai``), but
-            content-block providers (Anthropic-style) may still re-serialize
-            the original, unsanitized ``tool_use`` block from ``content``.
+            ``id``), so the standard ``add_messages`` reducer replaces the
+            malformed message in state.  For every repaired, corrected or
+            salvaged call, ``tool_calls``, the matching tool-call content blocks
+            (``tool_use``, ``tool_call``, ``invalid_tool_call``,
+            ``function_call``) and OpenAI's raw ``additional_kwargs["tool_calls"]``
+            carry the final args.  Calls answered with feedback stay untouched,
+            since their feedback message references the call id.  Set to
+            ``False`` for message channels with a plain append reducer, where
+            the update would duplicate the message.
         name: Node name, forwarded to the inner ``ToolNode``.  Must be
             non-empty (whitespace-only names are rejected too), since it is
             also used verbatim as ``ToolNodeEvent.node_name``.
@@ -327,7 +328,7 @@ class SaidexToolNode(Runnable[Any, Any]):
         Returns:
             Tool results in the same shape the stock ``ToolNode`` produces
             (list input → message list, otherwise ``{messages_key: [...]}``),
-            plus policy feedback messages and, when ``sanitize_messages``
+            plus feedback messages and, when ``sanitize_messages``
             applies, the updated ``AIMessage``.
         """
         if _is_send_api_payload(input):
@@ -576,7 +577,7 @@ def _order_tool_messages(messages: list[BaseMessage], order: dict[str, int]) -> 
 def _extra_update(
     extra_messages: list[BaseMessage], shape: str, messages_key: str, order: dict[str, int]
 ) -> Any:
-    """Order policy messages into original call order, then shape them to match
+    """Order feedback messages into original call order, then shape them to match
     the caller's input (bare list vs. ``{messages_key: [...]}``) — the same
     convention stock ``ToolNode._combine_tool_outputs`` uses for the
     non-``Command`` outputs it mixes into a ``Command``-bearing list.
@@ -592,10 +593,10 @@ def _merge_output(
     messages_key: str,
     order: dict[str, int],
 ) -> Any:
-    """Combine the inner node's output with policy messages, mirroring shape.
+    """Combine the inner node's output with feedback messages, mirroring shape.
 
     ``Command`` objects (and any other non-message elements the inner node
-    returns) are passed through unchanged; policy messages are ordered and
+    returns) are passed through unchanged; feedback messages are ordered and
     shaped via :func:`_extra_update` in that case, so the original-call-order
     guarantee and the list/dict input shape both survive a ``Command`` return.
     """

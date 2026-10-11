@@ -111,7 +111,7 @@ Two exceptions:
 | Value | Behaviour |
 | --- | --- |
 | `"feedback"` (default) | The call is **not** executed; a `ToolMessage(status="error")` with structured guidance lets the agent fix it next turn. |
-| `"raise"` | `ToolCallValidationError` is raised **before any call executes**. Correction (if enabled) has already been tried. `.calls` holds the unresolved calls. |
+| `"raise"` | `ToolCallValidationError` is raised **before any call executes**. Correction (if enabled) has already been tried. `.calls` holds the unresolved calls that have an id (calls without an id count as failures but cannot be listed). |
 | a hook | Called once per unresolved call with an `UnresolvedToolCall`; sync or async. |
 
 The hook receives the tool name and id, the last candidate arguments, the raw
