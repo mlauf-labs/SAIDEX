@@ -1,28 +1,30 @@
 """``SaidexToolNode`` — a validating, correcting drop-in for LangGraph's ``ToolNode``.
 
 Requires the optional ``saidex[langgraph]`` extra.  The node repairs
-``invalid_tool_calls`` (think-tag stripping, json-repair), validates tool-call
-arguments against each tool's Pydantic schema *before* execution, and applies a
-configurable policy to invalid calls: structured feedback, an LLM correction
-cycle, or fail-fast raising.  Valid calls are executed by an internal stock
-``langgraph.prebuilt.ToolNode``, so parallel execution, ``handle_tool_errors``,
-``Command`` returns and injected state keep working unchanged.
+``invalid_tool_calls`` (think-tag stripping, json-repair) and validates tool-call
+arguments *before* execution — against each tool's Pydantic schema and optional
+per-tool validators.  An invalid call is then either corrected by SAIDEX (with a
+``correction_model``; the correction never enters graph state) or answered with
+structured feedback so the agent corrects it.  Calls that stay invalid follow
+``on_unresolved``: feedback, raising, or a custom hook.  Valid calls are executed
+by an internal stock ``langgraph.prebuilt.ToolNode``, so parallel execution,
+``handle_tool_errors``, ``Command`` returns and injected state keep working
+unchanged.
 """
 
 from __future__ import annotations
 
 import dataclasses
-import json
-import logging
-from collections.abc import Callable, Sequence
+import warnings
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
-from langchain_core.callbacks.base import Callbacks
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 from pydantic import BaseModel
 
 try:
+    from langgraph.errors import GraphBubbleUp
     from langgraph.prebuilt import ToolNode
 except ImportError as exc:  # keep langgraph an optional dependency
     raise ImportError(
@@ -30,98 +32,45 @@ except ImportError as exc:  # keep langgraph an optional dependency
         "Install it with: pip install 'saidex[langgraph]'."
     ) from exc
 
-from json_repair import repair_json
 from langchain_core.tools import BaseTool
-from langchain_core.tools import tool as _as_tool
 
-from .extractor import _strip_code_fences, _strip_thinking_tags, extract_data
-from .models import (
-    ExtractionMode,
-    FieldIssue,
-    ToolCallOutcome,
-    ToolCallStats,
-    ToolNodeEvent,
-    ToolNodeStats,
+from ._tool_calls import (
+    CallContext,
+    CallPlan,
+    OnUnresolved,
+    ToolCallPipeline,
+    ToolCallValidationError,
+    ToolValidator,
 )
+from .models import ExtractionMode, ToolCallValidatorContext, ToolNodeEvent, UnresolvedToolCall
 from .observability import dispatch_tool_node_event
-from .retry import RetryConfig
-from .sync import _run_sync
-from .utils import create_instance_with_issues
+from .sync import _run_blocking
 
 __all__ = [
+    "OnUnresolved",
     "SaidexToolNode",
     "ToolCallValidationError",
+    "ToolCallValidatorContext",
+    "ToolValidator",
+    "UnresolvedToolCall",
 ]
-
-logger = logging.getLogger(__name__)
 
 #: Sentinel meaning "let the stock ToolNode keep its own default".
 _UNSET: Any = object()
 
 OnInvalid = Literal["feedback", "correct", "raise"]
 
-#: Network-level retry config for the correction cycle's ``extract_data`` call.
-#: The cycle already has its own bounded retry budget (``max_correction_retries``
-#: validation attempts) — silently layering transport-level retries on top of
-#: that would make a failing correction slow and non-deterministic instead of
-#: falling straight through to the feedback policy, and would let a mock
-#: model's raised exceptions be retried instead of surfacing immediately in
-#: tests. Corrections never retry on network errors either way.
-_NO_NETWORK_RETRY = RetryConfig(
-    max_retries=0, retry_delays=[], retryable_exceptions=(), rate_limit_exceptions=()
-)
-
 
 @dataclasses.dataclass
-class _CallPlan:
-    """Per-call working state for one node invocation."""
+class _Prepared:
+    """Everything the pre-execution phase decided for one invocation."""
 
-    call: dict[str, Any]
-    from_invalid: bool = False
-    raw_entry: dict[str, Any] | None = None
-    raw_args: str | None = None
-    repaired: bool = False
-    recoverable: bool = True
-    prevalidated: bool = False
-    schema: type[BaseModel] | None = None
-    error_text: str | None = None
-    issues: tuple[FieldIssue, ...] = ()
-    executable: bool = False
-    #: ``""`` is the pre-dispatch default; the dispatch loop in ``_arun``
-    #: finalizes every plan to one of the four real ``ToolCallOutcome``
-    #: values before stats are built — see ``_finalized_outcome``, which
-    #: turns that invariant into a type-checked narrowing at the point
-    #: ``ToolCallStats`` is constructed.
-    outcome: ToolCallOutcome | Literal[""] = ""
-    correction_retries: int = 0
-    #: False when the call carries no ``id`` at all. A ``ToolMessage`` requires
-    #: a ``tool_call_id``, so an id-less call has no way to be answered — it
-    #: must not get a fabricated-id feedback message, and must be dropped (not
-    #: kept as an orphaned malformed entry) when sanitizing.
-    answerable: bool = True
-    #: True when the call has an id but no ``name`` — it CAN be answered (the
-    #: id is real), but no tool name may be fabricated into the feedback
-    #: message or the sanitized history.
-    missing_name: bool = False
-
-
-class ToolCallValidationError(Exception):
-    """Raised by ``on_invalid="raise"`` before any tool call is executed.
-
-    Attributes:
-        failures: One ``(tool_name, tool_call_id, error_text)`` triple per
-            invalid call, in original call order.
-    """
-
-    def __init__(self, failures: Sequence[tuple[str, str | None, str]]) -> None:
-        self.failures = tuple(failures)
-        lines = [
-            f"- {name} (id={call_id}): {error.splitlines()[0]}"
-            for name, call_id, error in self.failures
-        ]
-        super().__init__(
-            f"Tool-call validation failed for {len(self.failures)} call(s):\n" + "\n".join(lines)
-        )
+    shape: str
+    ai_message: AIMessage
+    plans: list[CallPlan]
+    feedback: list[BaseMessage]
+    execute: bool
+    inner_input: Any
 
 
 class SaidexToolNode(Runnable[Any, Any]):
@@ -180,8 +129,8 @@ class SaidexToolNode(Runnable[Any, Any]):
     failing correction degrades deterministically instead of retrying
     silently on top of its own retry budget. A transient provider error
     (e.g. a 429) on a correction call therefore does not retry at the
-    transport level either: it degrades straight to the ``"feedback"``
-    policy for that call rather than crashing the node.
+    transport level either: the call is left unresolved and follows
+    ``on_unresolved`` rather than crashing the node.
 
     **Send-API fan-out payloads bypass the pipeline entirely.** LangGraph's
     ``Send("tools", tool_call)`` fan-out delivers either a bare
@@ -189,38 +138,60 @@ class SaidexToolNode(Runnable[Any, Any]):
     already-extracted ``ToolCall`` with no surrounding ``AIMessage`` to
     repair, validate, correct or sanitize. These two shapes are detected up
     front (see :func:`_is_send_api_payload`) and delegated straight to the
-    internal stock ``ToolNode`` with ``config``/``kwargs`` passed through
-    unmodified; the result is returned unchanged. No ``ToolNodeEvent`` is
-    emitted on this path — no ``_CallPlan`` ever exists to report, consistent
-    with "we did not process any call" (the same convention the ``"raise"``
-    policy's fail-fast path follows).
+    internal stock ``ToolNode`` (``invoke`` or ``ainvoke``) with
+    ``config``/``kwargs`` passed through unmodified; the result is returned
+    unchanged. No ``ToolNodeEvent`` is emitted on this path — no ``CallPlan``
+    ever exists to report, consistent with "we did not process any call" (the
+    same convention the ``on_unresolved="raise"`` path follows).
 
     Args:
         tools: The tools available for execution — ``BaseTool`` instances or
             plain callables, exactly as accepted by the stock ``ToolNode``.
-        on_invalid: Policy for calls whose arguments fail validation or cannot
-            be recovered: ``"feedback"`` (default) answers with a corrective
-            ``ToolMessage``; ``"correct"`` runs a bounded LLM correction cycle
-            before executing; ``"raise"`` raises
-            :class:`ToolCallValidationError` before executing anything.
-        correction_model: Chat model driving the ``"correct"`` cycle.  Required
-            when ``on_invalid="correct"``.
-        max_correction_retries: LLM attempts per call in the correction cycle.
+        correction_model: Chat model that corrects invalid calls inside the
+            node. ``None`` (default) leaves correction to the agent: invalid
+            calls are answered with structured feedback and the agent re-issues
+            them in its next turn. When set, the correction conversation never
+            enters graph state.
+        max_correction_retries: LLM attempts per call in the correction cycle;
+            must be at least 1 when ``correction_model`` is set.
         correction_mode: Extraction mode for the correction cycle — use
             :attr:`~saidex.ExtractionMode.JSON` for models without tool calling.
+        correct_missing_fields: By default a call missing a required field is
+            answered with feedback so the agent fills it in; set True to let the
+            correction model fill it from the conversation instead. A call whose
+            arguments contain keys the schema does not know is always corrected
+            (likely a misnamed field).
+        correction_context_messages: How many messages before the AIMessage the
+            correction model sees, as text (system messages excluded, each cut to
+            2,000 characters), plus the AIMessage's own text. 0 disables the context.
+        on_unresolved: What happens to calls that stay invalid: ``"feedback"``
+            (default) answers them with an error ``ToolMessage``; ``"raise"``
+            raises :class:`ToolCallValidationError` before any call executes;
+            or a hook (sync or async) receiving an :class:`UnresolvedToolCall`
+            that returns salvaged args (dict, re-validated, then executed), a
+            custom feedback text (str) or None (default feedback); an exception
+            raised by the hook propagates.
+        validators: Per-tool validators keyed by tool name. Each is called as
+            ``fn(args, ctx)`` with the validated arguments model and a
+            :class:`ToolCallValidatorContext`, sync or async, and returns a
+            :data:`~saidex.ValidatorResult` like ``extract_data``'s ``validator=``.
+            They run after Pydantic validation — on the model's own args, inside
+            the correction cycle and on salvaged args — and never at execution
+            time. ``interrupt()`` inside a validator pauses the graph as usual.
         strip_thinking: Strip ``<think>`` blocks from raw invalid-call args
             before parsing.
         json_repair: Apply ``json-repair`` to raw invalid-call args that do not
             parse as JSON.
         sanitize_messages: Return an updated copy of the ``AIMessage`` (same
-            ``id``) whose tool calls carry the repaired/corrected args, so the
-            standard ``add_messages`` reducer replaces the malformed message in
-            state.  Set to ``False`` for message channels with a plain append
-            reducer.  Only ``tool_calls``/``invalid_tool_calls`` are rewritten,
-            never ``AIMessage.content`` — fully effective for providers that
-            serialize from ``tool_calls`` (e.g. ``langchain-openai``), but
-            content-block providers (Anthropic-style) may still re-serialize
-            the original, unsanitized ``tool_use`` block from ``content``.
+            ``id``), so the standard ``add_messages`` reducer replaces the
+            malformed message in state.  For every repaired, corrected or
+            salvaged call, ``tool_calls``, the matching tool-call content blocks
+            (``tool_use``, ``tool_call``, ``invalid_tool_call``,
+            ``function_call``) and OpenAI's raw ``additional_kwargs["tool_calls"]``
+            carry the final args.  Calls answered with feedback stay untouched,
+            since their feedback message references the call id.  Set to
+            ``False`` for message channels with a plain append reducer, where
+            the update would duplicate the message.
         name: Node name, forwarded to the inner ``ToolNode``.  Must be
             non-empty (whitespace-only names are rejected too), since it is
             also used verbatim as ``ToolNodeEvent.node_name``.
@@ -228,16 +199,22 @@ class SaidexToolNode(Runnable[Any, Any]):
         handle_tool_errors: Forwarded to the inner ``ToolNode`` when given;
             otherwise the stock default stays active.
         messages_key: State key holding the message list.
+        on_invalid: Deprecated v1 policy. ``"feedback"`` disables correction,
+            ``"correct"`` enables it, ``"raise"`` means ``on_unresolved="raise"``
+            without correction. Emits a ``DeprecationWarning``.
     """
 
     def __init__(
         self,
         tools: Sequence[BaseTool | Callable[..., Any]],
         *,
-        on_invalid: OnInvalid = "feedback",
         correction_model: Any = None,
         max_correction_retries: int = 2,
         correction_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+        correct_missing_fields: bool = False,
+        correction_context_messages: int = 10,
+        on_unresolved: OnUnresolved = "feedback",
+        validators: Mapping[str, ToolValidator] | None = None,
         strip_thinking: bool = True,
         json_repair: bool = True,
         sanitize_messages: bool = True,
@@ -245,13 +222,26 @@ class SaidexToolNode(Runnable[Any, Any]):
         tags: list[str] | None = None,
         handle_tool_errors: Any = _UNSET,
         messages_key: str = "messages",
+        on_invalid: OnInvalid | None = None,
     ) -> None:
-        if on_invalid not in ("feedback", "correct", "raise"):
-            raise ValueError(
-                f"on_invalid must be 'feedback', 'correct' or 'raise', got {on_invalid!r}"
+        if on_invalid is not None:
+            correction_model, on_unresolved = _apply_deprecated_on_invalid(
+                on_invalid, correction_model, on_unresolved
             )
-        if on_invalid == "correct" and correction_model is None:
-            raise ValueError("on_invalid='correct' requires a correction_model")
+        if not (on_unresolved in ("feedback", "raise") or callable(on_unresolved)):
+            raise ValueError(
+                f"on_unresolved must be 'feedback', 'raise' or a callable, got {on_unresolved!r}"
+            )
+        if correction_model is not None and max_correction_retries < 1:
+            raise ValueError(
+                "max_correction_retries must be at least 1 when a correction_model is set, "
+                f"got {max_correction_retries!r}"
+            )
+        if correction_context_messages < 0:
+            raise ValueError(
+                "correction_context_messages must not be negative, "
+                f"got {correction_context_messages!r}"
+            )
         if not name.strip():
             raise ValueError(f"name must not be empty or whitespace-only, got {name!r}")
 
@@ -268,22 +258,42 @@ class SaidexToolNode(Runnable[Any, Any]):
         # `or "tools"` fallback that would silently rename an explicitly
         # empty name (see the constructor's ValueError above).
         self._node_name: str = name
-        self._on_invalid: OnInvalid = on_invalid
-        self._correction_model = correction_model
-        self._max_correction_retries = max_correction_retries
-        self._correction_mode = correction_mode
-        self._strip_thinking = strip_thinking
-        self._json_repair = json_repair
         self._sanitize_messages = sanitize_messages
         self._messages_key = messages_key
-        self._tools_by_name = _build_registry(tools)
+        self._pipeline = ToolCallPipeline(
+            tools,
+            correction_model=correction_model,
+            max_correction_retries=max_correction_retries,
+            correction_mode=correction_mode,
+            correct_missing_fields=correct_missing_fields,
+            correction_context_messages=correction_context_messages,
+            strip_thinking=strip_thinking,
+            json_repair=json_repair,
+            on_unresolved=on_unresolved,
+            validators=validators,
+            passthrough_exceptions=(GraphBubbleUp,),
+        )
+        for tool_name in validators or {}:
+            if tool_name not in self._pipeline.tool_names:
+                raise ValueError(
+                    f"validators has no tool named {tool_name!r}; "
+                    f"known tools: {sorted(self._pipeline.tool_names)}"
+                )
+            if self._pipeline.schema_for(tool_name) is None:
+                raise ValueError(
+                    f"validators[{tool_name!r}]: the tool has no Pydantic argument schema, "
+                    "so there is no model instance to validate"
+                )
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
-        """Synchronous entry point; bridges to :meth:`ainvoke` on a fresh event loop.
+        """Synchronous entry point.
 
-        See :meth:`ainvoke` for the full pipeline description (input shapes
-        accepted, output shape produced). Not usable from inside an already
-        running event loop — call :meth:`ainvoke` there instead.
+        Repair, validation, correction and ``on_unresolved`` run through a
+        blocking bridge (also inside an already running event loop, e.g.
+        ``graph.invoke`` from a Jupyter cell). Valid calls then execute on the
+        stock ``ToolNode``'s sync path: a thread pool bounded by
+        ``config["max_concurrency"]``, so ``max_concurrency=1`` runs them one
+        after another. Async-only tools fail here exactly as with the stock node.
 
         Args:
             input: Graph state — a message list, a dict containing
@@ -294,15 +304,16 @@ class SaidexToolNode(Runnable[Any, Any]):
         Returns:
             Tool results in the same shape the stock ``ToolNode`` produces, as
             described in :meth:`ainvoke`.
-
-        Raises:
-            RuntimeError: If called from inside an already running event loop.
         """
-        return _run_sync(
-            self._arun(input, config, **kwargs),
-            sync_name="SaidexToolNode.invoke",
-            async_name="SaidexToolNode.ainvoke",
+        if _is_send_api_payload(input):
+            return self._inner.invoke(input, config, **kwargs)
+        prepared = _run_blocking(self._prepare(input, config))
+        inner_output = (
+            self._inner.invoke(prepared.inner_input, config, **kwargs) if prepared.execute else None
         )
+        output, event = self._finish(prepared, inner_output)
+        _run_blocking(dispatch_tool_node_event(event))
+        return output
 
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         """Repair, validate and execute the last ``AIMessage``'s tool calls.
@@ -316,68 +327,55 @@ class SaidexToolNode(Runnable[Any, Any]):
         Returns:
             Tool results in the same shape the stock ``ToolNode`` produces
             (list input → message list, otherwise ``{messages_key: [...]}``),
-            plus policy feedback messages and, when ``sanitize_messages``
+            plus feedback messages and, when ``sanitize_messages``
             applies, the updated ``AIMessage``.
         """
-        return await self._arun(input, config, **kwargs)
-
-    # ------------------------------------------------------------------
-    # Core pipeline
-    # ------------------------------------------------------------------
-
-    async def _arun(self, input: Any, config: RunnableConfig | None, **kwargs: Any) -> Any:
         if _is_send_api_payload(input):
             # No AIMessage exists in either shape — nothing to repair, validate
             # or sanitize — so this is a pure pass-through. See the class
             # docstring's "Send-API fan-out payloads" note for the stats
             # decision (no ToolNodeEvent on this path).
             return await self._inner.ainvoke(input, config, **kwargs)
+        prepared = await self._prepare(input, config)
+        inner_output = (
+            await self._inner.ainvoke(prepared.inner_input, config, **kwargs)
+            if prepared.execute
+            else None
+        )
+        output, event = self._finish(prepared, inner_output)
+        await dispatch_tool_node_event(event)
+        return output
+
+    # ------------------------------------------------------------------
+    # Core pipeline
+    # ------------------------------------------------------------------
+
+    async def _prepare(self, input: Any, config: RunnableConfig | None) -> _Prepared:
+        """Plan, correct and resolve the calls — everything before execution."""
         messages, shape = _extract_messages(input, self._messages_key)
         ai_message, ai_index = _last_ai_message(messages)
-        plans = self._plan_calls(ai_message)
-
-        if self._on_invalid == "raise":
-            failures = [
-                (plan.call["name"], plan.call.get("id"), plan.error_text or "invalid tool call")
-                for plan in plans
-                if not plan.executable
-            ]
-            if failures:
-                raise ToolCallValidationError(failures)
-
-        if self._on_invalid == "correct":
-            callbacks: Callbacks = (config or {}).get("callbacks")
-            for plan in plans:
-                # Unanswerable (id-less) plans are never corrected: there is
-                # no tool_call_id to answer with even if the correction
-                # succeeds, so a "corrected" id-less plan would still have to
-                # be dropped — see the id-less handling in _plan_calls.
-                if not plan.executable and plan.answerable:
-                    await self._correct_plan(plan, callbacks)
-
-        feedback: list[BaseMessage] = []
-        for plan in plans:
-            if plan.executable:
-                if not plan.outcome:
-                    plan.outcome = "executed"
-            elif plan.answerable:
-                plan.outcome = "feedback"
-                feedback.append(self._feedback_message(plan))
-            else:
-                plan.outcome = "dropped"
+        ctx = CallContext(messages=tuple(messages), ai_index=ai_index, state=input)
+        plans = await self._pipeline.plan(ai_message, ctx)
+        await self._pipeline.correct(
+            plans,
+            ctx,
+            callbacks=(config or {}).get("callbacks"),
+            max_concurrency=(config or {}).get("max_concurrency"),
+        )
+        feedback: list[BaseMessage] = list(await self._pipeline.resolve(plans, ctx))
 
         executable_calls = [plan.call for plan in plans if plan.executable]
-        inner_output: Any = None
+        inner_input: Any = None
         if executable_calls:
-            # A correction mutates plan.call["args"] in place without touching
-            # plan.repaired (that flag means "deterministically recovered from
-            # invalid_tool_calls" — see ToolCallStats.repaired), so it must be
-            # counted here explicitly. Otherwise a corrected call originating
+            # A correction or salvage mutates plan.call["args"] in place
+            # without touching plan.repaired (that flag means
+            # "deterministically recovered from invalid_tool_calls"), so both
+            # outcomes must be counted here explicitly. Otherwise such a call
             # from tool_calls (same id count, repaired=False) would look
             # unchanged and the inner node would run the ORIGINAL bad args.
-            changed = any(plan.repaired or plan.outcome == "corrected" for plan in plans) or len(
-                executable_calls
-            ) != len(ai_message.tool_calls)
+            changed = any(
+                plan.repaired or plan.outcome in ("corrected", "salvaged") for plan in plans
+            ) or len(executable_calls) != len(ai_message.tool_calls)
             if changed:
                 delegated = ai_message.model_copy(
                     update={"tool_calls": executable_calls, "invalid_tool_calls": []}
@@ -387,328 +385,35 @@ class SaidexToolNode(Runnable[Any, Any]):
                 )
             else:
                 inner_input = input
-            inner_output = await self._inner.ainvoke(inner_input, config, **kwargs)
+        return _Prepared(
+            shape=shape,
+            ai_message=ai_message,
+            plans=plans,
+            feedback=feedback,
+            execute=bool(executable_calls),
+            inner_input=inner_input,
+        )
 
-        extra: list[BaseMessage] = list(feedback)
-        sanitized = self._sanitize_message(ai_message, plans)
-        if sanitized is not None:
-            extra.append(sanitized)
-
+    def _finish(self, prepared: _Prepared, inner_output: Any) -> tuple[Any, ToolNodeEvent]:
+        """Merge executor output with feedback and the sanitized message; build the event."""
+        extra: list[BaseMessage] = list(prepared.feedback)
+        if self._sanitize_messages and prepared.ai_message.id is not None:
+            sanitized = self._pipeline.sanitize(prepared.ai_message, prepared.plans)
+            if sanitized is not None:
+                extra.append(sanitized)
         order = {
             call_id: index
             for index, call_id in enumerate(
-                [c.get("id") for c in ai_message.tool_calls]
-                + [c.get("id") for c in ai_message.invalid_tool_calls]
+                [c.get("id") for c in prepared.ai_message.tool_calls]
+                + [c.get("id") for c in prepared.ai_message.invalid_tool_calls]
             )
             if call_id is not None
         }
-
-        stats = ToolNodeStats(
-            calls=tuple(
-                ToolCallStats(
-                    tool_name=str(plan.call.get("name") or ""),
-                    tool_call_id=plan.call.get("id"),
-                    outcome=_finalized_outcome(plan.outcome),
-                    repaired=plan.repaired,
-                    prevalidated=plan.prevalidated,
-                    correction_retries=plan.correction_retries,
-                    field_issues=plan.issues,
-                )
-                for plan in plans
-            )
+        event = ToolNodeEvent(
+            node_name=self._node_name, stats=self._pipeline.build_stats(prepared.plans)
         )
-        await dispatch_tool_node_event(ToolNodeEvent(node_name=self._node_name, stats=stats))
-
-        return _merge_output(inner_output, extra, shape, self._messages_key, order)
-
-    async def _correct_plan(self, plan: _CallPlan, callbacks: Callbacks) -> None:
-        """Run the LLM correction cycle for one invalid, answerable call, mutating *plan*.
-
-        On success the plan becomes executable with the corrected args and
-        ``plan.outcome`` is set to ``"corrected"``; on failure the plan is left
-        exactly as invalid as it was, so the feedback policy still applies —
-        a failed correction must never crash the node. The correction
-        conversation (prompt, retries, intermediate responses) is private to
-        this call and never reaches graph state: only the corrected args (via
-        ``plan.call``) survive, never the messages that produced them.
-
-        Args:
-            plan: The invalid, answerable plan to correct (must not already be
-                executable — callers only invoke this for plans that failed
-                pre-validation or could not be parsed at all).
-            callbacks: Callbacks pulled from the node's ``RunnableConfig`` so
-                correction LLM calls nest under the node's tracing span.
-        """
-        name = plan.call["name"]
-        schema = plan.schema or self._pydantic_schema_for(name)
-        if schema is None:
-            # No known schema to correct against (e.g. a malformed call that
-            # never carried a tool name) — leave the plan invalid; feedback
-            # applies.
-            return
-        raw = (
-            plan.raw_args
-            if plan.raw_args is not None
-            else json.dumps(plan.call["args"], ensure_ascii=False, default=str)
-        )
-        prompt = (
-            f"An AI agent produced an invalid call to the tool '{name}'.\n\n"
-            f"Invalid arguments:\n{raw}\n\n"
-            + (f"Validation errors:\n{plan.error_text}\n\n" if plan.error_text else "")
-            + "Return the corrected tool arguments. Preserve the original intent; "
-            "change only what is needed to satisfy the schema."
-        )
-        try:
-            instance, stats = await extract_data(
-                self._correction_model,
-                schema,
-                [HumanMessage(content=prompt)],
-                mode=self._correction_mode,
-                max_primary_retries=self._max_correction_retries,
-                retry_config=_NO_NETWORK_RETRY,
-                callbacks=callbacks,
-                _notify_observers=False,
-            )
-            plan.correction_retries = stats.primary_retries
-            if instance is None:
-                logger.warning(
-                    "SaidexToolNode: correction cycle failed for tool call %r (id=%r)",
-                    name,
-                    plan.call.get("id"),
-                )
-                return
-            # exclude_unset=True reports only what the correction model actually
-            # supplied, not schema defaults it never touched — the tool then
-            # sees the same shape of args a well-formed call would have
-            # produced. Stays inside this try: a tool schema with a custom
-            # serializer can raise here too, and that must degrade to the
-            # feedback policy exactly like an extract_data failure — not
-            # crash the node.
-            corrected_args = instance.model_dump(exclude_unset=True)
-        except Exception as exc:
-            # extract_data degrades most failures to (None, stats) internally,
-            # but a model that rejects tool binding outright (e.g. bind_tools
-            # raising NotImplementedError for a chat model without tool-calling
-            # support — exactly the case correction_mode=JSON exists for) is
-            # only guarded for TypeError inside extractor._try_with_model and
-            # otherwise propagates. A correction failure must never crash the
-            # node, so catch broadly here and fall through to the feedback
-            # policy — but Exception, not BaseException, so cancellation
-            # (asyncio.CancelledError) and KeyboardInterrupt still propagate.
-            logger.warning(
-                "SaidexToolNode: correction cycle raised for tool call %r (id=%r): %s",
-                name,
-                plan.call.get("id"),
-                exc,
-            )
-            return
-        plan.call["args"] = corrected_args
-        # Deliberately NOT plan.repaired = True: that flag means
-        # "deterministically recovered from invalid_tool_calls" (see
-        # ToolCallStats.repaired) — an LLM correction is a distinct outcome
-        # category ("corrected", set below), not a repair.
-        plan.recoverable = True
-        plan.prevalidated = True
-        plan.executable = True
-        plan.outcome = "corrected"
-
-    def _plan_calls(self, message: AIMessage) -> list[_CallPlan]:
-        """Classify every call on *message* into an executable/invalid plan."""
-        plans: list[_CallPlan] = []
-        for call in message.tool_calls:
-            plans.append(_CallPlan(call=dict(call)))
-        for entry in message.invalid_tool_calls:
-            raw = entry.get("args") or ""
-            name = entry.get("name")
-            # Empty string normalizes to None here too, matching the
-            # truthiness of the repair gate right below and the falsy-based
-            # drop check further down — an entry with id="" is treated as
-            # having no id everywhere, not just wherever this variable is read.
-            entry_id = entry.get("id") or None
-            repaired_args = (
-                _repair_raw_args(
-                    raw,
-                    strip_thinking=self._strip_thinking,
-                    use_json_repair=self._json_repair,
-                )
-                if name and entry_id
-                else None
-            )
-            if repaired_args is None:
-                plans.append(
-                    _CallPlan(
-                        call={
-                            "name": name or "",
-                            "args": {},
-                            "id": entry_id,
-                            "type": "tool_call",
-                        },
-                        from_invalid=True,
-                        raw_entry=dict(entry),
-                        raw_args=raw,
-                        recoverable=False,
-                        # An id but no name CAN be answered (real tool_call_id
-                        # to respond to); no id means there is nothing to
-                        # respond to at all — see the general id check below,
-                        # which also covers this without duplicating it here.
-                        missing_name=bool(entry_id) and not name,
-                        error_text=str(entry.get("error") or "malformed tool call"),
-                    )
-                )
-                continue
-            plans.append(
-                _CallPlan(
-                    call={
-                        "name": name,
-                        "args": repaired_args,
-                        "id": entry_id,
-                        "type": "tool_call",
-                    },
-                    from_invalid=True,
-                    raw_entry=dict(entry),
-                    raw_args=raw,
-                    repaired=True,
-                )
-            )
-
-        for plan in plans:
-            if not plan.call.get("id"):
-                # A ToolMessage requires a tool_call_id, so a call with no id
-                # — or an empty string, treated the same — has no way to be
-                # answered, regardless of whether it came from tool_calls or
-                # invalid_tool_calls (both allow id: str | None). Do not
-                # fabricate an empty-id ToolMessage; the sanitizer drops the
-                # entry (see _sanitize_message) so history carries neither an
-                # orphan result nor an unanswerable call.
-                logger.warning(
-                    "SaidexToolNode: dropping a tool call with no id (name=%r); "
-                    "a ToolMessage cannot be produced without a tool_call_id, "
-                    "so this call will not be executed, answered, or retained "
-                    "in sanitized history",
-                    plan.call.get("name"),
-                )
-                plan.answerable = False
-                plan.recoverable = False
-                continue
-            if not plan.recoverable:
-                continue
-            schema = self._pydantic_schema_for(plan.call["name"])
-            if schema is None:
-                # Unknown tool or non-Pydantic schema: the executor's own
-                # validation and error handling stay authoritative.
-                plan.executable = True
-                continue
-            plan.schema = schema
-            plan.prevalidated = True
-            try:
-                _, issues, error_text = create_instance_with_issues(schema, **plan.call["args"])
-            except TypeError as exc:
-                # Only a malformed-args TypeError (non-mapping args, or a dict
-                # with non-string keys) is something a model can be asked to
-                # correct. Anything else is a genuine bug and must propagate
-                # rather than being laundered into model-facing feedback.
-                issues, error_text = [], f"arguments not valid: {exc}"
-            if error_text is None:
-                plan.executable = True
-            else:
-                plan.issues = tuple(issues)
-                plan.error_text = error_text
-        return plans
-
-    def _pydantic_schema_for(self, name: str) -> type[BaseModel] | None:
-        """Return tool *name*'s Pydantic args schema, or ``None`` if unknown/non-Pydantic."""
-        tool = self._tools_by_name.get(name)
-        schema = getattr(tool, "tool_call_schema", None) if tool is not None else None
-        if isinstance(schema, type) and issubclass(schema, BaseModel):
-            return schema
-        return None
-
-    def _feedback_message(self, plan: _CallPlan) -> ToolMessage:
-        """Build the corrective ``ToolMessage`` for an invalid call.
-
-        Only called for *answerable* plans (``plan.answerable`` is True), which
-        guarantees ``plan.call["id"]`` is a real id — see ``_CallPlan.answerable``.
-        An id-less call cannot be answered at all and never reaches here.
-        """
-        call_id = plan.call["id"]
-        if plan.missing_name:
-            # The id is real but no tool name was ever provided, so there is
-            # nothing to fabricate a ``name`` from — omit it rather than
-            # inventing a placeholder that would misrepresent history.
-            content = (
-                "Your tool call carried no tool name and could not be "
-                "identified, so it was NOT executed.\n"
-                f"Provider error: {plan.error_text}\n"
-                f"Raw arguments received:\n{(plan.raw_args or '')[:500]}\n"
-                "Call the tool again, including a valid tool name."
-            )
-            return ToolMessage(content=content, tool_call_id=call_id, status="error")
-
-        name = plan.call["name"]
-        if not plan.recoverable:
-            schema = self._pydantic_schema_for(name)
-            schema_hint = ""
-            if schema is not None:
-                fields = ", ".join(schema.model_fields)
-                schema_hint = f"\nExpected arguments for '{name}': {fields}."
-            content = (
-                f"The arguments of your call to tool '{name}' could not be parsed "
-                f"as a single JSON object and the call was NOT executed. Arguments "
-                f"must be a JSON object — a JSON list or a bare scalar value (e.g. "
-                f"a string or number) is not acceptable, even if it is valid JSON.\n"
-                f"Provider error: {plan.error_text}\n"
-                f"Raw arguments received:\n{(plan.raw_args or '')[:500]}\n"
-                f"{schema_hint}\n"
-                f"Call the tool again with a single valid JSON object as arguments."
-            )
-        else:
-            content = (
-                f"The arguments for tool call '{name}' did not match the tool's "
-                f"schema and the call was NOT executed.\n\n{plan.error_text}\n\n"
-                f"Call the tool again with corrected arguments that fix every "
-                f"issue above."
-            )
-        return ToolMessage(
-            content=content,
-            name=name,
-            tool_call_id=call_id,
-            status="error",
-        )
-
-    def _sanitize_message(self, message: AIMessage, plans: list[_CallPlan]) -> AIMessage | None:
-        """Return an updated ``AIMessage`` only when its calls actually changed.
-
-        Rebuilds the ``tool_calls``/``invalid_tool_calls`` the message would
-        carry after repair/validation and compares them structurally against
-        the original — an id-less entry, whether it originated in
-        ``tool_calls`` or ``invalid_tool_calls``, is dropped entirely (nothing
-        can answer it, see ``_CallPlan.answerable``), while every other
-        from-invalid, non-executable entry keeps its raw form so it still
-        matches the feedback ``ToolMessage`` that answered it. Returning
-        ``None`` when nothing actually differs avoids emitting an inert copy
-        (same content, new identity) — e.g. when the only thing that happened
-        was repairing an entry into a dict that is still schema-invalid, so
-        its raw, unrepaired form ends up right back in ``invalid_tool_calls``.
-        """
-        if not self._sanitize_messages or message.id is None:
-            return None
-        tool_calls = [plan.call for plan in plans if not plan.from_invalid and plan.answerable]
-        tool_calls += [plan.call for plan in plans if plan.from_invalid and plan.executable]
-        invalid_tool_calls = [
-            plan.raw_entry
-            for plan in plans
-            if plan.from_invalid
-            and not plan.executable
-            and plan.answerable
-            and plan.raw_entry is not None
-        ]
-        if tool_calls == list(message.tool_calls) and invalid_tool_calls == list(
-            message.invalid_tool_calls
-        ):
-            return None
-        return message.model_copy(
-            update={"tool_calls": tool_calls, "invalid_tool_calls": invalid_tool_calls}
-        )
+        output = _merge_output(inner_output, extra, prepared.shape, self._messages_key, order)
+        return output, event
 
 
 # ---------------------------------------------------------------------------
@@ -716,25 +421,30 @@ class SaidexToolNode(Runnable[Any, Any]):
 # ---------------------------------------------------------------------------
 
 
-def _build_registry(
-    tools: Sequence[BaseTool | Callable[..., Any]],
-) -> dict[str, BaseTool]:
-    """Map tool names to ``BaseTool`` instances for schema lookup.
-
-    Plain callables are converted with :func:`langchain_core.tools.tool`, the
-    same conversion the stock node applies.  A tool that cannot be converted is
-    skipped: its calls are passed through unvalidated and the inner node's own
-    handling applies, so registry gaps only reduce pre-validation coverage.
-    """
-    registry: dict[str, BaseTool] = {}
-    for candidate in tools:
-        try:
-            base = candidate if isinstance(candidate, BaseTool) else _as_tool(candidate)
-        except Exception as exc:  # degrade to pass-through
-            logger.warning("could not build schema registry entry for %r: %s", candidate, exc)
-            continue
-        registry[base.name] = base
-    return registry
+def _apply_deprecated_on_invalid(
+    on_invalid: Any, correction_model: Any, on_unresolved: OnUnresolved
+) -> tuple[Any, OnUnresolved]:
+    """Translate the deprecated v1 ``on_invalid`` policy into the v2 parameters."""
+    warnings.warn(
+        "SaidexToolNode(on_invalid=...) is deprecated and will be removed in a future "
+        "release. Pass correction_model= to let SAIDEX correct invalid calls, and "
+        "on_unresolved= for calls that stay invalid.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    if on_invalid not in ("feedback", "correct", "raise"):
+        raise ValueError(f"on_invalid must be 'feedback', 'correct' or 'raise', got {on_invalid!r}")
+    if on_unresolved != "feedback":
+        raise ValueError(
+            "on_invalid cannot be combined with on_unresolved; use on_unresolved alone"
+        )
+    if on_invalid == "correct":
+        if correction_model is None:
+            raise ValueError("on_invalid='correct' requires a correction_model")
+        return correction_model, "feedback"
+    if on_invalid == "raise":
+        return None, "raise"
+    return None, "feedback"
 
 
 def _is_send_api_payload(input: Any) -> bool:
@@ -754,21 +464,6 @@ def _is_send_api_payload(input: Any) -> bool:
     if isinstance(input, list) and input and isinstance(input[-1], dict):
         return input[-1].get("type") == "tool_call"
     return isinstance(input, dict) and input.get("__type") == "tool_call_with_context"
-
-
-def _finalized_outcome(outcome: ToolCallOutcome | Literal[""]) -> ToolCallOutcome:
-    """Narrow a finalized ``_CallPlan.outcome`` to the public ``ToolCallOutcome``.
-
-    ``""`` only ever exists as ``_CallPlan.outcome``'s pre-dispatch default —
-    the dispatch loop in ``_arun`` sets every plan's outcome to one of the
-    four real values before stats are built (see the loop right after the
-    ``on_invalid == "correct"`` branch). This turns that invariant into an
-    explicit, type-checked guarantee instead of silently letting an
-    unfinalized ``""`` leak into the public ``ToolCallStats`` API.
-    """
-    if not outcome:
-        raise AssertionError("SaidexToolNode: _CallPlan.outcome was never finalized")
-    return outcome
 
 
 def _is_rebuildable_object_state(input: Any) -> bool:
@@ -830,23 +525,6 @@ def _last_ai_message(messages: Sequence[BaseMessage]) -> tuple[AIMessage, int]:
     raise ValueError("SaidexToolNode expects an AIMessage in state")
 
 
-def _repair_raw_args(
-    raw: str, *, strip_thinking: bool, use_json_repair: bool
-) -> dict[str, Any] | None:
-    """Deterministically recover an args dict from a malformed raw string."""
-    text = _strip_thinking_tags(raw) if strip_thinking else raw
-    text = _strip_code_fences(text.strip())
-    if not text:
-        return None
-    try:
-        parsed: Any = json.loads(text)
-    except ValueError:  # json.JSONDecodeError is a ValueError subclass
-        if not use_json_repair:
-            return None
-        parsed = repair_json(text, return_objects=True)
-    return parsed if isinstance(parsed, dict) else None
-
-
 def _substitute_message(
     input: Any,
     messages: Sequence[BaseMessage],
@@ -898,7 +576,7 @@ def _order_tool_messages(messages: list[BaseMessage], order: dict[str, int]) -> 
 def _extra_update(
     extra_messages: list[BaseMessage], shape: str, messages_key: str, order: dict[str, int]
 ) -> Any:
-    """Order policy messages into original call order, then shape them to match
+    """Order feedback messages into original call order, then shape them to match
     the caller's input (bare list vs. ``{messages_key: [...]}``) — the same
     convention stock ``ToolNode._combine_tool_outputs`` uses for the
     non-``Command`` outputs it mixes into a ``Command``-bearing list.
@@ -914,10 +592,10 @@ def _merge_output(
     messages_key: str,
     order: dict[str, int],
 ) -> Any:
-    """Combine the inner node's output with policy messages, mirroring shape.
+    """Combine the inner node's output with feedback messages, mirroring shape.
 
     ``Command`` objects (and any other non-message elements the inner node
-    returns) are passed through unchanged; policy messages are ordered and
+    returns) are passed through unchanged; feedback messages are ordered and
     shaped via :func:`_extra_update` in that case, so the original-call-order
     guarantee and the list/dict input shape both survive a ``Command`` return.
     """
