@@ -962,6 +962,13 @@ class ToolCallPipeline:
         (same content, new identity) — e.g. when the only thing that happened
         was repairing an entry into a dict that is still schema-invalid, so
         its raw, unrepaired form ends up right back in ``invalid_tool_calls``.
+
+        For every executed call whose args changed (repaired, corrected,
+        salvaged) it also rewrites matching tool-call content blocks
+        (``tool_use``, ``tool_call``, ``invalid_tool_call``, ``function_call``)
+        and OpenAI Chat Completions raw ``additional_kwargs["tool_calls"]``, so
+        the stored message carries no trace of the malformed arguments. Feedback
+        calls stay untouched — their id must keep matching the feedback message.
         """
         tool_calls = [plan.call for plan in plans if not plan.from_invalid and plan.answerable]
         tool_calls += [plan.call for plan in plans if plan.from_invalid and plan.executable]
@@ -973,12 +980,29 @@ class ToolCallPipeline:
             and plan.answerable
             and plan.raw_entry is not None
         ]
-        if tool_calls == list(message.tool_calls) and invalid_tool_calls == list(
-            message.invalid_tool_calls
+        rewritten = {
+            str(plan.call["id"]): plan.call
+            for plan in plans
+            if plan.executable
+            and plan.call.get("id")
+            and (plan.repaired or plan.outcome in ("corrected", "salvaged"))
+        }
+        content = _rewrite_content(message.content, rewritten)
+        additional_kwargs = _rewrite_additional_kwargs(message.additional_kwargs, rewritten)
+        if (
+            tool_calls == list(message.tool_calls)
+            and invalid_tool_calls == list(message.invalid_tool_calls)
+            and content is message.content
+            and additional_kwargs is message.additional_kwargs
         ):
             return None
         return message.model_copy(
-            update={"tool_calls": tool_calls, "invalid_tool_calls": invalid_tool_calls}
+            update={
+                "tool_calls": tool_calls,
+                "invalid_tool_calls": invalid_tool_calls,
+                "content": content,
+                "additional_kwargs": additional_kwargs,
+            }
         )
 
     def build_stats(self, plans: list[CallPlan]) -> ToolNodeStats:
@@ -1010,6 +1034,80 @@ class ToolCallPipeline:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+def _rewrite_content(
+    content: str | list[str | dict[Any, Any]],
+    rewritten: Mapping[str, dict[str, Any]],
+) -> str | list[str | dict[Any, Any]]:
+    """Put the final args of *rewritten* calls into tool-call content blocks.
+
+    Returns *content* itself when nothing changed, so callers can compare by
+    identity.
+    """
+    if not rewritten or isinstance(content, str):
+        return content
+    blocks = [_rewrite_block(block, rewritten) for block in content]
+    if all(new is old for new, old in zip(blocks, content, strict=True)):
+        return content
+    return blocks
+
+
+def _rewrite_block(
+    block: str | dict[Any, Any], rewritten: Mapping[str, dict[str, Any]]
+) -> str | dict[Any, Any]:
+    """One content block with the final args of its call, or the block itself."""
+    if not isinstance(block, dict):
+        return block
+    kind = block.get("type")
+    if kind == "function_call":
+        key = block.get("call_id") if block.get("call_id") in rewritten else block.get("id")
+        call = rewritten.get(key) if isinstance(key, str) else None
+        if call is None:
+            return block
+        return {
+            **block,
+            "arguments": json.dumps(call["args"], ensure_ascii=False, default=str),
+        }
+    block_id = block.get("id")
+    call = rewritten.get(block_id) if isinstance(block_id, str) else None
+    if call is None:
+        return block
+    if kind == "tool_use":
+        updated = {key: value for key, value in block.items() if key != "partial_json"}
+        updated["input"] = dict(call["args"])
+        return updated
+    if kind == "tool_call":
+        return {**block, "args": dict(call["args"])}
+    if kind == "invalid_tool_call":
+        return {
+            "type": "tool_call",
+            "id": call["id"],
+            "name": call["name"],
+            "args": dict(call["args"]),
+        }
+    return block
+
+
+def _rewrite_additional_kwargs(
+    additional_kwargs: dict[str, Any], rewritten: Mapping[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Rewrite OpenAI Chat Completions raw ``tool_calls`` arguments; same object if unchanged."""
+    raw_calls = additional_kwargs.get("tool_calls")
+    if not rewritten or not isinstance(raw_calls, list):
+        return additional_kwargs
+    changed = False
+    new_calls: list[Any] = []
+    for raw in raw_calls:
+        raw_id = raw.get("id") if isinstance(raw, dict) else None
+        call = rewritten.get(raw_id) if isinstance(raw_id, str) else None
+        if call is not None and isinstance(raw.get("function"), dict):
+            arguments = json.dumps(call["args"], ensure_ascii=False, default=str)
+            new_calls.append({**raw, "function": {**raw["function"], "arguments": arguments}})
+            changed = True
+        else:
+            new_calls.append(raw)
+    return {**additional_kwargs, "tool_calls": new_calls} if changed else additional_kwargs
 
 
 def _build_registry(

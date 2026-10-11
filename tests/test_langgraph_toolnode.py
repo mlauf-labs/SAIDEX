@@ -2284,3 +2284,35 @@ async def test_sync_invoke_inside_running_loop_with_async_hook_and_validator() -
     node = SaidexToolNode([add], on_unresolved=hook, validators={"add": no_negative})
     result = node.invoke(_ok_state(a=-1), runtime=_NO_GRAPH_RUNTIME)
     assert _tool_messages(result)[0].content == "2"
+
+
+@pytest.mark.asyncio
+async def test_sanitize_rewrites_anthropic_tool_use_block_after_repair() -> None:
+    raw = '{"a": 2, "b": 3'
+    message = AIMessage(
+        content=[
+            {"type": "text", "text": "Adding."},
+            {"type": "tool_use", "id": "c1", "name": "add", "input": {}, "partial_json": raw},
+        ],
+        id="ai-1",
+        invalid_tool_calls=[_invalid("add", raw, "c1")],
+    )
+    result = await SaidexToolNode([add]).ainvoke({"messages": [message]}, runtime=_NO_GRAPH_RUNTIME)
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.content[1] == {  # type: ignore[index]
+        "type": "tool_use",
+        "id": "c1",
+        "name": "add",
+        "input": {"a": 2, "b": 3},
+    }
+
+
+@pytest.mark.asyncio
+async def test_sanitize_keeps_content_of_feedback_calls() -> None:
+    block = {"type": "tool_use", "id": "c1", "name": "add", "input": {"a": "x", "b": 1}}
+    message = AIMessage(
+        content=[block], id="ai-1", tool_calls=[_call("add", {"a": "x", "b": 1}, "c1")]
+    )
+    result = await SaidexToolNode([add]).ainvoke({"messages": [message]}, runtime=_NO_GRAPH_RUNTIME)
+    assert _ai_of(result) is None
