@@ -33,14 +33,16 @@ from .models import (
     ExtractorRunStats,
     FailureReason,
     FieldIssue,
+    ModelErrorKind,
     ToolCallConfig,
     ValidationIssue,
     ValidatorContext,
     _combine_candidates,
     _combine_failure_reasons,
+    _combine_llm_error_kinds,
 )
 from .observability import dispatch_to_observers
-from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
+from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, classify_model_error, with_retry
 from .utils import _format_validation_error, create_instance_with_issues
 
 if TYPE_CHECKING:
@@ -793,7 +795,10 @@ async def extract_data(
         if salvaged is not None:
             logger.info("on_exhausted salvaged a result for %s.", schema.__name__)
             return await _finish(
-                salvaged, replace(stats, success=True, failure_reason=None, salvaged=True)
+                salvaged,
+                replace(
+                    stats, success=True, failure_reason=None, salvaged=True, llm_error_kind=None
+                ),
             )
         if invalid is not None:
             stats = replace(stats, field_issues=(*stats.field_issues, invalid))
@@ -895,6 +900,13 @@ async def extract_data(
                     failure_reason=_combine_failure_reasons(
                         primary.failure_reason, fallback.failure_reason, success=False
                     ),
+                    llm_error_kind=_combine_llm_error_kinds(
+                        primary.failure_reason,
+                        primary.llm_error_kind,
+                        fallback.failure_reason,
+                        fallback.llm_error_kind,
+                        success=False,
+                    ),
                     format_errors=combined_format_errors,
                     field_issues=combined_issues,
                     last_candidate=last_candidate,
@@ -914,6 +926,7 @@ async def extract_data(
                 primary_retries=primary.retries,
                 schema_name=schema.__name__,
                 failure_reason=primary.failure_reason,
+                llm_error_kind=primary.llm_error_kind,
                 format_errors=primary.format_errors,
                 field_issues=tuple(primary.field_issues),
                 last_candidate=last_candidate,
@@ -1537,7 +1550,10 @@ async def run_extractor_agent(
         if salvaged is not None:
             logger.info("on_exhausted salvaged a result for agent loop (%s).", schema.__name__)
             return await _finish(
-                salvaged, replace(stats, success=True, failure_reason=None, salvaged=True)
+                salvaged,
+                replace(
+                    stats, success=True, failure_reason=None, salvaged=True, llm_error_kind=None
+                ),
             )
         if invalid is not None:
             stats = replace(stats, field_issues=(*stats.field_issues, invalid))
@@ -1611,6 +1627,13 @@ async def run_extractor_agent(
                     fallback_stats.failure_reason,
                     success=succeeded,
                 ),
+                llm_error_kind=_combine_llm_error_kinds(
+                    primary_stats.failure_reason,
+                    primary_stats.llm_error_kind,
+                    fallback_stats.failure_reason,
+                    fallback_stats.llm_error_kind,
+                    success=succeeded,
+                ),
                 format_errors=primary_stats.format_errors + fallback_stats.format_errors,
                 field_issues=(*primary_stats.field_issues, *fallback_stats.field_issues),
                 last_candidate=last_candidate,
@@ -1669,6 +1692,7 @@ def _common_outputs(result: Any, stats: ExtractDataStats | ExtractorRunStats) ->
         "result": result,
         "success": stats.success,
         "failure_reason": None if stats.failure_reason is None else stats.failure_reason.value,
+        "llm_error_kind": None if stats.llm_error_kind is None else stats.llm_error_kind.value,
         "fallback_used": stats.fallback_used,
         "has_last_candidate": stats.last_candidate is not None,
         "salvaged": stats.salvaged,
@@ -1742,6 +1766,7 @@ async def _run_extractor_agent_with_model(
     agent_issues: list[FieldIssue] = []
     format_errors = 0
     failure_reason: FailureReason | None = None
+    llm_error_kind: ModelErrorKind | None = None
     candidate: MODEL_T | None = None
     rejection: tuple[FieldIssue, ...] = ()
 
@@ -1753,6 +1778,9 @@ async def _run_extractor_agent_with_model(
             success=success,
             schema_name=schema.__name__,
             failure_reason=None if success else reason,
+            llm_error_kind=(
+                None if success or reason is not FailureReason.LLM_ERROR else llm_error_kind
+            ),
             format_errors=format_errors,
             field_issues=tuple(agent_issues),
             last_candidate=None if success else candidate,
@@ -1777,6 +1805,7 @@ async def _run_extractor_agent_with_model(
         except Exception as exc:
             logger.error("%s: agent loop LLM invocation error: %s", model_label, exc)
             failure_reason = FailureReason.LLM_ERROR
+            llm_error_kind = classify_model_error(exc)
             break
 
         iterations += 1
@@ -2155,6 +2184,7 @@ class _ModelAttempt(Generic[MODEL_T]):
         candidate: The most recent schema-valid instance rejected by grounding
             or the external validator, kept across later failures.
         rejection: The retry-level issues that rejected :attr:`candidate`.
+        llm_error_kind: Kind of the model error when ``failure_reason`` is ``llm_error``.
     """
 
     instance: MODEL_T | None
@@ -2164,6 +2194,7 @@ class _ModelAttempt(Generic[MODEL_T]):
     failure_reason: FailureReason | None
     candidate: MODEL_T | None = None
     rejection: tuple[FieldIssue, ...] = ()
+    llm_error_kind: ModelErrorKind | None = None
 
 
 def _last_candidate(
@@ -2227,7 +2258,14 @@ async def _try_with_model(
                     schema.__name__,
                     exc,
                 )
-                return _ModelAttempt(None, 0, [], 0, FailureReason.LLM_ERROR)
+                return _ModelAttempt(
+                    None,
+                    0,
+                    [],
+                    0,
+                    FailureReason.LLM_ERROR,
+                    llm_error_kind=ModelErrorKind.INVALID_REQUEST,
+                )
             logger.warning(
                 "%s: model does not accept the tool-binding flags for %s (%s) — "
                 "re-binding with relaxed flags.",
@@ -2245,7 +2283,14 @@ async def _try_with_model(
                     schema.__name__,
                     relaxed_exc,
                 )
-                return _ModelAttempt(None, 0, [], 0, FailureReason.LLM_ERROR)
+                return _ModelAttempt(
+                    None,
+                    0,
+                    [],
+                    0,
+                    FailureReason.LLM_ERROR,
+                    llm_error_kind=ModelErrorKind.INVALID_REQUEST,
+                )
     else:
         schema_label = schema.__name__
         llm = llm_model
@@ -2302,6 +2347,7 @@ async def _try_with_model(
                         FailureReason.LLM_ERROR,
                         candidate,
                         rejection,
+                        llm_error_kind=ModelErrorKind.INVALID_REQUEST,
                     )
                 # Deliberately no ``remaining -= 1``: the relaxed re-bind is a
                 # transport-level correction, not a failed extraction attempt.
@@ -2313,7 +2359,14 @@ async def _try_with_model(
                 exc,
             )
             return _ModelAttempt(
-                None, retries, issues, format_errors, FailureReason.LLM_ERROR, candidate, rejection
+                None,
+                retries,
+                issues,
+                format_errors,
+                FailureReason.LLM_ERROR,
+                candidate,
+                rejection,
+                classify_model_error(exc),
             )
 
         # --- Extract candidate arguments (mode-specific) ---

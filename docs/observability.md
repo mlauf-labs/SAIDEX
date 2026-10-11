@@ -28,7 +28,7 @@ result, stats = await extract_data(
 ```
 
 **What reaches the handlers:** the chain-run span closes with the validated
-result and run metrics (`success`, `failure_reason`, `salvaged`, …) as its outputs — the same data the handler already sees
+result and run metrics (`success`, `failure_reason`, `llm_error_kind`, `salvaged`, …) as its outputs — the same data the handler already sees
 inside the LLM generations, packaged once per extraction. The raw source text
 is **not** part of the trace unless you opt in with `capture_source_text=True`,
 which then also includes it in the span's inputs. If your handler exports to an
