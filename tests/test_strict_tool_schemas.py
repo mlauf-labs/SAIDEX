@@ -5,13 +5,14 @@ from __future__ import annotations
 import dataclasses
 import logging
 from enum import Enum
-from typing import Any, Dict, Literal, Optional, TypedDict  # noqa: UP035
+from typing import Any, Dict, Literal, Optional  # noqa: UP035
 
 import pydantic
 import pytest
 from langchain_core.messages import HumanMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field
+from typing_extensions import TypedDict
 
 from saidex import ExtractionMode, ToolCallConfig, extract_data
 from saidex import extractor as _extractor
