@@ -645,6 +645,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#strict-tool-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strict tool schemas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#automatic-recovery" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1406,6 +1417,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#strict-tool-schemas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Strict tool schemas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#automatic-recovery" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1660,10 +1682,48 @@ Both cases are expressible:</p>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Gateway 400s on the parameter itself — omit it, keep everything else</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">tool_config</span><span class="o">=</span><span class="n">ToolCallConfig</span><span class="p">(</span><span class="n">strict</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
 </code></pre></div>
+<h3 id="strict-tool-schemas">Strict tool schemas<a class="headerlink" href="#strict-tool-schemas" title="Permanent link">&para;</a></h3>
+<p>With <code>strict=True</code> (the default <code>ToolCallConfig.OPENAI</code>) the schema tool is
+really sent as a strict structured-output tool: <code>"strict": true</code> on the
+function, <code>additionalProperties: false</code> at every object level, <strong>every property
+listed in <code>required</code></strong>, and the unsupported <code>default</code> keyword removed (a
+removed default is appended to the property's <code>description</code>, e.g.
+<code>Default: 0</code>, so the model still sees it).</p>
+<p>What this changes for your schemas:</p>
+<ul>
+<li>Optional fields are nullable unions and always present, so the model sends
+  <code>null</code> for a value it does not have instead of omitting the key.  An
+  <code>Optional[int] = 5</code> field therefore becomes <code>None</code>, <strong>not</strong> <code>5</code>.</li>
+<li>Fields with a default must be sent explicitly by the model.</li>
+<li><code>mode="before"</code> validators that check for a <em>missing</em> key now see <code>null</code>.</li>
+</ul>
+<p>If omission semantics matter for your schema, use
+<code>tool_config=ToolCallConfig.COMPATIBLE</code> (or <code>ExtractionMode.JSON</code>).  Some
+integrations also log their own warnings for strict keywords they ignore (for
+example langchain-google-genai: "Key 'additionalProperties' is not supported in
+schema, ignoring"); <code>COMPATIBLE</code> avoids those too.</p>
+<p>Some shapes cannot be expressed in strict mode.  For those, SAIDEX binds the
+plain (non-strict) schema instead and logs <strong>one warning per schema</strong> naming the
+reason (later calls log at DEBUG):</p>
+<ul>
+<li><code>dict[...]</code> / bare <code>dict</code> / <code>Mapping</code> fields, at any depth (free-form keys
+  would collapse to an empty object);</li>
+<li><code>Any</code> / <code>object</code> fields and <code>TypedDict</code> types (optional keys);</li>
+<li>recursive models (a model reachable from itself);</li>
+<li>fields whose default is pydantic's <code>MISSING</code> sentinel (strict makes every
+  field required, so it could never be omitted).</li>
+</ul>
+<p>Dataclass fields are inspected like model fields.</p>
+<p>If a provider rejects the strict schema anyway (for example an HTTP 400 such as
+"Invalid schema for function ..." or Anthropic's "Schema is too complex for
+compilation"), SAIDEX logs a warning and re-binds the plain schema <strong>once</strong>,
+keeping <code>tool_choice</code> and <code>parallel_tool_calls</code>, without consuming a validation
+retry.  This costs one extra failed request per call for such schemas; avoid it
+by choosing <code>COMPATIBLE</code> or JSON mode up front.  <code>auto_relax=False</code> disables it.</p>
 <h3 id="automatic-recovery">Automatic recovery<a class="headerlink" href="#automatic-recovery" title="Permanent link">&para;</a></h3>
 <p>You usually do not have to configure anything.  When a provider rejects the
 bound flags — an HTTP 400 naming <code>strict</code> / <code>tool_choice</code> /
-<code>parallel_tool_calls</code>, or a <code>TypeError</code> from a <code>bind_tools</code> implementation that
+<code>parallel_tool_calls</code>, a 400 saying the tool schema is invalid, or a <code>TypeError</code> from a <code>bind_tools</code> implementation that
 never accepted them — SAIDEX re-binds the schema tool <strong>once</strong> with
 <code>ToolCallConfig.COMPATIBLE</code>, logs a warning, and carries on <strong>without consuming a
 validation retry</strong>.  A second failure ends the attempt as <code>llm_error</code> as before.</p>
