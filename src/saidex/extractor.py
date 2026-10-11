@@ -10,7 +10,7 @@ import re
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
 
 from json_repair import repair_json
 from langchain_core.callbacks.base import Callbacks
@@ -208,6 +208,83 @@ async def _run_external_validator(
         return [], None
     issues = await _call_validator(validator, instance, schema_name)
     return _to_field_issues(issues, schema_name), _validator_feedback(issues)
+
+
+@dataclass(frozen=True)
+class _CandidateCheck:
+    """Outcome of the post-validation checks on one schema-valid candidate.
+
+    Attributes:
+        issues: Every finding (``"retry"`` and ``"flag"``), stamped with the
+            attempt index — grounding findings first, then validator findings.
+        feedback: Feedback text for the model, or ``None`` when accepted.
+        stage: The check that rejected the candidate, or ``None`` when accepted.
+    """
+
+    issues: list[FieldIssue]
+    feedback: str | None
+    stage: Literal["grounding", "validator"] | None
+
+
+async def _check_candidate(
+    instance: MODEL_T,
+    *,
+    attempt: int,
+    source_text: str | None,
+    validator: Validator[MODEL_T] | None,
+    schema_name: str,
+) -> _CandidateCheck:
+    """Run source grounding, then the external validator, on a schema-valid *instance*.
+
+    The one post-validation pipeline shared by :func:`_try_with_model` and both
+    final-answer branches of the agent loop.  The validator runs only when
+    grounding accepted the instance, so it never sees a value that is not in
+    the source text.
+
+    Args:
+        instance: The instance that already passed Pydantic validation.
+        attempt: Attempt index stamped onto every issue.
+        source_text: Text to ground against; falsy disables grounding.
+        validator: The caller's external validator, or ``None``.
+        schema_name: Stamped onto each issue.
+
+    Returns:
+        A :class:`_CandidateCheck`; ``feedback is None`` means accepted.
+    """
+    grounding_issues, grounding_feedback = collect_field_check_issues(
+        instance, source_text, schema_name
+    )
+    issues = [replace(i, attempt=attempt) for i in grounding_issues]
+    if grounding_feedback is not None:
+        return _CandidateCheck(issues, grounding_feedback, "grounding")
+    validator_issues, validator_feedback = await _run_external_validator(
+        validator, instance, schema_name
+    )
+    issues.extend(replace(i, attempt=attempt) for i in validator_issues)
+    if validator_feedback is not None:
+        return _CandidateCheck(issues, validator_feedback, "validator")
+    return _CandidateCheck(issues, None, None)
+
+
+def _final_answer_rejection(
+    stage: Literal["grounding", "validator"] | None,
+    feedback: str,
+    final_tool_name: str,
+    *,
+    at_limit: bool,
+) -> str:
+    """ToolMessage text for a tool-calling final answer rejected after schema validation."""
+    if stage == "grounding":
+        if at_limit:
+            return f"Grounding failed: {feedback}"
+        return f"{feedback}\n\nPlease call '{final_tool_name}' again with corrected values."
+    if at_limit:
+        return f"External validation failed: {feedback}"
+    return (
+        f"The final answer is structurally valid but failed an additional "
+        f"validation check:\n\n{feedback}\n\n"
+        f"Please call '{final_tool_name}' again with corrected values."
+    )
 
 
 def _source_text_from_messages(messages: list[BaseMessage]) -> str:
@@ -1324,48 +1401,40 @@ async def _run_extractor_agent_with_model(
                     validation_retries += 1
                     continue
                 assert instance is not None
-                grounding_issues, grounding_error = collect_field_check_issues(
-                    instance, source_text, schema.__name__
+                check = await _check_candidate(
+                    instance,
+                    attempt=validation_retries,
+                    source_text=source_text,
+                    validator=validator,
+                    schema_name=schema.__name__,
                 )
-                agent_issues.extend(
-                    replace(i, attempt=validation_retries) for i in grounding_issues
-                )
-                if grounding_error is not None:
+                agent_issues.extend(check.issues)
+                if check.feedback is not None:
                     failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
                         break
-                    logger.warning(
-                        "%s: agent loop JSON final answer failed grounding: %s",
-                        model_label,
-                        grounding_error,
-                    )
-                    messages.append(HumanMessage(content=grounding_error))
-                    validation_retries += 1
-                    continue
-                validator_issues, validator_error = await _run_external_validator(
-                    validator, instance, schema.__name__
-                )
-                agent_issues.extend(
-                    replace(i, attempt=validation_retries) for i in validator_issues
-                )
-                if validator_error is not None:
-                    failure_reason = FailureReason.VALIDATION_EXHAUSTED
-                    if validation_retries >= max_validation_retries:
-                        break
-                    logger.warning(
-                        "%s: agent loop JSON final answer failed external validation: %s",
-                        model_label,
-                        validator_error,
-                    )
-                    messages.append(
-                        HumanMessage(
-                            content=(
-                                f"The JSON output is structurally valid but failed an "
-                                f"additional validation check:\n\n{validator_error}\n\n"
-                                f"Please correct it and return only the fixed JSON object."
+                    if check.stage == "grounding":
+                        logger.warning(
+                            "%s: agent loop JSON final answer failed grounding: %s",
+                            model_label,
+                            check.feedback,
+                        )
+                        messages.append(HumanMessage(content=check.feedback))
+                    else:
+                        logger.warning(
+                            "%s: agent loop JSON final answer failed external validation: %s",
+                            model_label,
+                            check.feedback,
+                        )
+                        messages.append(
+                            HumanMessage(
+                                content=(
+                                    f"The JSON output is structurally valid but failed an "
+                                    f"additional validation check:\n\n{check.feedback}\n\n"
+                                    f"Please correct it and return only the fixed JSON object."
+                                )
                             )
                         )
-                    )
                     validation_retries += 1
                     continue
                 logger.debug("%s: agent loop JSON final answer validated.", model_label)
@@ -1469,68 +1538,36 @@ async def _run_extractor_agent_with_model(
                         validation_retries += 1
                 else:
                     assert instance is not None
-                    grounding_issues, grounding_error = collect_field_check_issues(
-                        instance, source_text, schema.__name__
+                    check = await _check_candidate(
+                        instance,
+                        attempt=validation_retries,
+                        source_text=source_text,
+                        validator=validator,
+                        schema_name=schema.__name__,
                     )
-                    agent_issues.extend(
-                        replace(i, attempt=validation_retries) for i in grounding_issues
-                    )
-                    if grounding_error is not None:
-                        failure_reason = FailureReason.VALIDATION_EXHAUSTED
-                        if validation_retries >= max_validation_retries:
-                            tool_result_messages.append(
-                                ToolMessage(
-                                    content=f"Grounding failed: {grounding_error}",
-                                    tool_call_id=tc_id,
-                                )
-                            )
-                        else:
-                            tool_result_messages.append(
-                                ToolMessage(
-                                    content=(
-                                        f"{grounding_error}\n\n"
-                                        f"Please call '{final_tool_name}' again with corrected "
-                                        f"values."
-                                    ),
-                                    tool_call_id=tc_id,
-                                )
-                            )
-                            validation_retries += 1
-                        continue
-                    validator_issues, validator_error = await _run_external_validator(
-                        validator, instance, schema.__name__
-                    )
-                    agent_issues.extend(
-                        replace(i, attempt=validation_retries) for i in validator_issues
-                    )
-                    if validator_error is not None:
-                        failure_reason = FailureReason.VALIDATION_EXHAUSTED
-                        if validation_retries >= max_validation_retries:
-                            tool_result_messages.append(
-                                ToolMessage(
-                                    content=f"External validation failed: {validator_error}",
-                                    tool_call_id=tc_id,
-                                )
-                            )
-                        else:
-                            tool_result_messages.append(
-                                ToolMessage(
-                                    content=(
-                                        f"The final answer is structurally valid but failed an "
-                                        f"additional validation check:\n\n{validator_error}\n\n"
-                                        f"Please call '{final_tool_name}' again with corrected "
-                                        f"values."
-                                    ),
-                                    tool_call_id=tc_id,
-                                )
-                            )
-                            validation_retries += 1
-                    else:
+                    agent_issues.extend(check.issues)
+                    if check.feedback is None:
                         tool_result_messages.append(
                             ToolMessage(content="Final answer accepted.", tool_call_id=tc_id)
                         )
                         found_final_answer = instance
                         final_answer_valid = True
+                    else:
+                        failure_reason = FailureReason.VALIDATION_EXHAUSTED
+                        at_limit = validation_retries >= max_validation_retries
+                        tool_result_messages.append(
+                            ToolMessage(
+                                content=_final_answer_rejection(
+                                    check.stage,
+                                    check.feedback,
+                                    final_tool_name,
+                                    at_limit=at_limit,
+                                ),
+                                tool_call_id=tc_id,
+                            )
+                        )
+                        if not at_limit:
+                            validation_retries += 1
 
             # ── Helper tool ───────────────────────────────────────────────
             else:
@@ -1850,51 +1887,46 @@ async def _try_with_model(
             continue
 
         assert instance is not None
-        grounding_issues, grounding_error = collect_field_check_issues(
-            instance, source_text, schema.__name__
+        check = await _check_candidate(
+            instance,
+            attempt=retries,
+            source_text=source_text,
+            validator=validator,
+            schema_name=schema.__name__,
         )
-        # Record every grounding issue (including advisory ``flag`` ones); only a
-        # ``retry`` failure produces feedback and re-enters the loop below.
-        issues.extend(replace(i, attempt=retries) for i in grounding_issues)
-        if grounding_error is not None:
-            logger.warning(
-                "%s: grounding failed for %s (attempt %d/%d):\n%s",
-                model_label,
-                schema.__name__,
-                retries + 1,
-                max_retries,
-                grounding_error,
-            )
+        # Record every finding (including advisory ``flag`` ones); only a
+        # rejection produces feedback and re-enters the loop.
+        issues.extend(check.issues)
+        if check.feedback is not None:
             failure_reason = FailureReason.VALIDATION_EXHAUSTED
-            messages.append(HumanMessage(content=grounding_error))
-            retries += 1
-            remaining -= 1
-            continue
-
-        validator_issues, validator_error = await _run_external_validator(
-            validator, instance, schema.__name__
-        )
-        # Like grounding: record every finding, retry only on a "retry" one.
-        issues.extend(replace(i, attempt=retries) for i in validator_issues)
-        if validator_error is not None:
-            logger.warning(
-                "%s: external validation failed for %s (attempt %d/%d): %s",
-                model_label,
-                schema.__name__,
-                retries + 1,
-                max_retries,
-                validator_error,
-            )
-            failure_reason = FailureReason.VALIDATION_EXHAUSTED
-            messages.append(
-                HumanMessage(
-                    content=(
-                        f"The extracted data is structurally valid but failed an additional "
-                        f"validation check:\n\n{validator_error}\n\n"
-                        f"Return a corrected response that resolves the problem above."
+            if check.stage == "grounding":
+                logger.warning(
+                    "%s: grounding failed for %s (attempt %d/%d):\n%s",
+                    model_label,
+                    schema.__name__,
+                    retries + 1,
+                    max_retries,
+                    check.feedback,
+                )
+                messages.append(HumanMessage(content=check.feedback))
+            else:
+                logger.warning(
+                    "%s: external validation failed for %s (attempt %d/%d): %s",
+                    model_label,
+                    schema.__name__,
+                    retries + 1,
+                    max_retries,
+                    check.feedback,
+                )
+                messages.append(
+                    HumanMessage(
+                        content=(
+                            f"The extracted data is structurally valid but failed an additional "
+                            f"validation check:\n\n{check.feedback}\n\n"
+                            f"Return a corrected response that resolves the problem above."
+                        )
                     )
                 )
-            )
             retries += 1
             remaining -= 1
             continue
