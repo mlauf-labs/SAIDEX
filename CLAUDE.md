@@ -9,7 +9,7 @@
 
 **SAIDEX** (`saidex`) is a LangChain-native Python library that turns any chat model into a reliable structured-data extractor. It drives the LLM via tool-calling or raw JSON mode, validates output with Pydantic, and retries with field-level error feedback.
 
-- **Language:** Python 3.10+  
+- **Language:** Python 3.11+  
 - **Package manager:** [uv](https://docs.astral.sh/uv/) — never use `pip` or `pip install` directly  
 - **Core dependencies:** `pydantic >= 2`, `langchain-core >= 0.2`, `json-repair`  
 - **Public API:** `src/saidex/__init__.py` — everything exported there is stable and must stay fully typed  
