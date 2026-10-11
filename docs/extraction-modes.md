@@ -189,12 +189,14 @@ parser is tolerant of common deviations:
 - **Reasoning blocks** — `reasoning` / `thinking` blocks are skipped, even when
   they carry their payload under a `text` key, so a model's private chain of
   thought never reaches the JSON parser.
-
 - **Malformed JSON** — comments (`//`, `/* */`), missing commas, unquoted keys,
   single quotes and truncated output are repaired before validation.
-- **Array-wrapped object** — a single object inside an array (`[{ ... }]`) is
-  accepted. A reply with several objects is not guessed at: it is sent back with
-  a request for exactly one object.
+- **Top-level arrays** — handled against the schema. If the schema's only field is a
+  list of models (such as the container used by `extract_data_list`), a bare array is
+  wrapped into that field. A single object in an array is unwrapped when it shares at
+  least one key with the schema. Several objects are never guessed at: the reply is sent
+  back with a request for exactly one object, and any other array gets the generic
+  "not a JSON object" correction.
 
 !!! warning "Truncated string values"
     A string cut off by `max_tokens` is kept as repaired (`"Mathematician and wri"`),
