@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import inspect
 import json
 import logging
@@ -20,6 +21,7 @@ from typing import (
     cast,
     get_args,
     get_origin,
+    get_type_hints,
 )
 
 import pydantic
@@ -32,6 +34,7 @@ from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import AliasChoices, BaseModel, Field, RootModel, ValidationError, create_model
 from pydantic.fields import FieldInfo
+from typing_extensions import is_typeddict
 
 from ._callbacks import _ChainRun
 from ._reasoning import (
@@ -2215,10 +2218,13 @@ async def _run_extractor_agent_with_model(
     return None, _stats(success=False, reason=failure_reason or FailureReason.VALIDATION_EXHAUSTED)
 
 
-#: Keyword arguments of ``bind_tools`` that limited providers are known to reject.
 #: pydantic's ``MISSING`` default sentinel (pydantic >= 2.14), else ``None``.
 _MISSING: Any = getattr(pydantic, "MISSING", None)
 
+#: Schemas (by qualified name) whose non-strict fallback was already warned about.
+_WARNED_FALLBACK: set[str] = set()
+
+#: Keyword arguments of ``bind_tools`` that limited providers are known to reject.
 _TOOL_FLAG_NAMES = ("strict", "tool_choice", "parallel_tool_calls")
 
 #: Substrings marking a *client* error (as opposed to a transport hiccup).  A
@@ -2238,46 +2244,77 @@ _BAD_REQUEST_MARKERS = (
 
 
 def _strip_defaults(node: Any, *, in_properties: bool = False) -> Any:
-    """Recursively drop JSON-Schema ``default`` keywords, keeping fields *named* ``default``."""
+    """Recursively drop JSON-Schema ``default`` keywords, keeping fields *named* ``default``.
+
+    A removed non-null default is appended to the node's ``description`` so the
+    model still sees the intended value.
+    """
     if isinstance(node, dict):
-        return {
+        out = {
             key: _strip_defaults(value, in_properties=key == "properties" and not in_properties)
             for key, value in node.items()
             if in_properties or key != "default"
         }
+        if not in_properties and node.get("default") is not None:
+            note = f"Default: {json.dumps(node['default'])}"
+            existing = out.get("description")
+            out["description"] = f"{existing} {note}" if existing else note
+        return out
     if isinstance(node, list):
         return [_strip_defaults(item) for item in node]
     return node
 
 
-def _annotation_incompatibility(annotation: Any, seen: set[type]) -> str | None:
+def _annotation_incompatibility(annotation: Any, stack: list[type]) -> str | None:
     """Reason a type annotation cannot be expressed in a strict schema, or ``None``."""
-    if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
-        return _model_incompatibility(annotation, seen)
+    if annotation is Any or annotation is object:
+        return "an Any/object-typed field"
+    if is_typeddict(annotation):
+        return "a TypedDict-typed field (optional keys cannot be expressed)"
+    if inspect.isclass(annotation):
+        if issubclass(annotation, BaseModel) or dataclasses.is_dataclass(annotation):
+            return _model_incompatibility(annotation, stack)
+        if issubclass(annotation, Mapping):
+            return "a dict/Mapping-typed field"
+        return None
     origin = get_origin(annotation)
-    if origin is None:
+    if origin is None or origin is Literal:
         return None
     if inspect.isclass(origin) and issubclass(origin, Mapping):
         return "a dict/Mapping-typed field"
-    if origin is Literal:
-        return None
     for arg in get_args(annotation):
-        reason = _annotation_incompatibility(arg, seen)
+        reason = _annotation_incompatibility(arg, stack)
         if reason is not None:
             return reason
     return None
 
 
-def _model_incompatibility(model: type[BaseModel], seen: set[type]) -> str | None:
-    if model in seen:
-        return None
-    seen.add(model)
-    for name, info in model.model_fields.items():
-        if _MISSING is not None and info.default is _MISSING:
-            return f"field '{name}' of {model.__name__} has a MISSING default (cannot be omitted)"
-        reason = _annotation_incompatibility(info.annotation, seen)
-        if reason is not None:
-            return f"field '{name}' of {model.__name__} is {reason}"
+def _model_fields(model: type) -> list[tuple[str, Any, Any]]:
+    """``(name, annotation, default)`` for a pydantic model or dataclass."""
+    if issubclass(model, BaseModel):
+        return [(n, i.annotation, i.default) for n, i in model.model_fields.items()]
+    try:
+        hints = get_type_hints(model)
+    except Exception:
+        hints = {}
+    return [
+        (f.name, hints.get(f.name, f.type), f.default) for f in dataclasses.fields(cast(Any, model))
+    ]
+
+
+def _model_incompatibility(model: type, stack: list[type]) -> str | None:
+    if model in stack:
+        return f"{model.__name__} is recursive (reachable from itself)"
+    stack.append(model)
+    try:
+        for name, annotation, default in _model_fields(model):
+            if _MISSING is not None and default is _MISSING:
+                return f"field '{name}' of {model.__name__} has a MISSING default"
+            reason = _annotation_incompatibility(annotation, stack)
+            if reason is not None:
+                return f"field '{name}' of {model.__name__} is {reason}"
+    finally:
+        stack.pop()
     return None
 
 
@@ -2285,8 +2322,9 @@ def _strict_incompatibility(schema: type[BaseModel]) -> str | None:
     """Why *schema* cannot be sent as a strict tool, or ``None`` when it can.
 
     Strict mode makes every property required and forbids free-form keys, so
-    ``dict[...]`` fields (at any depth) would collapse to ``{}`` and ``MISSING``
-    defaults could never be omitted.
+    ``dict[...]`` / ``Any`` / ``TypedDict`` fields (at any depth) would collapse
+    to ``{}`` or lose optional keys, ``MISSING`` defaults could never be omitted,
+    and recursive models cannot be expressed.
 
     Args:
         schema: The extraction schema.
@@ -2294,7 +2332,7 @@ def _strict_incompatibility(schema: type[BaseModel]) -> str | None:
     Returns:
         A human-readable reason, or ``None`` if strict binding is safe.
     """
-    return _model_incompatibility(schema, set())
+    return _model_incompatibility(schema, [])
 
 
 def _schema_tool(schema: type[BaseModel], *, strict: bool) -> dict[str, Any]:
@@ -2321,7 +2359,9 @@ def _bind_schema_tool(
     tool_name: str,
     config: ToolCallConfig,
     model_label: str = "",
-) -> Any:
+    *,
+    force_plain: bool = False,
+) -> tuple[Any, bool]:
     """Bind the tool for *schema* to *llm_model*, sending only the flags *config* asks for.
 
     A ``None`` field means the keyword argument is left out of the request
@@ -2336,15 +2376,21 @@ def _bind_schema_tool(
         tool_name: The tool's function name, used for a forced ``tool_choice``.
         config: Which flags to send, and with what values.
         model_label: Model name used in the fallback warning.
+        force_plain: Bind the plain (non-strict) tool even if *config* asks for
+            strict, keeping every other flag.
 
     Returns:
-        The bound chat model.
+        The bound chat model and whether the bound tool is a strict one.
     """
-    strict_schema = config.strict is True
+    strict_schema = config.strict is True and not force_plain
     if strict_schema:
         reason = _strict_incompatibility(schema)
         if reason is not None:
-            logger.warning(
+            key = f"{schema.__module__}.{schema.__qualname__}"
+            level = logging.DEBUG if key in _WARNED_FALLBACK else logging.WARNING
+            _WARNED_FALLBACK.add(key)
+            logger.log(
+                level,
                 "%s: %s cannot be sent as a strict tool schema (%s) — binding it non-strict. "
                 "Use ToolCallConfig.COMPATIBLE or ExtractionMode.JSON to silence this.",
                 model_label,
@@ -2362,7 +2408,7 @@ def _bind_schema_tool(
         kwargs["strict"] = config.strict and strict_schema
     if config.parallel_tool_calls is not None:
         kwargs["parallel_tool_calls"] = config.parallel_tool_calls
-    return llm_model.bind_tools([tool], **kwargs)
+    return llm_model.bind_tools([tool], **kwargs), strict_schema
 
 
 def _classify_invocation_error(
@@ -2390,14 +2436,28 @@ def _is_tool_flag_rejection(exc: BaseException) -> bool:
     keyword argument in the first place.
     """
     text = str(exc).lower()
-    if not any(flag in text for flag in (*_TOOL_FLAG_NAMES, "invalid schema")):
+    if not any(flag in text for flag in _TOOL_FLAG_NAMES):
         return False
+    return _is_client_error(exc)
+
+
+def _is_client_error(exc: BaseException) -> bool:
+    """Whether *exc* looks like the provider refusing the request (HTTP 400-ish)."""
     status = getattr(exc, "status_code", None)
     if status is None:
         status = getattr(getattr(exc, "response", None), "status_code", None)
     if status == 400:
         return True
+    text = str(exc).lower()
     return any(marker in text for marker in _BAD_REQUEST_MARKERS)
+
+
+def _is_strict_schema_rejection(exc: BaseException) -> bool:
+    """A client error that is not specifically about a tool-binding flag."""
+    if not _is_client_error(exc):
+        return False
+    text = str(exc).lower()
+    return "schema" in text or not any(flag in text for flag in _TOOL_FLAG_NAMES)
 
 
 @dataclass(frozen=True)
@@ -2475,15 +2535,24 @@ async def _try_with_model(
     #: provider that keeps refusing cannot spin the loop forever.
     relaxed = False
     relax_rebind: Callable[[], Any] | None = None
+    #: Whether the currently bound schema tool is a strict one, and whether it
+    #: was already swapped for the plain tool (a separate one-shot relaxation).
+    strict_bound = False
+    strict_relaxed = False
 
     if mode is ExtractionMode.TOOL_CALLING:
         schema_label: str = convert_to_openai_tool(schema)["function"]["name"]
         if flags.auto_relax:
-            relax_rebind = partial(
-                _bind_schema_tool, llm_model, schema, schema_label, ToolCallConfig.COMPATIBLE
-            )
+
+            def relax_rebind() -> Any:
+                return _bind_schema_tool(
+                    llm_model, schema, schema_label, ToolCallConfig.COMPATIBLE
+                )[0]
+
         try:
-            llm = _bind_schema_tool(llm_model, schema, schema_label, flags, model_label)
+            llm, strict_bound = _bind_schema_tool(
+                llm_model, schema, schema_label, flags, model_label
+            )
         except TypeError as exc:
             if relax_rebind is None or not _is_tool_flag_rejection(exc):
                 logger.error(
@@ -2508,6 +2577,7 @@ async def _try_with_model(
                 exc,
             )
             relaxed = True
+            strict_bound = False
             try:
                 llm = relax_rebind()
             except TypeError as relaxed_exc:
@@ -2558,6 +2628,41 @@ async def _try_with_model(
                     invoke_result.retry_count,
                 )
         except Exception as exc:
+            if (
+                flags.auto_relax
+                and strict_bound
+                and not strict_relaxed
+                and _is_strict_schema_rejection(exc)
+            ):
+                logger.warning(
+                    "%s: provider rejected the strict tool schema for %s (%s) — "
+                    "re-binding the plain schema and retrying.",
+                    model_label,
+                    schema.__name__,
+                    exc,
+                )
+                strict_relaxed = True
+                try:
+                    llm, strict_bound = _bind_schema_tool(
+                        llm_model, schema, schema_label, flags, model_label, force_plain=True
+                    )
+                except TypeError as plain_exc:
+                    logger.error(
+                        "%s: plain bind_tools also failed for %s: %s",
+                        model_label,
+                        schema.__name__,
+                        plain_exc,
+                    )
+                    return _ModelAttempt(
+                        None,
+                        retries,
+                        issues,
+                        format_errors,
+                        FailureReason.LLM_ERROR,
+                        candidate,
+                        rejection,
+                    )
+                continue
             if relax_rebind is not None and not relaxed and _is_tool_flag_rejection(exc):
                 logger.warning(
                     "%s: provider rejected the tool-calling flags for %s (%s) — "
@@ -2567,6 +2672,7 @@ async def _try_with_model(
                     exc,
                 )
                 relaxed = True
+                strict_bound = False
                 try:
                     llm = relax_rebind()
                 except TypeError as relaxed_exc:

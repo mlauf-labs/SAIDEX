@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Any, Dict, Literal, Optional, TypedDict  # noqa: UP035
 
 import pydantic
 import pytest
@@ -12,7 +13,8 @@ from langchain_core.messages import HumanMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field
 
-from saidex import ToolCallConfig, extract_data
+from saidex import ExtractionMode, ToolCallConfig, extract_data
+from saidex import extractor as _extractor
 
 from ._mock_llm import make_llm, make_response
 
@@ -223,20 +225,44 @@ async def test_compatible_binds_plain_dict() -> None:
     assert llm.bind_tools.call_args.kwargs == {"tool_choice": "auto"}
 
 
-class _InvalidSchemaError(Exception):
-    status_code = 400
+class _ClientError(Exception):
+    def __init__(self, message: str, status_code: int | None = 400) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
-async def test_rejected_strict_schema_relaxes_to_plain_tool() -> None:
-    bound_bad = make_llm([_InvalidSchemaError("Invalid schema for function 'OptStr': bad")])
-    bound_ok = make_llm([make_response([{"name": "OptStr", "args": {"x": "v"}, "id": "1"}])])
+def _llm_with_binds(*results: Any) -> Any:
+    """LLM whose n-th ``bind_tools`` call returns a bound model yielding results[n]."""
+    bounds = [make_llm(r if isinstance(r, list) else [r]).bind_tools.return_value for r in results]
     llm = make_llm([])
-    llm.bind_tools.side_effect = [
-        bound_bad.bind_tools.return_value,
-        bound_ok.bind_tools.return_value,
-    ]
+    llm.bind_tools.side_effect = bounds
+    return llm
 
-    result, stats = await extract_data(llm, OptStr, _msgs())
+
+def _ok(name: str, args: dict[str, Any]) -> Any:
+    return make_response([{"name": name, "args": args, "id": "1"}])
+
+
+@pytest.fixture(autouse=True)
+def _reset_warned() -> None:
+    _extractor._WARNED_FALLBACK.clear()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Schema is too complex for compilation.",
+        "'minimum' is not supported",
+        "Invalid schema for function 'OptStr': bad",
+    ],
+)
+async def test_rejected_strict_schema_relaxes_keeping_other_flags(
+    message: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    llm = _llm_with_binds(_ClientError(message), _ok("OptStr", {"x": "v"}))
+
+    with caplog.at_level(logging.WARNING, logger="saidex.extractor"):
+        result, stats = await extract_data(llm, OptStr, _msgs())
 
     assert stats.success
     assert result == OptStr(x="v")
@@ -244,4 +270,166 @@ async def test_rejected_strict_schema_relaxes_to_plain_tool() -> None:
     first, second = llm.bind_tools.call_args_list
     assert first.args[0][0]["function"]["strict"] is True
     assert second.args[0][0] == convert_to_openai_tool(OptStr)
-    assert "strict" not in second.kwargs
+    assert second.kwargs["tool_choice"] == "OptStr"
+    assert second.kwargs["parallel_tool_calls"] is False
+    assert second.kwargs.get("strict") is not True
+    assert any(message.lower()[:12] in r.getMessage().lower() for r in caplog.records)
+
+
+async def test_client_error_detected_by_message_marker_without_status() -> None:
+    llm = _llm_with_binds(
+        _ClientError("'minimum' is not supported", None), _ok("OptStr", {"x": "v"})
+    )
+
+    _, stats = await extract_data(llm, OptStr, _msgs())
+
+    assert stats.success
+    assert llm.bind_tools.call_count == 2
+
+
+async def test_client_error_on_non_strict_tool_does_not_rebind() -> None:
+    llm = _llm_with_binds(_ClientError("something odd"), _ok("OptStr", {}))
+
+    _, stats = await extract_data(llm, OptStr, _msgs(), tool_config=ToolCallConfig.COMPATIBLE)
+
+    assert not stats.success
+    assert llm.bind_tools.call_count == 1
+
+
+async def test_client_error_on_dict_fallback_does_not_rebind() -> None:
+    llm = _llm_with_binds(_ClientError("something odd"), _ok("DictTop", {"d": {}}))
+
+    _, stats = await extract_data(llm, DictTop, _msgs())
+
+    assert not stats.success
+    assert llm.bind_tools.call_count == 1
+
+
+async def test_flag_rejection_after_strict_relax_still_uses_flag_relaxation() -> None:
+    llm = _llm_with_binds(
+        _ClientError("Schema is too complex"),
+        _ClientError("Unsupported parameter: 'tool_choice'"),
+        _ok("OptStr", {"x": "v"}),
+    )
+
+    _, stats = await extract_data(llm, OptStr, _msgs())
+
+    assert stats.success
+    third = llm.bind_tools.call_args_list[2]
+    assert third.kwargs == {"tool_choice": "auto"}
+
+
+async def test_flag_named_rejection_goes_straight_to_compatible() -> None:
+    llm = _llm_with_binds(
+        _ClientError("Unsupported parameter: 'strict'"), _ok("OptStr", {"x": "v"})
+    )
+
+    _, stats = await extract_data(llm, OptStr, _msgs())
+
+    assert stats.success
+    assert llm.bind_tools.call_count == 2
+    assert llm.bind_tools.call_args_list[1].kwargs == {"tool_choice": "auto"}
+
+
+class BareDict(BaseModel):
+    d: dict  # type: ignore[type-arg]
+
+
+class TypingDict(BaseModel):
+    d: Dict[str, int]  # noqa: UP006
+
+
+class AnyField(BaseModel):
+    v: Any
+
+
+class ObjectField(BaseModel):
+    v: object
+
+
+class TD(TypedDict):
+    a: int
+
+
+class WithTypedDict(BaseModel):
+    t: TD
+
+
+class Tree(BaseModel):
+    children: list[Tree]
+
+
+class Ping(BaseModel):
+    pong: Optional[Pong] = None  # noqa: UP045
+
+
+class Pong(BaseModel):
+    ping: Optional[Ping] = None  # noqa: UP045
+
+
+@dataclasses.dataclass
+class DC:
+    d: dict[str, int]
+
+
+class WithDataclass(BaseModel):
+    dc: DC
+
+
+Ping.model_rebuild()
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [BareDict, TypingDict, AnyField, ObjectField, WithTypedDict, Tree, Ping, WithDataclass],
+)
+async def test_more_incompatible_shapes_fall_back(schema: type[BaseModel]) -> None:
+    assert _extractor._strict_incompatibility(schema) is not None
+    llm = make_llm([make_response([{"name": schema.__name__, "args": {}, "id": "1"}])])
+
+    await extract_data(llm, schema, _msgs())
+
+    assert _bound_tool(llm) == convert_to_openai_tool(schema)
+
+
+def test_shared_but_non_recursive_model_is_compatible() -> None:
+    class Twice(BaseModel):
+        a: Nested
+        b: Nested
+
+    assert _extractor._strict_incompatibility(Twice) is None
+
+
+async def test_stripped_defaults_are_appended_to_description() -> None:
+    class Defaults(BaseModel):
+        n: int = 0
+        s: str = Field(default="x", description="Label.")
+        o: Optional[int] = None  # noqa: UP045
+
+    llm = make_llm([make_response([{"name": "Defaults", "args": {}, "id": "1"}])])
+    await extract_data(llm, Defaults, _msgs())
+
+    props = _bound_tool(llm)["function"]["parameters"]["properties"]
+    assert props["n"]["description"] == "Default: 0"
+    assert props["s"]["description"] == 'Label. Default: "x"'
+    assert "description" not in props["o"]
+
+
+async def test_fallback_warning_is_logged_once_per_schema(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    llm = make_llm([_ok("DictTop", {"d": {}}), _ok("DictTop", {"d": {}})])
+
+    with caplog.at_level(logging.DEBUG, logger="saidex.extractor"):
+        await extract_data(llm, DictTop, _msgs())
+        await extract_data(llm, DictTop, _msgs())
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+
+
+async def test_json_mode_unaffected() -> None:
+    llm = make_llm([make_response(content='{"x": "v"}')])
+    result, _ = await extract_data(llm, OptStr, _msgs(), mode=ExtractionMode.JSON)
+    assert result == OptStr(x="v")
+    llm.bind_tools.assert_not_called()
