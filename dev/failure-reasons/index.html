@@ -804,6 +804,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#why-did-the-model-call-fail-llm_error_kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why did the model call fail? — llm_error_kind
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#primary-and-fallback-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1277,6 +1288,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#why-did-the-model-call-fail-llm_error_kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why did the model call fail? — llm_error_kind
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#primary-and-fallback-model" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1364,7 +1386,7 @@
 <tr>
 <td><code>llm_error</code></td>
 <td>The model call failed after all network retries, or the provider rejected the tool binding.</td>
-<td>Outage, authentication, a rate limit beyond the retry budget, unsupported tool-calling flags.</td>
+<td>Outage, authentication, a rate limit beyond the retry budget, unsupported tool-calling flags. <code>stats.llm_error_kind</code> says why — see below.</td>
 <td><strong>Yes</strong>, if an <em>earlier</em> attempt produced one. Check <code>stats.last_candidate</code>.</td>
 <td><strong>Yes</strong> for transient outages and rate limits. No if the tool binding was rejected even after automatic relaxation (or with <code>auto_relax=False</code>): fix <code>tool_config</code>.</td>
 </tr>
@@ -1387,6 +1409,73 @@ candidate existed.</p>
 </div>
 <p><code>stats.last_candidate</code> is the authoritative check — see
 <a href="../external-validators/#when-every-attempt-fails-last_candidate">External Validators</a>.</p>
+<h2 id="why-did-the-model-call-fail-llm_error_kind">Why did the model call fail? — <code>llm_error_kind</code><a class="headerlink" href="#why-did-the-model-call-fail-llm_error_kind" title="Permanent link">&para;</a></h2>
+<p>When <code>failure_reason</code> is <code>llm_error</code>, <code>stats.llm_error_kind</code> is a
+<code>saidex.ModelErrorKind</code>, independent of the provider:</p>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Typical cause</th>
+<th>Retried by default?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rate_limit</code></td>
+<td>HTTP 429</td>
+<td>yes (rate-limit backoff)</td>
+</tr>
+<tr>
+<td><code>timeout</code></td>
+<td>request timed out</td>
+<td>yes (provider/SDK exception types; see Retry &amp; Fallback)</td>
+</tr>
+<tr>
+<td><code>connection</code></td>
+<td>provider unreachable</td>
+<td>yes (provider/SDK exception types; see Retry &amp; Fallback)</td>
+</tr>
+<tr>
+<td><code>server_error</code></td>
+<td>HTTP 5xx</td>
+<td>yes</td>
+</tr>
+<tr>
+<td><code>authentication</code></td>
+<td>HTTP 401, bad API key</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>permission_denied</code></td>
+<td>HTTP 403</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>invalid_request</code></td>
+<td>HTTP 400, or tool-binding flags the provider rejects</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>not_found</code></td>
+<td>HTTP 404, unknown model name</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>context_overflow</code></td>
+<td>input larger than the context window</td>
+<td>no</td>
+</tr>
+<tr>
+<td><code>other</code></td>
+<td>anything else</td>
+<td>no</td>
+</tr>
+</tbody>
+</table>
+<p>The kind is derived by <code>saidex.classify_model_error(exc)</code> from langchain-core's
+standard model exceptions (langchain-core ≥ 1.6) and, for older versions, from the
+<code>openai</code> / <code>httpx</code> exception types. A salvaged run (<code>on_exhausted</code>) has no kind.</p>
 <h2 id="primary-and-fallback-model">Primary and fallback model<a class="headerlink" href="#primary-and-fallback-model" title="Permanent link">&para;</a></h2>
 <p>When a fallback model is configured and the primary fails, the fallback gets
 fresh attempts. If both fail, the combined reason is the <strong>fallback's</strong>. It is

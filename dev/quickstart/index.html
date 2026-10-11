@@ -1424,8 +1424,10 @@
 <h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>saidex
 </code></pre></div>
-<p>If you use OpenAI models, add the optional extra for automatic rate-limit
-handling:</p>
+<p>With langchain-core ≥ 1.6, rate limits, timeouts and 5xx errors of any provider
+integration that raises the standard model exceptions are handled automatically. For
+older langchain-core versions, or to catch raw OpenAI SDK errors, add the optional
+extra:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">&quot;saidex[openai]&quot;</span>
 </code></pre></div>
 <p><strong>Runtime dependencies</strong></p>
@@ -1456,7 +1458,7 @@ handling:</p>
 <tr>
 <td><code>openai</code> <em>(optional)</em></td>
 <td><code>&gt;= 1.0</code></td>
-<td>Rate-limit retry handling</td>
+<td>Rate-limit retry handling (older langchain-core / raw SDK errors)</td>
 </tr>
 <tr>
 <td><code>langgraph</code> <em>(optional)</em></td>
@@ -1510,17 +1512,18 @@ without tool-calling support.  See <a href="../extraction-modes/">Extraction Mod
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">stats</span><span class="o">.</span><span class="n">success</span>           <span class="c1"># bool — did the run produce a validated instance?</span>
 <a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="n">stats</span><span class="o">.</span><span class="n">failure_reason</span>    <span class="c1"># FailureReason | None — why it failed (None on success)</span>
-<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">stats</span><span class="o">.</span><span class="n">primary_retries</span>   <span class="c1"># int — retries on the primary model</span>
-<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_retries</span>  <span class="c1"># int — retries on the fallback model</span>
-<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">stats</span><span class="o">.</span><span class="n">total_retries</span>     <span class="c1"># int — sum of both</span>
-<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_used</span>     <span class="c1"># bool — did the fallback model run?</span>
-<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">stats</span><span class="o">.</span><span class="n">salvaged</span>          <span class="c1"># bool — result produced by an on_exhausted hook</span>
-<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="n">stats</span><span class="o">.</span><span class="n">format_errors</span>     <span class="c1"># int — pure parse / tool-call failures</span>
-<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="n">stats</span><span class="o">.</span><span class="n">problem_fields</span>    <span class="c1"># tuple[str, ...] — fields that ever failed validation</span>
-<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">stats</span><span class="o">.</span><span class="n">field_issues</span>      <span class="c1"># tuple[FieldIssue, ...] — structured per-field problems</span>
-<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="n">stats</span><span class="o">.</span><span class="n">last_candidate</span>    <span class="c1"># last schema-valid but rejected instance</span>
-<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>                        <span class="c1"># (None on a clean success; kept when salvaged)</span>
-<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="n">stats</span><span class="o">.</span><span class="n">last_rejection</span>    <span class="c1"># tuple[FieldIssue, ...] — the issues that rejected it</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="n">stats</span><span class="o">.</span><span class="n">llm_error_kind</span>    <span class="c1"># ModelErrorKind | None — why the model call failed (llm_error only)</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="n">stats</span><span class="o">.</span><span class="n">primary_retries</span>   <span class="c1"># int — retries on the primary model</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_retries</span>  <span class="c1"># int — retries on the fallback model</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">stats</span><span class="o">.</span><span class="n">total_retries</span>     <span class="c1"># int — sum of both</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">stats</span><span class="o">.</span><span class="n">fallback_used</span>     <span class="c1"># bool — did the fallback model run?</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="n">stats</span><span class="o">.</span><span class="n">salvaged</span>          <span class="c1"># bool — result produced by an on_exhausted hook</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="n">stats</span><span class="o">.</span><span class="n">format_errors</span>     <span class="c1"># int — pure parse / tool-call failures</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="n">stats</span><span class="o">.</span><span class="n">problem_fields</span>    <span class="c1"># tuple[str, ...] — fields that ever failed validation</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="n">stats</span><span class="o">.</span><span class="n">field_issues</span>      <span class="c1"># tuple[FieldIssue, ...] — structured per-field problems</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="n">stats</span><span class="o">.</span><span class="n">last_candidate</span>    <span class="c1"># last schema-valid but rejected instance</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>                        <span class="c1"># (None on a clean success; kept when salvaged)</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="n">stats</span><span class="o">.</span><span class="n">last_rejection</span>    <span class="c1"># tuple[FieldIssue, ...] — the issues that rejected it</span>
 </code></pre></div>
 <p>Prefer <code>stats.success</code> over <code>result is not None</code> to branch on the outcome.
 <code>field_issues</code> are recorded even on a successful run when an earlier attempt was
