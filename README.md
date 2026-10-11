@@ -4,7 +4,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/mlauf-labs/saidex/tests.yml?label=CI&logo=github)](https://github.com/mlauf-labs/saidex/actions)
 [![PyPI](https://img.shields.io/pypi/v/saidex.svg)](https://pypi.org/project/saidex/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://mlauf-labs.github.io/SAIDEX/)
 
@@ -995,7 +995,7 @@ Presets: `ToolCallConfig.OPENAI` (the defaults above) and
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - `pydantic >= 2.0`
 - `langchain-core >= 0.2`
 - Any LangChain chat model. Tool-calling mode (default) needs a tool/function-calling-capable model (OpenAI, Anthropic, Gemini, Mistral, …); `ExtractionMode.JSON` works with any chat model, including local models without tool-calling support.

@@ -22,7 +22,7 @@ class WithOptional(BaseModel):
 
 
 class WithEnum(BaseModel):
-    class Status(str, Enum):
+    class Status(str, Enum):  # noqa: UP042 — test fixture mirrors a plain str, Enum
         ACTIVE = "active"
         INACTIVE = "inactive"
 

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from pydantic import BaseModel
 
 
-class ExtractionMode(str, Enum):
+class ExtractionMode(str, Enum):  # noqa: UP042 — StrEnum would change str(mode) output
     """How the LLM is asked to produce structured output.
 
     Attributes:
