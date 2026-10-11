@@ -21,9 +21,11 @@ pip install "saidex[openai]"
 
 | Package | Required version | Purpose |
 | --- | --- | --- |
-| `pydantic` | `>= 2.0` | Schema validation |
-| `langchain-core` | `>= 0.2` | Message types + tool calling |
+| `pydantic` | `>= 2.7.4` | Schema validation |
+| `langchain-core` | `>= 0.3.69` | Message types + tool calling |
+| `json-repair` | `>= 0.60.1` | Repairs malformed JSON from the model |
 | `openai` *(optional)* | `>= 1.0` | Rate-limit retry handling |
+| `langgraph` *(optional)* | `>= 1.1.5` | `SaidexToolNode` for LangGraph agents |
 
 Any LangChain-compatible chat model that supports tool calling works:
 OpenAI, Anthropic, Google Gemini, Mistral, Azure OpenAI, and others.
