@@ -14,6 +14,8 @@ deadlocking — in that situation the caller is already async and should simply
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import threading
 from collections.abc import Coroutine
 from typing import TYPE_CHECKING, Any, TypeVar
 
@@ -74,6 +76,49 @@ def _run_sync(coro: Coroutine[Any, Any, _T], *, sync_name: str, async_name: str)
         f"FastAPI/async handler, or another coroutine) — "
         f"use 'await {async_name}(...)' directly instead."
     )
+
+
+def _run_blocking(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Drive *coro* to completion from synchronous code, even inside a running loop.
+
+    Without a running event loop in the current thread this is plain
+    :func:`asyncio.run`.  With one — a Jupyter cell, or an async handler that
+    calls sync code — ``asyncio.run`` would refuse, so the coroutine runs on a
+    short-lived worker thread with its own loop while the caller blocks.  The
+    worker runs in a copy of the caller's :mod:`contextvars` context so
+    ``collect_stats`` sinks and LangChain's implicit run config stay visible.
+
+    Unlike :func:`_run_sync`, which guards the public ``*_sync`` wrappers, this
+    never raises for a running loop: a LangGraph node's ``invoke`` must work
+    wherever the stock ``ToolNode`` works.
+
+    Args:
+        coro: The coroutine to run.
+
+    Returns:
+        Whatever *coro* resolves to.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    context = contextvars.copy_context()
+    outcome: list[_T] = []
+    failure: list[BaseException] = []
+
+    def _worker() -> None:
+        try:
+            outcome.append(context.run(asyncio.run, coro))
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the caller's thread
+            failure.append(exc)
+
+    worker = threading.Thread(target=_worker, name="saidex-sync-bridge", daemon=True)
+    worker.start()
+    worker.join()
+    if failure:
+        raise failure[0]
+    return outcome[0]
 
 
 def extract_data_sync(

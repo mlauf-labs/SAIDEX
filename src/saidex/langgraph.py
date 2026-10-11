@@ -45,7 +45,7 @@ from .models import (
 )
 from .observability import dispatch_tool_node_event
 from .retry import RetryConfig
-from .sync import _run_sync
+from .sync import _run_blocking
 from .utils import create_instance_with_issues
 
 __all__ = [
@@ -279,11 +279,11 @@ class SaidexToolNode(Runnable[Any, Any]):
         self._tools_by_name = _build_registry(tools)
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
-        """Synchronous entry point; bridges to :meth:`ainvoke` on a fresh event loop.
+        """Synchronous entry point; runs the pipeline through a blocking bridge.
 
-        See :meth:`ainvoke` for the full pipeline description (input shapes
-        accepted, output shape produced). Not usable from inside an already
-        running event loop — call :meth:`ainvoke` there instead.
+        See :meth:`ainvoke` for the input and output shapes.  Works inside an
+        already running event loop too (e.g. ``graph.invoke`` from a Jupyter
+        cell) — the pipeline then runs on a short-lived worker thread.
 
         Args:
             input: Graph state — a message list, a dict containing
@@ -294,15 +294,8 @@ class SaidexToolNode(Runnable[Any, Any]):
         Returns:
             Tool results in the same shape the stock ``ToolNode`` produces, as
             described in :meth:`ainvoke`.
-
-        Raises:
-            RuntimeError: If called from inside an already running event loop.
         """
-        return _run_sync(
-            self._arun(input, config, **kwargs),
-            sync_name="SaidexToolNode.invoke",
-            async_name="SaidexToolNode.ainvoke",
-        )
+        return _run_blocking(self._arun(input, config, **kwargs))
 
     async def ainvoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         """Repair, validate and execute the last ``AIMessage``'s tool calls.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from contextvars import ContextVar
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,6 +18,7 @@ from saidex import (
     run_extractor_agent_sync,
 )
 from saidex.retry import RetryConfig
+from saidex.sync import _run_blocking
 
 # ---------------------------------------------------------------------------
 # Helpers (mirror tests/test_extractor.py — no network, no API keys)
@@ -210,3 +213,40 @@ async def test_run_extractor_agent_sync_raises_inside_running_loop() -> None:
         run_extractor_agent_sync(
             llm, SimpleSchema, messages, tools=[_make_tool()], retry_config=NO_NETWORK_RETRY
         )
+
+
+# ---------------------------------------------------------------------------
+# _run_blocking — the bridge used by SaidexToolNode.invoke
+# ---------------------------------------------------------------------------
+
+
+def test_run_blocking_without_running_loop() -> None:
+    async def double(x: int) -> int:
+        return x * 2
+
+    assert _run_blocking(double(21)) == 42
+
+
+async def test_run_blocking_inside_running_loop_uses_worker_thread() -> None:
+    async def which_thread() -> str:
+        return threading.current_thread().name
+
+    assert _run_blocking(which_thread()) == "saidex-sync-bridge"
+
+
+async def test_run_blocking_reraises_inside_running_loop() -> None:
+    async def boom() -> None:
+        raise ValueError("boom")
+
+    with pytest.raises(ValueError, match="boom"):
+        _run_blocking(boom())
+
+
+async def test_run_blocking_copies_context_into_worker() -> None:
+    probe: ContextVar[str] = ContextVar("probe", default="unset")
+    probe.set("caller")
+
+    async def read() -> str:
+        return probe.get()
+
+    assert _run_blocking(read()) == "caller"

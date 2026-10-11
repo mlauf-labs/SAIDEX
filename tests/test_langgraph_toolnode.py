@@ -305,10 +305,32 @@ def test_sync_invoke_works() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_invoke_inside_running_loop_raises() -> None:
+async def test_sync_invoke_inside_running_loop_works() -> None:
     node = SaidexToolNode([add])
-    with pytest.raises(RuntimeError, match="ainvoke"):
-        node.invoke({"messages": [_ai([_call("add", {"a": 1, "b": 1}, "c1")])]})
+    result = node.invoke(
+        {"messages": [_ai([_call("add", {"a": 1, "b": 1}, "c1")])]}, runtime=_NO_GRAPH_RUNTIME
+    )
+    assert _tool_messages(result)[0].content == "2"
+
+
+@pytest.mark.asyncio
+async def test_graph_embedded_sync_execution_inside_running_loop() -> None:
+    """graph.invoke() from a thread with a running loop (Jupyter) runs the tools
+    task inline; the stock ToolNode works there, so SaidexToolNode must too."""
+    app = _build_tool_call_graph(SaidexToolNode([add]))
+    result = app.invoke({"messages": [HumanMessage(content="please add")]})
+    assert _tool_messages(result)[0].content == "7"
+
+
+@pytest.mark.asyncio
+async def test_collect_stats_sees_event_from_bridged_sync_invoke() -> None:
+    async with collect_stats() as sink:
+        SaidexToolNode([add]).invoke(
+            {"messages": [_ai([_call("add", {"a": 1, "b": 1}, "c1")])]},
+            runtime=_NO_GRAPH_RUNTIME,
+        )
+    assert len(sink) == 1
+    assert isinstance(sink.all()[0], ToolNodeStats)
 
 
 @pytest.mark.asyncio
