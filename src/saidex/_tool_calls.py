@@ -9,6 +9,7 @@ the message and builds stats.  It never executes tools and never imports
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import inspect
 import json
@@ -689,6 +690,81 @@ class ToolCallPipeline:
         plan.prevalidated = True
         plan.executable = True
         plan.outcome = "corrected"
+
+    async def correct(
+        self,
+        plans: list[CallPlan],
+        ctx: CallContext,
+        *,
+        callbacks: Callbacks,
+        max_concurrency: int | None,
+    ) -> None:
+        """Run the correction cycle for every correctable plan, concurrently.
+
+        Args:
+            plans: The planned calls; correctable ones are mutated in place.
+            ctx: Where the ``AIMessage`` sits.
+            callbacks: Callbacks from the node's config, so correction runs nest
+                under the node's span.
+            max_concurrency: Upper bound on simultaneous corrections
+                (``RunnableConfig["max_concurrency"]``); ``None`` or a value
+                <= 0 means unbounded.
+        """
+        targets = [plan for plan in plans if self.is_correctable(plan)]
+        if not targets:
+            return
+        # A value <= 0 would block forever or raise ValueError; treat as unbounded.
+        limit = (
+            asyncio.Semaphore(max_concurrency)
+            if max_concurrency is not None and max_concurrency > 0
+            else None
+        )
+
+        tasks: list[asyncio.Task[None]] = []
+        exception_to_raise: BaseException | None = None
+        exception_lock = asyncio.Lock()
+
+        async def run(plan: CallPlan) -> None:
+            nonlocal exception_to_raise
+            try:
+                if limit is None:
+                    try:
+                        await self.correct_one(plan, ctx, callbacks)
+                    except BaseException as exc:
+                        async with exception_lock:
+                            if exception_to_raise is None:
+                                exception_to_raise = exc
+                            # Cancel before propagating, so siblings don't acquire resources.
+                            for task in tasks:
+                                if task is not asyncio.current_task():
+                                    task.cancel()
+                        raise
+                else:
+                    async with limit:
+                        try:
+                            await self.correct_one(plan, ctx, callbacks)
+                        except BaseException as exc:
+                            async with exception_lock:
+                                if exception_to_raise is None:
+                                    exception_to_raise = exc
+                                # Cancel before releasing semaphore, so siblings
+                                # don't start their model calls.
+                                for task in tasks:
+                                    if task is not asyncio.current_task():
+                                        task.cancel()
+                            raise
+            except BaseException:
+                raise
+
+        tasks = [asyncio.ensure_future(run(plan)) for plan in targets]
+        try:
+            await asyncio.gather(*tasks)
+        except BaseException:
+            # Safety net: cancel any remaining tasks and re-raise.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def resolve(self, plans: list[CallPlan], ctx: CallContext) -> list[ToolMessage]:
         """Apply ``on_unresolved`` and finalize every plan's ``outcome``.

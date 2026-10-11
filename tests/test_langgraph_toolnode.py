@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from typing import Annotated, Any, get_type_hints
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -2124,3 +2125,84 @@ async def test_correction_without_history_still_works() -> None:
 def test_ctor_rejects_negative_context_size() -> None:
     with pytest.raises(ValueError, match="correction_context_messages"):
         SaidexToolNode([add], correction_context_messages=-1)
+
+
+# ---------------------------------------------------------------------------
+# Concurrent corrections
+# ---------------------------------------------------------------------------
+
+
+def _probe_correction_llm(args: dict[str, Any]) -> tuple[Any, dict[str, int]]:
+    counters = {"active": 0, "peak": 0}
+
+    async def respond(*_args: Any, **_kwargs: Any) -> Any:
+        counters["active"] += 1
+        counters["peak"] = max(counters["peak"], counters["active"])
+        await asyncio.sleep(0.02)
+        counters["active"] -= 1
+        return make_response(tool_calls=[{"args": args, "name": "add", "id": "corr"}])
+
+    llm = make_llm([])
+    llm.bind_tools.return_value.ainvoke = AsyncMock(side_effect=respond)
+    return llm, counters
+
+
+def _two_bad_calls() -> dict[str, Any]:
+    return {
+        "messages": [
+            _ai([_call("add", {"a": "x", "b": 1}, "c1"), _call("add", {"a": "y", "b": 1}, "c2")])
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_corrections_run_concurrently() -> None:
+    correction, counters = _probe_correction_llm({"a": 1, "b": 1})
+    result = await SaidexToolNode([add], correction_model=correction).ainvoke(
+        _two_bad_calls(), runtime=_NO_GRAPH_RUNTIME
+    )
+    assert [m.content for m in _tool_messages(result)] == ["2", "2"]
+    assert counters["peak"] == 2
+
+
+@pytest.mark.asyncio
+async def test_max_concurrency_bounds_corrections() -> None:
+    correction, counters = _probe_correction_llm({"a": 1, "b": 1})
+    await SaidexToolNode([add], correction_model=correction).ainvoke(
+        _two_bad_calls(), config={"max_concurrency": 1}, runtime=_NO_GRAPH_RUNTIME
+    )
+    assert counters["peak"] == 1
+
+
+@pytest.mark.asyncio
+async def test_max_concurrency_zero_does_not_deadlock() -> None:
+    correction, _ = _probe_correction_llm({"a": 1, "b": 1})
+    node = SaidexToolNode([add], correction_model=correction)
+    result = await asyncio.wait_for(
+        node.ainvoke(_two_bad_calls(), config={"max_concurrency": 0}, runtime=_NO_GRAPH_RUNTIME),
+        timeout=5,
+    )
+    assert len(_tool_messages(result)) == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_correction_cancels_pending_siblings() -> None:
+    correction, _ = _probe_correction_llm({"a": 1, "b": 1})
+    node = SaidexToolNode(
+        [add], correction_model=correction, validators={"add": lambda args, ctx: 42}
+    )
+    with pytest.raises(TypeError):
+        await node.ainvoke(
+            _two_bad_calls(), config={"max_concurrency": 1}, runtime=_NO_GRAPH_RUNTIME
+        )
+    assert correction.bind_tools.return_value.ainvoke.await_count == 1
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_negative_max_concurrency_is_unbounded() -> None:
+    correction, counters = _probe_correction_llm({"a": 1, "b": 1})
+    result = await SaidexToolNode([add], correction_model=correction).ainvoke(
+        _two_bad_calls(), config={"max_concurrency": -1}, runtime=_NO_GRAPH_RUNTIME
+    )
+    assert [m.content for m in _tool_messages(result)] == ["2", "2"]

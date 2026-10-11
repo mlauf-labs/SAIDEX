@@ -17,7 +17,6 @@ import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
-from langchain_core.callbacks.base import Callbacks
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
 from langchain_core.runnables import Runnable, RunnableConfig
 from pydantic import BaseModel
@@ -322,14 +321,12 @@ class SaidexToolNode(Runnable[Any, Any]):
         ctx = CallContext(messages=tuple(messages), ai_index=ai_index, state=input)
         plans = await self._pipeline.plan(ai_message, ctx)
 
-        if self._pipeline.correction_enabled:
-            callbacks: Callbacks = (config or {}).get("callbacks")
-            for plan in plans:
-                # is_correctable excludes id-less plans (nothing to answer even
-                # after a successful correction) and missing required fields (left
-                # to the agent).
-                if self._pipeline.is_correctable(plan):
-                    await self._pipeline.correct_one(plan, ctx, callbacks)
+        await self._pipeline.correct(
+            plans,
+            ctx,
+            callbacks=(config or {}).get("callbacks"),
+            max_concurrency=(config or {}).get("max_concurrency"),
+        )
 
         feedback: list[BaseMessage] = list(await self._pipeline.resolve(plans, ctx))
 
