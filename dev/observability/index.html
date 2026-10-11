@@ -1845,7 +1845,10 @@ it observes.</p>
 emits a <code>ToolNodeEvent</code>. Active <code>collect_stats()</code> sinks record its
 <code>ToolNodeStats</code> alongside extraction stats, and <code>on_tool_node()</code> registers a
 process-wide listener — the tool-node counterpart to <code>on_extraction()</code>
-(extraction listeners do not receive tool-node events).</p>
+(extraction listeners do not receive tool-node events). Per call,
+<code>ToolCallStats</code> reports the <code>outcome</code> (<code>executed</code>, <code>corrected</code>, <code>salvaged</code>,
+<code>feedback</code>, <code>dropped</code>), whether the correction cycle ran
+(<code>correction_attempted</code>) and the field issues found by validation.</p>
 <hr />
 <h2 id="langfuse">Langfuse<a class="headerlink" href="#langfuse" title="Permanent link">&para;</a></h2>
 <p><a href="https://langfuse.com">Langfuse</a> provides open-source LLM observability with
