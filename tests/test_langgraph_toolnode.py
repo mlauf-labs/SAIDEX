@@ -147,12 +147,12 @@ def _build_tool_call_graph(tools_node: Any) -> CompiledStateGraph[Any, Any, Any,
 
 
 def test_ctor_rejects_unknown_policy() -> None:
-    with pytest.raises(ValueError, match="on_invalid"):
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="on_invalid"):
         SaidexToolNode([add], on_invalid="explode")  # type: ignore[arg-type]
 
 
 def test_ctor_requires_correction_model_for_correct() -> None:
-    with pytest.raises(ValueError, match="correction_model"):
+    with pytest.warns(DeprecationWarning), pytest.raises(ValueError, match="correction_model"):
         SaidexToolNode([add], on_invalid="correct")
 
 
@@ -1096,7 +1096,6 @@ async def test_correct_policy_fixes_and_executes() -> None:
     state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")], msg_id="ai-9")]}
     node = SaidexToolNode(
         [add],
-        on_invalid="correct",
         correction_model=_correction_llm([{"a": 5, "b": 2}]),
     )
     result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
@@ -1115,7 +1114,6 @@ async def test_correct_policy_recovers_unparseable_invalid_call() -> None:
     state = {"messages": [_ai(invalid=[_invalid("add", "garbage text", "c1")], msg_id="ai-9")]}
     node = SaidexToolNode(
         [add],
-        on_invalid="correct",
         correction_model=_correction_llm([{"a": 1, "b": 9}]),
     )
     result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
@@ -1134,7 +1132,6 @@ async def test_correct_policy_falls_back_to_feedback() -> None:
     state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
     node = SaidexToolNode(
         [add],
-        on_invalid="correct",
         correction_model=_correction_llm([None, None]),
         max_correction_retries=2,
     )
@@ -1149,7 +1146,7 @@ async def test_correct_policy_falls_back_to_feedback() -> None:
 async def test_correct_policy_skips_valid_calls() -> None:
     correction = _correction_llm([{"a": 0, "b": 0}])
     state = {"messages": [_ai([_call("add", {"a": 3, "b": 4}, "c1")])]}
-    node = SaidexToolNode([add], on_invalid="correct", correction_model=correction)
+    node = SaidexToolNode([add], correction_model=correction)
     result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
     assert _tool_messages(result)[0].content == "7"
     correction.bind_tools.assert_not_called()
@@ -1172,7 +1169,6 @@ async def test_correct_policy_does_not_emit_extraction_event() -> None:
         state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
         node = SaidexToolNode(
             [add],
-            on_invalid="correct",
             correction_model=_correction_llm([{"a": 5, "b": 2}]),
         )
         await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
@@ -1199,7 +1195,7 @@ async def test_correct_policy_survives_bind_tools_raising_not_implemented() -> N
     correction = MagicMock()
     correction.bind_tools = MagicMock(side_effect=NotImplementedError("no tool calling support"))
     state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
-    node = SaidexToolNode([add], on_invalid="correct", correction_model=correction)
+    node = SaidexToolNode([add], correction_model=correction)
 
     result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
 
@@ -1241,7 +1237,6 @@ async def test_correct_policy_forwards_config_callbacks_to_correction_cycle() ->
     state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")], msg_id="ai-9")]}
     node = SaidexToolNode(
         [add],
-        on_invalid="correct",
         correction_model=_correction_llm([{"a": 5, "b": 2}]),
     )
 
@@ -1264,7 +1259,7 @@ async def test_raise_policy_fails_fast_without_executing() -> None:
             )
         ]
     }
-    node = SaidexToolNode([add], on_invalid="raise")
+    node = SaidexToolNode([add], on_unresolved="raise")
     with pytest.raises(ToolCallValidationError) as excinfo:
         await node.ainvoke(state)
     assert EXECUTED == []
@@ -1275,10 +1270,101 @@ async def test_raise_policy_fails_fast_without_executing() -> None:
 @pytest.mark.asyncio
 async def test_raise_policy_passes_when_all_valid() -> None:
     state = {"messages": [_ai([_call("add", {"a": 1, "b": 2}, "c1")])]}
-    result = await SaidexToolNode([add], on_invalid="raise").ainvoke(
+    result = await SaidexToolNode([add], on_unresolved="raise").ainvoke(
         state, runtime=_NO_GRAPH_RUNTIME
     )
     assert _tool_messages(result)[0].content == "3"
+
+
+# ---------------------------------------------------------------------------
+# v2 mode switch: correction_model enables correction; on_unresolved
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_correction_model_alone_enables_correction() -> None:
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")], msg_id="ai-9")]}
+    node = SaidexToolNode([add], correction_model=_correction_llm([{"a": 5, "b": 2}]))
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].content == "7"
+    assert EXECUTED == ["add:5+2"]
+
+
+@pytest.mark.asyncio
+async def test_without_correction_model_the_agent_gets_feedback() -> None:
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
+    result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert "was NOT executed" in str(tool_message.content)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_raise_runs_after_correction() -> None:
+    correction = _correction_llm([None, None])
+    state = {
+        "messages": [
+            _ai([_call("add", {"a": 1, "b": 2}, "ok-1"), _call("add", {"a": "x", "b": 2}, "bad-1")])
+        ]
+    }
+    node = SaidexToolNode(
+        [add], correction_model=correction, max_correction_retries=2, on_unresolved="raise"
+    )
+    with pytest.raises(ToolCallValidationError) as excinfo:
+        await node.ainvoke(state)
+    assert EXECUTED == []
+    assert excinfo.value.failures[0][:2] == ("add", "bad-1")
+    assert correction.bind_tools.return_value.ainvoke.await_count == 2
+
+
+def test_ctor_rejects_unknown_on_unresolved() -> None:
+    with pytest.raises(ValueError, match="on_unresolved"):
+        SaidexToolNode([add], on_unresolved="explode")  # type: ignore[arg-type]
+
+
+def test_ctor_rejects_zero_correction_retries_with_model() -> None:
+    with pytest.raises(ValueError, match="max_correction_retries"):
+        SaidexToolNode([add], correction_model=_correction_llm([]), max_correction_retries=0)
+
+
+def test_zero_correction_retries_without_model_is_allowed() -> None:
+    SaidexToolNode([add], max_correction_retries=0)
+
+
+@pytest.mark.parametrize("policy", ["feedback", "correct", "raise"])
+def test_on_invalid_is_deprecated(policy: str) -> None:
+    model = _correction_llm([]) if policy == "correct" else None
+    with pytest.warns(DeprecationWarning, match="on_invalid"):
+        SaidexToolNode([add], on_invalid=policy, correction_model=model)  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_on_invalid_feedback_ignores_correction_model() -> None:
+    correction = _correction_llm([{"a": 5, "b": 2}])
+    with pytest.warns(DeprecationWarning):
+        node = SaidexToolNode([add], on_invalid="feedback", correction_model=correction)
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].status == "error"
+    correction.bind_tools.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_invalid_raise_maps_to_on_unresolved_raise() -> None:
+    with pytest.warns(DeprecationWarning):
+        node = SaidexToolNode([add], on_invalid="raise")
+    state = {"messages": [_ai([_call("add", {"a": "bad", "b": 2}, "bad-1")])]}
+    with pytest.raises(ToolCallValidationError):
+        await node.ainvoke(state)
+
+
+def test_on_invalid_conflicts_with_on_unresolved() -> None:
+    with (
+        pytest.warns(DeprecationWarning),
+        pytest.raises(ValueError, match="on_unresolved"),
+    ):
+        SaidexToolNode([add], on_invalid="feedback", on_unresolved="raise")
 
 
 # ---------------------------------------------------------------------------
@@ -1365,7 +1451,6 @@ async def test_collect_stats_sink_does_not_leak_correction_sub_extraction() -> N
     state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")], msg_id="ai-9")]}
     node = SaidexToolNode(
         [add],
-        on_invalid="correct",
         correction_model=_correction_llm([{"a": 5, "b": 2}]),
     )
 
@@ -1386,7 +1471,6 @@ async def test_on_tool_node_fires_and_correction_emits_no_extraction_event() -> 
     try:
         node = SaidexToolNode(
             [add],
-            on_invalid="correct",
             correction_model=_correction_llm([{"a": 5, "b": 2}]),
         )
         await node.ainvoke(
@@ -1422,7 +1506,7 @@ async def test_raise_policy_emits_no_event() -> None:
     }
     try:
         with pytest.raises(ToolCallValidationError):
-            await SaidexToolNode([add], on_invalid="raise").ainvoke(
+            await SaidexToolNode([add], on_unresolved="raise").ainvoke(
                 state, runtime=_NO_GRAPH_RUNTIME
             )
     finally:
@@ -1529,7 +1613,6 @@ async def test_callbacks_see_tool_span_and_correction_llm() -> None:
     recorder = Recorder()
     node = SaidexToolNode(
         [add],
-        on_invalid="correct",
         correction_model=_correction_llm([{"a": 5, "b": 2}]),
     )
     await node.ainvoke(

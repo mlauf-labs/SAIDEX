@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import warnings
 from collections.abc import Callable, Sequence
 from typing import Any, Literal
 
@@ -123,16 +124,18 @@ class SaidexToolNode(Runnable[Any, Any]):
     Args:
         tools: The tools available for execution — ``BaseTool`` instances or
             plain callables, exactly as accepted by the stock ``ToolNode``.
-        on_invalid: Policy for calls whose arguments fail validation or cannot
-            be recovered: ``"feedback"`` (default) answers with a corrective
-            ``ToolMessage``; ``"correct"`` runs a bounded LLM correction cycle
-            before executing; ``"raise"`` raises
-            :class:`ToolCallValidationError` before executing anything.
-        correction_model: Chat model driving the ``"correct"`` cycle.  Required
-            when ``on_invalid="correct"``.
-        max_correction_retries: LLM attempts per call in the correction cycle.
+        correction_model: Chat model that corrects invalid calls inside the
+            node. ``None`` (default) leaves correction to the agent: invalid
+            calls are answered with structured feedback and the agent re-issues
+            them in its next turn. When set, the correction conversation never
+            enters graph state.
+        max_correction_retries: LLM attempts per call in the correction cycle;
+            must be at least 1 when ``correction_model`` is set.
         correction_mode: Extraction mode for the correction cycle — use
             :attr:`~saidex.ExtractionMode.JSON` for models without tool calling.
+        on_unresolved: What happens to calls that stay invalid: ``"feedback"``
+            (default) answers them with an error ``ToolMessage``; ``"raise"``
+            raises :class:`ToolCallValidationError` before any call executes.
         strip_thinking: Strip ``<think>`` blocks from raw invalid-call args
             before parsing.
         json_repair: Apply ``json-repair`` to raw invalid-call args that do not
@@ -153,16 +156,19 @@ class SaidexToolNode(Runnable[Any, Any]):
         handle_tool_errors: Forwarded to the inner ``ToolNode`` when given;
             otherwise the stock default stays active.
         messages_key: State key holding the message list.
+        on_invalid: Deprecated v1 policy. ``"feedback"`` disables correction,
+            ``"correct"`` enables it, ``"raise"`` means ``on_unresolved="raise"``
+            without correction. Emits a ``DeprecationWarning``.
     """
 
     def __init__(
         self,
         tools: Sequence[BaseTool | Callable[..., Any]],
         *,
-        on_invalid: OnInvalid = "feedback",
         correction_model: Any = None,
         max_correction_retries: int = 2,
         correction_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+        on_unresolved: Literal["feedback", "raise"] = "feedback",
         strip_thinking: bool = True,
         json_repair: bool = True,
         sanitize_messages: bool = True,
@@ -170,13 +176,19 @@ class SaidexToolNode(Runnable[Any, Any]):
         tags: list[str] | None = None,
         handle_tool_errors: Any = _UNSET,
         messages_key: str = "messages",
+        on_invalid: OnInvalid | None = None,
     ) -> None:
-        if on_invalid not in ("feedback", "correct", "raise"):
-            raise ValueError(
-                f"on_invalid must be 'feedback', 'correct' or 'raise', got {on_invalid!r}"
+        if on_invalid is not None:
+            correction_model, on_unresolved = _apply_deprecated_on_invalid(
+                on_invalid, correction_model, on_unresolved
             )
-        if on_invalid == "correct" and correction_model is None:
-            raise ValueError("on_invalid='correct' requires a correction_model")
+        if on_unresolved not in ("feedback", "raise"):
+            raise ValueError(f"on_unresolved must be 'feedback' or 'raise', got {on_unresolved!r}")
+        if correction_model is not None and max_correction_retries < 1:
+            raise ValueError(
+                "max_correction_retries must be at least 1 when a correction_model is set, "
+                f"got {max_correction_retries!r}"
+            )
         if not name.strip():
             raise ValueError(f"name must not be empty or whitespace-only, got {name!r}")
 
@@ -193,7 +205,6 @@ class SaidexToolNode(Runnable[Any, Any]):
         # `or "tools"` fallback that would silently rename an explicitly
         # empty name (see the constructor's ValueError above).
         self._node_name: str = name
-        self._on_invalid: OnInvalid = on_invalid
         self._sanitize_messages = sanitize_messages
         self._messages_key = messages_key
         self._pipeline = ToolCallPipeline(
@@ -203,6 +214,7 @@ class SaidexToolNode(Runnable[Any, Any]):
             correction_mode=correction_mode,
             strip_thinking=strip_thinking,
             json_repair=json_repair,
+            on_unresolved=on_unresolved,
         )
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
@@ -256,16 +268,7 @@ class SaidexToolNode(Runnable[Any, Any]):
         ai_message, ai_index = _last_ai_message(messages)
         plans = self._pipeline.plan(ai_message)
 
-        if self._on_invalid == "raise":
-            failures = [
-                (plan.call["name"], plan.call.get("id"), plan.error_text or "invalid tool call")
-                for plan in plans
-                if not plan.executable
-            ]
-            if failures:
-                raise ToolCallValidationError(failures)
-
-        if self._on_invalid == "correct":
+        if self._pipeline.correction_enabled:
             callbacks: Callbacks = (config or {}).get("callbacks")
             for plan in plans:
                 # Unanswerable (id-less) plans are never corrected: there is
@@ -275,16 +278,7 @@ class SaidexToolNode(Runnable[Any, Any]):
                 if not plan.executable and plan.answerable:
                     await self._pipeline.correct_one(plan, callbacks)
 
-        feedback: list[BaseMessage] = []
-        for plan in plans:
-            if plan.executable:
-                if not plan.outcome:
-                    plan.outcome = "executed"
-            elif plan.answerable:
-                plan.outcome = "feedback"
-                feedback.append(self._pipeline.feedback_message(plan))
-            else:
-                plan.outcome = "dropped"
+        feedback: list[BaseMessage] = list(self._pipeline.resolve(plans))
 
         executable_calls = [plan.call for plan in plans if plan.executable]
         inner_output: Any = None
@@ -336,6 +330,32 @@ class SaidexToolNode(Runnable[Any, Any]):
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+def _apply_deprecated_on_invalid(
+    on_invalid: Any, correction_model: Any, on_unresolved: Literal["feedback", "raise"]
+) -> tuple[Any, Literal["feedback", "raise"]]:
+    """Translate the deprecated v1 ``on_invalid`` policy into the v2 parameters."""
+    warnings.warn(
+        "SaidexToolNode(on_invalid=...) is deprecated and will be removed in a future "
+        "release. Pass correction_model= to let SAIDEX correct invalid calls, and "
+        "on_unresolved= for calls that stay invalid.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    if on_invalid not in ("feedback", "correct", "raise"):
+        raise ValueError(f"on_invalid must be 'feedback', 'correct' or 'raise', got {on_invalid!r}")
+    if on_unresolved != "feedback":
+        raise ValueError(
+            "on_invalid cannot be combined with on_unresolved; use on_unresolved alone"
+        )
+    if on_invalid == "correct":
+        if correction_model is None:
+            raise ValueError("on_invalid='correct' requires a correction_model")
+        return correction_model, "feedback"
+    if on_invalid == "raise":
+        return None, "raise"
+    return None, "feedback"
 
 
 def _is_send_api_payload(input: Any) -> bool:

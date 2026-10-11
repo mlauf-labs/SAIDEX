@@ -56,7 +56,7 @@ class CallPlan:
     error_text: str | None = None
     issues: tuple[FieldIssue, ...] = ()
     executable: bool = False
-    #: ``""`` is the pre-dispatch default; the dispatch loop in ``_arun``
+    #: ``""`` is the pre-dispatch default; ``ToolCallPipeline.resolve``
     #: finalizes every plan to one of the four real ``ToolCallOutcome``
     #: values before stats are built — see ``_finalized_outcome``, which
     #: turns that invariant into a type-checked narrowing at the point
@@ -75,7 +75,7 @@ class CallPlan:
 
 
 class ToolCallValidationError(Exception):
-    """Raised by ``on_invalid="raise"`` before any tool call is executed.
+    """Raised by ``on_unresolved="raise"`` before any tool call is executed.
 
     Attributes:
         failures: One ``(tool_name, tool_call_id, error_text)`` triple per
@@ -106,6 +106,9 @@ class ToolCallPipeline:
         correction_mode: Extraction mode of the correction cycle.
         strip_thinking: Strip ``<think>`` blocks from raw invalid-call args.
         json_repair: Apply json-repair to raw invalid-call args that do not parse.
+        on_unresolved: What happens to calls that stay invalid: ``"feedback"``
+            answers them with an error ToolMessage, ``"raise"`` raises
+            ToolCallValidationError before any call executes.
     """
 
     def __init__(
@@ -117,13 +120,20 @@ class ToolCallPipeline:
         correction_mode: ExtractionMode,
         strip_thinking: bool,
         json_repair: bool,
+        on_unresolved: Literal["feedback", "raise"] = "feedback",
     ) -> None:
         self._correction_model = correction_model
         self._max_correction_retries = max_correction_retries
         self._correction_mode = correction_mode
         self._strip_thinking = strip_thinking
         self._json_repair = json_repair
+        self._on_unresolved = on_unresolved
         self._tools_by_name = _build_registry(tools)
+
+    @property
+    def correction_enabled(self) -> bool:
+        """Whether invalid calls go through the LLM correction cycle."""
+        return self._correction_model is not None
 
     def plan(self, message: AIMessage) -> list[CallPlan]:
         """Classify every call on *message* into an executable/invalid plan."""
@@ -319,6 +329,39 @@ class ToolCallPipeline:
         plan.executable = True
         plan.outcome = "corrected"
 
+    def resolve(self, plans: list[CallPlan]) -> list[ToolMessage]:
+        """Apply ``on_unresolved`` and finalize every plan's ``outcome``.
+
+        Args:
+            plans: The planned (and possibly corrected) calls.
+
+        Returns:
+            One error ``ToolMessage`` per call answered with feedback, in call order.
+
+        Raises:
+            ToolCallValidationError: With ``on_unresolved="raise"``, before any
+                call executes, when at least one call is not executable.
+        """
+        if self._on_unresolved == "raise":
+            failures = [
+                (plan.call["name"], plan.call.get("id"), plan.error_text or "invalid tool call")
+                for plan in plans
+                if not plan.executable
+            ]
+            if failures:
+                raise ToolCallValidationError(failures)
+        feedback: list[ToolMessage] = []
+        for plan in plans:
+            if plan.executable:
+                if not plan.outcome:
+                    plan.outcome = "executed"
+            elif plan.answerable:
+                plan.outcome = "feedback"
+                feedback.append(self.feedback_message(plan))
+            else:
+                plan.outcome = "dropped"
+        return feedback
+
     def schema_for(self, name: str) -> type[BaseModel] | None:
         """Return tool *name*'s Pydantic args schema, or ``None`` if unknown/non-Pydantic."""
         tool = self._tools_by_name.get(name)
@@ -467,9 +510,8 @@ def _finalized_outcome(outcome: ToolCallOutcome | Literal[""]) -> ToolCallOutcom
     """Narrow a finalized ``CallPlan.outcome`` to the public ``ToolCallOutcome``.
 
     ``""`` only ever exists as ``CallPlan.outcome``'s pre-dispatch default —
-    the dispatch loop in ``_arun`` sets every plan's outcome to one of the
-    four real values before stats are built (see the loop right after the
-    ``on_invalid == "correct"`` branch). This turns that invariant into an
+    ``ToolCallPipeline.resolve`` sets every plan's outcome to one of the
+    four real values before stats are built. This turns that invariant into an
     explicit, type-checked guarantee instead of silently letting an
     unfinalized ``""`` leak into the public ``ToolCallStats`` API.
     """
