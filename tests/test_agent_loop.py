@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from saidex import (
     ExtractionMode,
     ExtractorRunStats,
+    GroundedStr,
     Tool,
     extract_data_with_tools,
     run_extractor_agent,
@@ -475,3 +476,100 @@ async def test_tool_invoke_declared_schema_field_flows_through() -> None:
     assert data["status"] == "ok"
     assert data["schema"] == "public"
     assert data["name"] == "t"
+
+
+# ---------------------------------------------------------------------------
+# Validation budget — the tool-calling loop stops once it is spent
+# ---------------------------------------------------------------------------
+
+
+class GroundedAnswer(BaseModel):
+    result: GroundedStr
+
+
+def _reject_all(_: Any) -> str:
+    return "never good enough"
+
+
+@pytest.mark.parametrize(
+    ("schema", "args", "validator"),
+    [
+        pytest.param(FinalAnswer, {"result": "x", "confidence": "high"}, None, id="pydantic"),
+        pytest.param(GroundedAnswer, {"result": "not in source"}, None, id="grounding"),
+        pytest.param(FinalAnswer, {"result": "x"}, _reject_all, id="validator"),
+    ],
+)
+async def test_budget_spent_stops_loop(
+    schema: type[BaseModel], args: dict[str, Any], validator: Any
+) -> None:
+    name = schema.__name__
+    llm = _make_llm([_make_response(tool_calls=[_tc(name, args, f"c{i}")]) for i in range(10)])
+
+    result, stats = await extract_data_with_tools(
+        llm,
+        schema,
+        "the source text",
+        tools=[],
+        max_validation_retries=2,
+        retry_config=_NO_RETRY,
+        validator=validator,
+    )
+
+    assert result is None
+    assert stats.iterations == 3
+    assert llm.bind_tools.return_value.ainvoke.await_count == 3
+    assert stats.failure_reason == "validation_exhausted"
+
+
+async def test_valid_final_answer_in_same_response_still_wins() -> None:
+    bad = _tc("FinalAnswer", {"result": "x", "confidence": "high"}, "bad")
+    good = _tc("FinalAnswer", {"result": "ok"}, "good")
+    llm = _make_llm([_make_response(tool_calls=[bad, good])])
+
+    result, stats = await extract_data_with_tools(
+        llm, FinalAnswer, "text", tools=[], max_validation_retries=0, retry_config=_NO_RETRY
+    )
+
+    assert result is not None and result.result == "ok"
+    assert stats.success
+
+
+async def test_helper_tools_in_same_response_still_run() -> None:
+    calls: list[str] = []
+
+    async def handler(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs["name"])
+        return {"ok": True}
+
+    tool = Tool(name="do_thing", description=".", parameters=ToolArgs, handler=handler)
+    bad = _tc("FinalAnswer", {"result": "x", "confidence": "high"}, "bad")
+    helper = _tc("do_thing", {"name": "side-effect"}, "h1")
+    llm = _make_llm([_make_response(tool_calls=[bad, helper])] * 3)
+
+    result, stats = await extract_data_with_tools(
+        llm, FinalAnswer, "text", tools=[tool], max_validation_retries=0, retry_config=_NO_RETRY
+    )
+
+    assert result is None
+    assert calls == ["side-effect"]
+    assert stats.iterations == 1
+    assert stats.tool_calls == 1
+
+
+async def test_fallback_starts_after_primary_budget_spent() -> None:
+    bad = _tc("FinalAnswer", {"result": "x", "confidence": "high"}, "bad")
+    primary = _make_llm([_make_response(tool_calls=[bad])] * 10)
+    fallback = _make_llm([_make_response(tool_calls=[_tc("FinalAnswer", {"result": "fb"})])])
+
+    result, stats = await extract_data_with_tools(
+        primary,
+        FinalAnswer,
+        "text",
+        tools=[],
+        fallback_llm_model=fallback,
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+    )
+
+    assert result is not None and result.result == "fb"
+    assert primary.bind_tools.return_value.ainvoke.await_count == 2

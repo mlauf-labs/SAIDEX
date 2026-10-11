@@ -1001,7 +1001,7 @@ async def extract_data_with_tools(
             used when omitted.
         callbacks: Optional LangChain callback handlers (or an existing callback manager).
         fallback_llm_model: Optional fallback model tried when the primary
-            exhausts its iteration budget.
+            exhausts its iteration or validation budget.
         max_iterations: Maximum LLM invocations per model attempt (default 12).
         max_validation_retries: Max times the final-answer schema may fail
             validation before giving up (default 3).
@@ -1079,9 +1079,9 @@ async def run_extractor_agent(
     history (e.g. multi-turn scenarios or injecting previous context).
 
     Supports an optional *fallback_llm_model*: when the primary model
-    exhausts its iteration budget without producing a valid answer, the
-    fallback model receives a fresh conversation starting from the original
-    messages with a brief hint.
+    exhausts its iteration or validation budget without producing a valid
+    answer, the fallback model receives a fresh conversation starting from
+    the original messages with a brief hint.
 
     Args:
         on_complete: Optional async completion hook — see :func:`extract_data`.
@@ -1495,6 +1495,7 @@ async def _run_extractor_agent_with_model(
         tool_result_messages: list[ToolMessage] = []
         found_final_answer: MODEL_T | None = None
         final_answer_valid = False
+        budget_spent = False
 
         for tc in tool_calls:
             tc_name: str = tc.get("name", "")
@@ -1518,6 +1519,7 @@ async def _run_extractor_agent_with_model(
                     )
                     failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
+                        budget_spent = True
                         tool_result_messages.append(
                             ToolMessage(
                                 content=f"Schema validation failed: {error_text}",
@@ -1566,7 +1568,9 @@ async def _run_extractor_agent_with_model(
                                 tool_call_id=tc_id,
                             )
                         )
-                        if not at_limit:
+                        if at_limit:
+                            budget_spent = True
+                        else:
                             validation_retries += 1
 
             # ── Helper tool ───────────────────────────────────────────────
@@ -1608,11 +1612,10 @@ async def _run_extractor_agent_with_model(
             )
             return found_final_answer, _stats(success=True, reason=None)
 
-        # Check if we already hit the validation limit for a bad final answer.
-        if validation_retries >= max_validation_retries and not final_answer_valid:
-            # Give the model one last iteration only when tool_calls were present
-            # (otherwise we already broke out above).
-            pass
+        if budget_spent:
+            # Same contract as the JSON final-answer path: a final answer
+            # rejected with no validation retries left ends this model's run.
+            break
 
     logger.error(
         "%s: agent loop exhausted budget for %s "
