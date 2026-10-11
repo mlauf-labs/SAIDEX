@@ -2988,6 +2988,28 @@ def _parse_json_response(
             f"'{schema_name}' schema — no code fences and no extra text."
         )
 
+    if isinstance(parsed, list) and parsed and all(isinstance(item, dict) for item in parsed):
+        if len(parsed) == 1:
+            logger.debug(
+                "%s: JSON response for %s was a single object wrapped in an array; unwrapping.",
+                model_label,
+                schema_name,
+            )
+            parsed = parsed[0]
+        else:
+            logger.warning(
+                "%s: JSON response for %s contained %d separate objects.",
+                model_label,
+                schema_name,
+                len(parsed),
+            )
+            return None, (
+                f"Your response contained {len(parsed)} separate JSON objects. "
+                f"Return exactly one JSON object that matches the '{schema_name}' "
+                f"schema — if you need several records, put them inside that object "
+                f"as the schema describes."
+            )
+
     if not isinstance(parsed, dict):
         logger.warning(
             "%s: JSON response for %s was not an object (got %s).",
@@ -3058,6 +3080,12 @@ def _extract_json_from_content(content: Any) -> Any:
             except json.JSONDecodeError:
                 text = stripped
 
+        # json-repair merges concatenated objects that share keys (the last one wins),
+        # which would silently drop data; surface them as a list instead.
+        objects = _split_concatenated_objects(text)
+        if objects is not None:
+            return objects
+
         # Fallback 1: isolate the outermost { ... } block and retry.
         start = text.find("{")
         end = text.rfind("}")
@@ -3079,6 +3107,34 @@ def _extract_json_from_content(content: Any) -> Any:
         raise ValueError(
             f"json-repair could not produce a dict/list from content: {text[:200]!r}"
         ) from json_exc
+
+
+def _split_concatenated_objects(text: str) -> list[dict[str, Any]] | None:
+    """Return the objects of ``{...}{...}`` / ``{...},{...}`` text, else ``None``.
+
+    Args:
+        text: Candidate text that is not valid JSON as a whole.
+
+    Returns:
+        A list of at least two dicts when *text* consists solely of JSON objects
+        separated by whitespace or commas, otherwise ``None``.
+    """
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i].isspace() or text[i] == ",":
+            i += 1
+            continue
+        try:
+            value, i = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(value, dict):
+            return None
+        objects.append(value)
+    return objects if len(objects) >= 2 else None
 
 
 def _strip_json_comments(text: str) -> str:

@@ -21,7 +21,7 @@ parsed. Review every diff deliberately before committing; do not regenerate blin
 
 ## Surprising current behaviour (kept as golden)
 
-- `two_objects`: two concatenated objects become a list of both, not "the first wins".
+- `two_objects`: two concatenated objects become a list of both, not "the first wins". `_parse_json_response` then rejects the list and asks the model for a single object.
 - `truncated_string`: the cut-off string is kept as-is (`"Mathematician and wri"`).
 - `number_formats`: the leading `+` is dropped and `1.5e3` becomes the float `1500.0`.
 - `unicode_escapes_broken`: json-repair drops the trailing `\n` escape inside a string
