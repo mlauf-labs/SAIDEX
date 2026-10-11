@@ -338,6 +338,7 @@ async def main() -> None:
                 metadata={
                     "success": event.stats.success,
                     "failure_reason": event.stats.failure_reason,
+                    "llm_error_kind": event.stats.llm_error_kind,
                     "salvaged": event.stats.salvaged,
                     "problem_fields": list(event.stats.problem_fields),
                     "total_retries": event.stats.total_retries,

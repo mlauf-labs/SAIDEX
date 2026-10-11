@@ -70,6 +70,7 @@ result, stats = await extract_data_from_text(...)
 
 stats.success           # bool — did the run produce a validated instance?
 stats.failure_reason    # FailureReason | None — why it failed (None on success)
+stats.llm_error_kind    # ModelErrorKind | None — why the model call failed (llm_error only)
 stats.primary_retries   # int — retries on the primary model
 stats.fallback_retries  # int — retries on the fallback model
 stats.total_retries     # int — sum of both

@@ -127,16 +127,39 @@ RetryConfig(
     max_retries=3,
     retry_delays=[1.0, 2.0, 4.0],       # exponential back-off
     retryable_exceptions=(               # auto-detected from installed packages:
-        httpx.ConnectError,              #   httpx (if installed)
-        httpx.TimeoutException,
+        ModelConnectionError,            #   langchain-core (if recent enough)
+        ModelTimeoutError,
+        ModelAPIError,                   #   HTTP 5xx
         openai.APIConnectionError,       #   openai (if installed)
         openai.APITimeoutError,
+        openai.InternalServerError,
+        httpx.ConnectError,              #   httpx / httpx2 (if installed)
+        httpx.TimeoutException,
+        httpx.RemoteProtocolError,
     ),
-    rate_limit_exceptions=(openai.RateLimitError,),  # if openai installed
+    rate_limit_exceptions=(              # if available
+        ModelRateLimitError,
+        openai.RateLimitError,
+    ),
     rate_limit_retry_interval=10.0,      # seconds between rate-limit retries
     rate_limit_max_duration_seconds=900.0,   # give up after 15 minutes
 )
 ```
+
+Transient errors are langchain-core's `ModelConnectionError`, `ModelTimeoutError`
+and `ModelAPIError` (HTTP 5xx), plus `openai.APIConnectionError`,
+`openai.APITimeoutError`, `openai.InternalServerError` and the `httpx` / `httpx2`
+`ConnectError`, `TimeoutException` and `RemoteProtocolError`. Rate limits are
+`ModelRateLimitError` and `openai.RateLimitError`.
+
+!!! note "Server errors are retried by default"
+    Server errors (HTTP 5xx) are retried by default; versions up to 0.7.x did not
+    retry them.
+
+A custom `RetryConfig(retryable_exceptions=...)` keeps full control over what is
+retried. To react to a failed run in your own handlers, use
+`saidex.classify_model_error(exc)` or `stats.llm_error_kind` (see
+[Failure Reasons](failure-reasons.md#why-did-the-model-call-fail-llm_error_kind)).
 
 ### Custom configuration
 
@@ -197,8 +220,8 @@ config = RetryConfig(
 | --- | --- | --- | --- |
 | `max_retries` | `int` | `3` | Max transient-error retries per LLM call |
 | `retry_delays` | `list[float]` | `[1.0, 2.0, 4.0]` | Seconds to wait before each retry |
-| `retryable_exceptions` | `tuple[type[Exception], ...]` | httpx + openai network errors | Exceptions that trigger a transient retry |
-| `rate_limit_exceptions` | `tuple[type[Exception], ...]` | `openai.RateLimitError` | Exceptions that trigger rate-limit wait |
+| `retryable_exceptions` | `tuple[type[Exception], ...]` | langchain-core, openai and httpx network and 5xx errors | Exceptions that trigger a transient retry |
+| `rate_limit_exceptions` | `tuple[type[Exception], ...]` | `ModelRateLimitError`, `openai.RateLimitError` | Exceptions that trigger rate-limit wait |
 | `rate_limit_retry_interval` | `float` | `10.0` | Seconds between rate-limit retries |
 | `rate_limit_max_duration_seconds` | `float` | `900.0` | Total seconds before giving up on rate-limit retries |
 
