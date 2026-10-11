@@ -90,13 +90,26 @@ jobs:
         with:
           python-version: "3.14t"
 
+      # Some dependencies (e.g. orjson via langchain-core → langsmith) cannot be
+      # built for free-threaded Python yet. That is an ecosystem gap, not a
+      # SAIDEX failure: report it as a warning and skip the test run instead of
+      # turning the job red. Real test failures below still fail the job.
       - name: Install dependencies
-        run: uv sync --group dev
+        id: install
+        run: |
+          if uv sync --group dev; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning title=Free-threaded smoke test skipped::Dependencies could not be installed for Python 3.14t (no free-threaded wheels yet)."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Confirm the GIL is disabled
+        if: steps.install.outputs.ok == 'true'
         run: uv run python -c "import sys; print('GIL enabled:', sys._is_gil_enabled())"
 
       - name: Run tests
+        if: steps.install.outputs.ok == 'true'
         run: uv run pytest -q
 
   # Single aggregated check to use as the required status check in branch
