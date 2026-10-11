@@ -40,3 +40,7 @@ fresh attempts. If both fail, the combined reason is the **fallback's**. It is
 the **primary's** only when the fallback reported none, e.g. because it was
 configured with zero attempts. The same rule applies to `extract_data*`, the
 batch variants and the agent loop.
+
+## Salvaged runs
+
+A run salvaged by `on_exhausted` reports `success=True`, `failure_reason=None` and `salvaged=True`; the original rejection stays in `last_rejection`.

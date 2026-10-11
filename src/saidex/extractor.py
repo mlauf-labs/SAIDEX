@@ -19,12 +19,14 @@ from langchain_core.messages.human import HumanMessage
 from langchain_core.messages.system import SystemMessage
 from langchain_core.messages.tool import ToolMessage
 from langchain_core.utils.function_calling import convert_to_openai_tool
-from pydantic import BaseModel, Field, create_model
+from pydantic import AliasChoices, BaseModel, Field, RootModel, ValidationError, create_model
+from pydantic.fields import FieldInfo
 
 from ._callbacks import _ChainRun
 from .grounding import _collect_field_checks
 from .models import (
     EXTERNAL_VALIDATOR_PATH,
+    ON_EXHAUSTED_PATH,
     ExtractDataStats,
     ExtractionEvent,
     ExtractionMode,
@@ -39,7 +41,7 @@ from .models import (
 )
 from .observability import dispatch_to_observers
 from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, with_retry
-from .utils import create_instance_with_issues
+from .utils import _format_validation_error, create_instance_with_issues
 
 if TYPE_CHECKING:
     from .tools import Tool
@@ -54,6 +56,22 @@ _MODEL_CONTRA = TypeVar("_MODEL_CONTRA", bound=BaseModel, contravariant=True)
 #: Signature of an ``on_complete`` hook: an async callable receiving a single
 #: :class:`~saidex.models.ExtractionEvent`.
 OnComplete = Callable[[ExtractionEvent], Awaitable[None]]
+
+#: Signature of an ``on_exhausted`` hook: called once after every retry (and
+#: the fallback) failed, with the last schema-valid candidate and the issues
+#: that rejected it.  Return a salvaged instance to end the run successfully
+#: (``stats.salvaged=True``), or ``None`` to let it fail.  Sync or async.
+OnExhausted = Callable[
+    [MODEL_T, tuple[FieldIssue, ...]], "MODEL_T | None | Awaitable[MODEL_T | None]"
+]
+
+#: List-variant counterpart of :data:`OnExhausted`: receives the last rejected
+#: ``list`` of items and returns the items to keep (``[]`` is a valid result),
+#: or ``None`` to let the run fail.
+OnExhaustedList = Callable[
+    [list[MODEL_T], tuple[FieldIssue, ...]],
+    "list[MODEL_T] | None | Awaitable[list[MODEL_T] | None]",
+]
 
 #: What an external ``validator`` may return: ``None`` (or any falsy value) to
 #: accept, a non-empty string to reject with one message, or one / several
@@ -238,11 +256,169 @@ def _to_field_issues(issues: Sequence[ValidationIssue], schema_name: str) -> lis
     ]
 
 
+#: ``model_validate(..., by_name=True)`` exists from Pydantic 2.11 on and
+#: accepts field names for every alias form (``AliasChoices``, ``AliasPath``).
+_VALIDATE_BY_NAME = "by_name" in inspect.signature(BaseModel.model_validate).parameters
+
+
+def _input_key(name: str, info: FieldInfo) -> str:
+    """Return the input key under which field *name* re-validates.
+
+    The field name when ``by_name`` validation is available; otherwise the
+    first string validation alias (Pydantic < 2.11 accepts only aliases unless
+    the schema sets ``populate_by_name``).
+    """
+    if _VALIDATE_BY_NAME:
+        return name
+    alias = info.validation_alias
+    if isinstance(alias, AliasChoices):
+        alias = next((c for c in alias.choices if isinstance(c, str)), None)
+    if isinstance(alias, str):
+        return alias
+    return info.alias or name
+
+
+def _field_values(value: Any) -> Any:
+    """Re-express *value* as validation input built from its stored field values.
+
+    Models are read field by field instead of serialized, so field serializers,
+    ``exclude=True`` and serialization aliases cannot change what is
+    re-validated.  Computed fields are not model fields and are left out, at
+    every depth, so a nested ``extra="forbid"`` model does not reject them.
+    """
+    if isinstance(value, RootModel):
+        return _field_values(value.root)
+    if isinstance(value, BaseModel):
+        stored = value.__dict__
+        data = {
+            _input_key(name, info): _field_values(stored[name])
+            for name, info in type(value).model_fields.items()
+            if name in stored
+        }
+        for key, extra in (value.__pydantic_extra__ or {}).items():
+            data[key] = _field_values(extra)
+        return data
+    if isinstance(value, dict):
+        return {key: _field_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_field_values(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_field_values(item) for item in value)
+    return value
+
+
+def _revalidate(schema: type[MODEL_T], outcome: BaseModel) -> tuple[MODEL_T | None, str | None]:
+    """Validate an ``on_exhausted`` result against *schema* from scratch.
+
+    The primary attempt validates the stored field values (see
+    :func:`_field_values`).  If that fails, the ``model_dump(round_trip=True)``
+    output is tried as well, for schemas whose validators expect serialized
+    input.  Validators may raise any exception on already-parsed values, so
+    every exception counts as a failed attempt here.
+
+    Returns:
+        ``(instance, None)`` when valid, otherwise ``(None, error_text)`` with
+        the primary attempt's error.
+    """
+    data = _field_values(outcome)
+    try:
+        if _VALIDATE_BY_NAME:
+            return schema.model_validate(data, by_name=True), None
+        return schema.model_validate(data), None
+    except ValidationError as exc:
+        error_text = _format_validation_error(schema, exc)
+    except Exception as exc:  # noqa: BLE001 — see docstring
+        error_text = f"{exc.__class__.__name__}: {exc}"
+    try:
+        dumped = outcome.model_dump(by_alias=True, round_trip=True, warnings=False)
+        return schema.model_validate(dumped), None
+    except Exception:  # noqa: BLE001 — see docstring
+        return None, error_text
+
+
+async def _salvage(
+    on_exhausted: OnExhausted[MODEL_T],
+    schema: type[MODEL_T],
+    candidate: MODEL_T,
+    rejection: tuple[FieldIssue, ...],
+    *,
+    attempt: int,
+) -> tuple[MODEL_T | None, FieldIssue | None]:
+    """Run an ``on_exhausted`` hook and re-validate what it returns.
+
+    The hook receives a deep copy of *candidate*.  The returned instance is
+    re-validated against *schema* only (see :func:`_revalidate`): the hook owns
+    the decision, so grounding and the external validator are not re-run.
+    Re-validation catches instances built with ``model_copy(update=...)`` or
+    ``model_construct``, which bypass validation.
+
+    Args:
+        on_exhausted: The caller's hook.
+        schema: The schema the result must satisfy.
+        candidate: The last schema-valid candidate.
+        rejection: The issues that rejected *candidate*.
+        attempt: Attempt index stamped onto an invalid-result issue.
+
+    Returns:
+        ``(instance, None)`` when salvaged, ``(None, None)`` when the hook
+        declined, ``(None, issue)`` when its result failed schema validation.
+
+    Raises:
+        TypeError: The hook returned neither ``None`` nor a model instance.
+    """
+    # A deep copy, so a hook that edits in place cannot rewrite the audit record
+    # (``stats.last_candidate``), which still references the original.
+    outcome = on_exhausted(candidate.model_copy(deep=True), rejection)
+    if inspect.isawaitable(outcome):
+        outcome = await outcome
+    if outcome is None:
+        return None, None
+    if not isinstance(outcome, BaseModel):
+        raise TypeError(
+            f"on_exhausted must return a {schema.__name__} instance or None; got {outcome!r}"
+        )
+    instance, error_text = _revalidate(schema, outcome)
+    if instance is not None:
+        return instance, None
+    logger.warning("on_exhausted returned an invalid %s: %s", schema.__name__, error_text)
+    return None, FieldIssue(
+        schema_name=schema.__name__,
+        field_path=ON_EXHAUSTED_PATH,
+        category="other",
+        error_type="on_exhausted_invalid",
+        message=error_text or "on_exhausted returned an invalid instance",
+        attempt=attempt,
+    )
+
+
 def _item_issue_path(index: int, field_path: str) -> str:
     """Locate an item validator's finding inside the ``…List`` container."""
     if field_path == EXTERNAL_VALIDATOR_PATH:
         return f"items -> {index}"
     return f"items -> {index} -> {field_path}"
+
+
+def issue_item_index(issue: FieldIssue, list_field: str = "items") -> int | None:
+    """Return the list index an issue points at, or ``None``.
+
+    Batch extraction reports item issues with paths like ``items -> 3`` or
+    ``items -> 3 -> quote``; for a list field inside your own schema the path
+    starts with that field's name (``findings -> 3 -> quote``).  Use this in an
+    ``on_exhausted`` hook to drop the items that were rejected.
+
+    Args:
+        issue: The issue to inspect, e.g. from ``stats.last_rejection``.
+        list_field: Name of the list field; ``"items"`` for the batch variants.
+
+    Returns:
+        The 0-based item index, or ``None`` when the path does not start with
+        ``<list_field> -> <index>``.
+    """
+    head, sep, rest = issue.field_path.partition(" -> ")
+    if head != list_field or not sep:
+        return None
+    index = rest.split(" -> ", 1)[0]
+    return int(index) if index.isdigit() else None
 
 
 async def _run_external_validator(
@@ -445,6 +621,7 @@ async def extract_data(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
     # Private: suppresses observer dispatch for the internal container
     # sub-extraction inside extract_data_list. Not part of the public API.
     _notify_observers: bool = True,
@@ -524,6 +701,18 @@ async def extract_data(
             loop with the findings surfaced to the model, so it can correct
             cross-field, stateful, or reference-data problems that Pydantic
             alone cannot express.  An invalid return type raises ``TypeError``.
+        on_exhausted: Optional hook (sync or async) called once when every
+            attempt, including the fallback's, has failed and a schema-valid
+            candidate exists (``stats.last_candidate``).  It receives that
+            candidate and ``stats.last_rejection`` and returns a salvaged
+            instance (the run then succeeds with ``stats.salvaged=True``) or
+            ``None``.  The hook gets a deep copy, so editing it in place never
+            changes ``stats.last_candidate``.  The returned instance is
+            re-validated against *schema* only, not by grounding or
+            *validator*, from its stored field values (computed fields left
+            out), so aliases and field serializers do not interfere; an invalid
+            result keeps the run failed and adds an ``on_exhausted_invalid``
+            issue.  Exceptions propagate.
 
     Returns:
         A tuple of ``(model_instance, stats)``:
@@ -592,6 +781,23 @@ async def extract_data(
         if owns_trace:
             await trace.end(_extract_outputs(result, stats))
         return result, stats
+
+    async def _fail(
+        stats: ExtractDataStats, candidate: MODEL_T | None
+    ) -> tuple[MODEL_T | None, ExtractDataStats]:
+        if on_exhausted is None or candidate is None:
+            return await _finish(None, stats)
+        salvaged, invalid = await _salvage(
+            on_exhausted, schema, candidate, stats.last_rejection, attempt=stats.total_retries
+        )
+        if salvaged is not None:
+            logger.info("on_exhausted salvaged a result for %s.", schema.__name__)
+            return await _finish(
+                salvaged, replace(stats, success=True, failure_reason=None, salvaged=True)
+            )
+        if invalid is not None:
+            stats = replace(stats, field_issues=(*stats.field_issues, invalid))
+        return await _finish(None, stats)
 
     try:
         primary = await _try_with_model(
@@ -680,8 +886,7 @@ async def extract_data(
                 primary.retries + fallback.retries,
             )
             last_candidate, last_rejection = _last_candidate(primary, fallback)
-            return await _finish(
-                None,
+            return await _fail(
                 ExtractDataStats(
                     primary_retries=primary.retries,
                     fallback_retries=fallback.retries,
@@ -695,6 +900,7 @@ async def extract_data(
                     last_candidate=last_candidate,
                     last_rejection=last_rejection,
                 ),
+                last_candidate,
             )
 
         logger.error(
@@ -703,8 +909,7 @@ async def extract_data(
             primary.retries,
         )
         last_candidate, last_rejection = _last_candidate(primary)
-        return await _finish(
-            None,
+        return await _fail(
             ExtractDataStats(
                 primary_retries=primary.retries,
                 schema_name=schema.__name__,
@@ -714,6 +919,7 @@ async def extract_data(
                 last_candidate=last_candidate,
                 last_rejection=last_rejection,
             ),
+            last_candidate,
         )
     except BaseException as exc:
         # BaseException so a task cancellation (asyncio.CancelledError) still
@@ -739,6 +945,7 @@ async def extract_data_from_text(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a plain text string.
 
@@ -766,6 +973,7 @@ async def extract_data_from_text(
             ``stats.source_text``, passed to *on_complete*, and included in the
             trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable — see :func:`extract_data`.
+        on_exhausted: Optional salvage hook — see :func:`extract_data`.
 
     Returns:
         Same as :func:`extract_data`.
@@ -804,6 +1012,7 @@ async def extract_data_from_text(
         on_complete=on_complete,
         capture_source_text=capture_source_text,
         validator=validator,
+        on_exhausted=on_exhausted,
     )
 
 
@@ -850,6 +1059,7 @@ async def extract_data_list(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhaustedList[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a message list.
 
@@ -892,6 +1102,13 @@ async def extract_data_list(
             re-enters the shared retry loop.  Wrap it with :func:`with_context` to
             receive the attempt context; every item of one attempt gets the same
             context.  See :func:`extract_data`.
+        on_exhausted: Optional salvage hook receiving the last rejected ``list`` of
+            items and the issues that rejected it (paths ``items -> i``, item
+            schema name).  Return the items to keep (``[]`` is allowed) or
+            ``None``; every element must be a *schema* instance, anything else
+            (a ``dict`` included) raises ``TypeError``.  The items are copies,
+            and the kept list is re-validated like a single result — see
+            :func:`extract_data`.
 
     Returns:
         A tuple of ``(items, stats)``:
@@ -928,6 +1145,35 @@ async def extract_data_list(
 
         container_validator = WithContext(_validate_each_item)
 
+    container_hook: OnExhausted[BaseModel] | None = None
+    if on_exhausted is not None:
+        item_hook = on_exhausted
+
+        async def _salvage_items(
+            container_instance: BaseModel, rejection: tuple[FieldIssue, ...]
+        ) -> BaseModel | None:
+            """Hand the caller's hook the items, then re-wrap what it keeps."""
+            items = list(cast(Any, container_instance).items)
+            item_rejection = tuple(replace(i, schema_name=schema.__name__) for i in rejection)
+            kept = item_hook(items, item_rejection)
+            if inspect.isawaitable(kept):
+                kept = await kept
+            if kept is None:
+                return None
+            if not isinstance(kept, list):
+                raise TypeError(
+                    f"on_exhausted must return a list of {schema.__name__} or None; got {kept!r}"
+                )
+            wrong = next((k for k in kept if not isinstance(k, schema)), None)
+            if wrong is not None:
+                raise TypeError(
+                    f"on_exhausted must return a list of {schema.__name__} instances; "
+                    f"got an element {wrong!r}"
+                )
+            return container.model_construct(items=kept)
+
+        container_hook = _salvage_items
+
     # Computed lazily: the list-level source text only feeds the trace inputs
     # (the inner extract_data derives its own copy for grounding).
     grounding_source = _source_text_from_messages(messages) if capture_source_text else ""
@@ -954,12 +1200,22 @@ async def extract_data_list(
             retry_config=retry_config,
             capture_source_text=capture_source_text,
             validator=container_validator,
+            on_exhausted=container_hook,
             _notify_observers=False,
             _trace=trace,
         )
         # Report the item schema name (not the internal ``…List`` container) so
         # the stats group under the schema the caller actually passed.
-        item_issues = tuple(replace(i, schema_name=schema.__name__) for i in stats.field_issues)
+        item_issues = tuple(
+            replace(
+                i,
+                schema_name=schema.__name__,
+                message=i.message.replace(f"'{container.__name__}'", f"'list[{schema.__name__}]'")
+                if i.error_type == "on_exhausted_invalid"
+                else i.message,
+            )
+            for i in stats.field_issues
+        )
         container_candidate = stats.last_candidate
         stats = replace(
             stats,
@@ -1011,6 +1267,7 @@ async def extract_data_list_from_text(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhaustedList[MODEL_T] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a plain text string.
 
@@ -1040,6 +1297,8 @@ async def extract_data_list_from_text(
             ``stats.source_text``, passed to *on_complete*, and included in the
             trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable run on each item — see
+            :func:`extract_data_list`.
+        on_exhausted: Optional salvage hook for the item list — see
             :func:`extract_data_list`.
 
     Returns:
@@ -1080,6 +1339,7 @@ async def extract_data_list_from_text(
         on_complete=on_complete,
         capture_source_text=capture_source_text,
         validator=validator,
+        on_exhausted=on_exhausted,
     )
 
 
@@ -1099,6 +1359,7 @@ async def extract_data_with_tools(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Run an agentic tool-loop to produce a validated Pydantic model.
 
@@ -1141,6 +1402,7 @@ async def extract_data_with_tools(
             :class:`~saidex.models.ValidatorContext` whose ``max_attempts`` is
             ``max_validation_retries + 1``; ``max_iterations`` can end the loop
             before any attempt is final.
+        on_exhausted: Optional salvage hook — see :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -1180,6 +1442,7 @@ async def extract_data_with_tools(
         on_complete=on_complete,
         capture_source_text=capture_source_text,
         validator=validator,
+        on_exhausted=on_exhausted,
     )
 
 
@@ -1198,6 +1461,7 @@ async def run_extractor_agent(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Low-level agent loop that accepts a full message list.
 
@@ -1218,6 +1482,7 @@ async def run_extractor_agent(
             in the trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable applied to the final
             answer — see :func:`extract_data_with_tools`.
+        on_exhausted: Optional salvage hook — see :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -1257,6 +1522,26 @@ async def run_extractor_agent(
         )
         await trace.end(_agent_outputs(result, stats))
         return result, stats
+
+    async def _fail(stats: ExtractorRunStats) -> tuple[MODEL_T | None, ExtractorRunStats]:
+        candidate = cast("MODEL_T | None", stats.last_candidate)
+        if on_exhausted is None or candidate is None:
+            return await _finish(None, stats)
+        salvaged, invalid = await _salvage(
+            on_exhausted,
+            schema,
+            candidate,
+            stats.last_rejection,
+            attempt=stats.validation_retries,
+        )
+        if salvaged is not None:
+            logger.info("on_exhausted salvaged a result for agent loop (%s).", schema.__name__)
+            return await _finish(
+                salvaged, replace(stats, success=True, failure_reason=None, salvaged=True)
+            )
+        if invalid is not None:
+            stats = replace(stats, field_issues=(*stats.field_issues, invalid))
+        return await _finish(None, stats)
 
     try:
         result, primary_stats = await _run_extractor_agent_with_model(
@@ -1333,20 +1618,20 @@ async def run_extractor_agent(
             )
             if succeeded:
                 logger.info("Fallback model succeeded for agent loop (%s).", schema.__name__)
-            else:
-                logger.error(
-                    "Both models failed for agent loop (%s). Total iterations: %d.",
-                    schema.__name__,
-                    combined.iterations,
-                )
-            return await _finish(result, combined)
+                return await _finish(result, combined)
+            logger.error(
+                "Both models failed for agent loop (%s). Total iterations: %d.",
+                schema.__name__,
+                combined.iterations,
+            )
+            return await _fail(combined)
 
         logger.error(
             "Agent loop failed for %s after %d iterations (no fallback configured).",
             schema.__name__,
             primary_stats.iterations,
         )
-        return await _finish(None, primary_stats)
+        return await _fail(primary_stats)
     except BaseException as exc:
         # BaseException so a task cancellation (asyncio.CancelledError) still
         # closes the chain span instead of leaking it open in the tracer.
@@ -1386,6 +1671,7 @@ def _common_outputs(result: Any, stats: ExtractDataStats | ExtractorRunStats) ->
         "failure_reason": None if stats.failure_reason is None else stats.failure_reason.value,
         "fallback_used": stats.fallback_used,
         "has_last_candidate": stats.last_candidate is not None,
+        "salvaged": stats.salvaged,
         "problem_fields": list(stats.problem_fields),
         "format_errors": stats.format_errors,
     }

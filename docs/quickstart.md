@@ -72,10 +72,12 @@ stats.primary_retries   # int — retries on the primary model
 stats.fallback_retries  # int — retries on the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — did the fallback model run?
+stats.salvaged          # bool — result produced by an on_exhausted hook
 stats.format_errors     # int — pure parse / tool-call failures
 stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
 stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
-stats.last_candidate    # last schema-valid but rejected instance (None on success)
+stats.last_candidate    # last schema-valid but rejected instance
+                        # (None on a clean success; kept when salvaged)
 stats.last_rejection    # tuple[FieldIssue, ...] — the issues that rejected it
 ```
 

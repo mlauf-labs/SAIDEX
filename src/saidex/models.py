@@ -119,6 +119,10 @@ class FieldIssue:
 #: ``field_path`` of an external-validator issue that is not tied to a field.
 EXTERNAL_VALIDATOR_PATH = "<external validator>"
 
+#: ``field_path`` of the issue recorded when an ``on_exhausted`` hook returns an
+#: instance that fails schema validation.
+ON_EXHAUSTED_PATH = "<on_exhausted>"
+
 
 @dataclass(frozen=True)
 class ValidationIssue:
@@ -279,11 +283,18 @@ class _ExtractionStatsBase:
         last_candidate: On failure, the most recent instance that passed schema
             validation but was rejected by source grounding or the external
             validator — kept even when later attempts failed differently.  A
-            ``list`` of items for the batch variants.  ``None`` on success or
-            when no attempt produced a schema-valid instance.  Contains
-            extracted source data: treat it like ``source_text`` (PII).
+            ``list`` of items for the batch variants.  ``None`` on a clean
+            success or when no attempt produced a schema-valid instance.  A
+            salvaged run keeps it unchanged, as the audit record of what the
+            ``on_exhausted`` hook received.  Contains extracted source data:
+            treat it like ``source_text`` (PII).
         last_rejection: The ``"retry"``-level issues that rejected
-            :attr:`last_candidate`; ``()`` when there is none.
+            :attr:`last_candidate`; ``()`` when there is none (always on a
+            clean success).
+        salvaged: ``True`` when the run's retries were exhausted and an
+            ``on_exhausted`` hook turned the last candidate into the result.
+            Such a run reports ``success=True`` and ``failure_reason=None``;
+            check this flag to tell it apart from a clean success.
     """
 
     success: bool = False
@@ -295,6 +306,7 @@ class _ExtractionStatsBase:
     # Excluded from hash/repr: models and lists are unhashable, and repr lands in logs (PII).
     last_candidate: BaseModel | list[BaseModel] | None = field(default=None, hash=False, repr=False)
     last_rejection: tuple[FieldIssue, ...] = ()
+    salvaged: bool = False
 
     @property
     def problem_fields(self) -> tuple[str, ...]:
@@ -323,7 +335,7 @@ class ExtractDataStats(_ExtractionStatsBase):
     In addition to the fields below, every attribute of
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
     ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
-    ``last_candidate``, ``last_rejection``, ``problem_fields``)
+    ``last_candidate``, ``last_rejection``, ``salvaged``, ``problem_fields``)
     is available.
     """
 
@@ -352,7 +364,7 @@ class ExtractorRunStats(_ExtractionStatsBase):
     In addition to the fields below, every attribute of
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
     ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
-    ``last_candidate``, ``last_rejection``, ``problem_fields``)
+    ``last_candidate``, ``last_rejection``, ``salvaged``, ``problem_fields``)
     is available.
     """
 
@@ -366,7 +378,11 @@ class ExtractorRunStats(_ExtractionStatsBase):
         if not isinstance(other, ExtractorRunStats):
             return NotImplemented
         success = self.success or other.success
-        last_candidate, last_rejection = _combine_candidates(self, other, success=success)
+        salvaged = self.salvaged or other.salvaged
+        # A salvaged run keeps its audit pair, so only a clean success clears it.
+        last_candidate, last_rejection = _combine_candidates(
+            self, other, success=success and not salvaged
+        )
         return ExtractorRunStats(
             iterations=self.iterations + other.iterations,
             tool_calls=self.tool_calls + other.tool_calls,
@@ -381,6 +397,7 @@ class ExtractorRunStats(_ExtractionStatsBase):
             field_issues=(*self.field_issues, *other.field_issues),
             last_candidate=last_candidate,
             last_rejection=last_rejection,
+            salvaged=salvaged,
         )
 
 
