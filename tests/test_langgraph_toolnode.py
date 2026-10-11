@@ -11,7 +11,7 @@ import pytest
 pytest.importorskip("langgraph")
 
 from langchain_core.callbacks.base import BaseCallbackHandler  # noqa: E402
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage  # noqa: E402
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage  # noqa: E402
 from langchain_core.tools import InjectedToolCallId, StructuredTool, tool  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
@@ -2065,3 +2065,62 @@ async def test_validator_rejection_is_still_corrected() -> None:
     node = SaidexToolNode([add], validators={"add": _no_negative}, correction_model=correction)
     result = await node.ainvoke(_ok_state(a=-1), runtime=_NO_GRAPH_RUNTIME)
     assert _tool_messages(result)[0].content == "7"
+
+
+# ---------------------------------------------------------------------------
+# Correction prompt context
+# ---------------------------------------------------------------------------
+
+
+def _sent_prompt(correction: Any) -> str:
+    sent = correction.bind_tools.return_value.ainvoke.call_args.args[0]
+    return "\n".join(str(message.content) for message in sent)
+
+
+@pytest.mark.asyncio
+async def test_correction_prompt_carries_description_and_context() -> None:
+    correction = _correction_llm([{"a": 5, "b": 2}])
+    state = {
+        "messages": [
+            SystemMessage(content="secret system prompt"),
+            HumanMessage(content="Please add five and two"),
+            _ai([_call("add", {"a": "five", "b": 2}, "c1")]),
+        ]
+    }
+    await SaidexToolNode([add], correction_model=correction).ainvoke(
+        state, runtime=_NO_GRAPH_RUNTIME
+    )
+    prompt = _sent_prompt(correction)
+    assert "Add two integers." in prompt
+    assert "[user] Please add five and two" in prompt
+    assert "secret system prompt" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_correction_context_can_be_disabled() -> None:
+    correction = _correction_llm([{"a": 5, "b": 2}])
+    state = {
+        "messages": [
+            HumanMessage(content="Please add five and two"),
+            _ai([_call("add", {"a": "five", "b": 2}, "c1")]),
+        ]
+    }
+    node = SaidexToolNode([add], correction_model=correction, correction_context_messages=0)
+    await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert "Please add five and two" not in _sent_prompt(correction)
+
+
+@pytest.mark.asyncio
+async def test_correction_without_history_still_works() -> None:
+    correction = _correction_llm([{"a": 5, "b": 2}])
+    state = {"messages": [_ai([_call("add", {"a": "five", "b": 2}, "c1")])]}
+    result = await SaidexToolNode([add], correction_model=correction).ainvoke(
+        state, runtime=_NO_GRAPH_RUNTIME
+    )
+    assert _tool_messages(result)[0].content == "7"
+    assert "Conversation so far" not in _sent_prompt(correction)
+
+
+def test_ctor_rejects_negative_context_size() -> None:
+    with pytest.raises(ValueError, match="correction_context_messages"):
+        SaidexToolNode([add], correction_context_messages=-1)

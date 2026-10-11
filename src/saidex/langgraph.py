@@ -148,6 +148,9 @@ class SaidexToolNode(Runnable[Any, Any]):
             correction model fill it from the conversation instead. A call whose
             arguments contain keys the schema does not know is always corrected
             (likely a misnamed field).
+        correction_context_messages: How many messages before the AIMessage the
+            correction model sees, as text (system messages excluded, each cut to
+            2,000 characters), plus the AIMessage's own text. 0 disables the context.
         on_unresolved: What happens to calls that stay invalid: ``"feedback"``
             (default) answers them with an error ``ToolMessage``; ``"raise"``
             raises :class:`ToolCallValidationError` before any call executes;
@@ -195,6 +198,7 @@ class SaidexToolNode(Runnable[Any, Any]):
         max_correction_retries: int = 2,
         correction_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
         correct_missing_fields: bool = False,
+        correction_context_messages: int = 10,
         on_unresolved: OnUnresolved = "feedback",
         validators: Mapping[str, ToolValidator] | None = None,
         strip_thinking: bool = True,
@@ -218,6 +222,11 @@ class SaidexToolNode(Runnable[Any, Any]):
             raise ValueError(
                 "max_correction_retries must be at least 1 when a correction_model is set, "
                 f"got {max_correction_retries!r}"
+            )
+        if correction_context_messages < 0:
+            raise ValueError(
+                "correction_context_messages must not be negative, "
+                f"got {correction_context_messages!r}"
             )
         if not name.strip():
             raise ValueError(f"name must not be empty or whitespace-only, got {name!r}")
@@ -243,6 +252,7 @@ class SaidexToolNode(Runnable[Any, Any]):
             max_correction_retries=max_correction_retries,
             correction_mode=correction_mode,
             correct_missing_fields=correct_missing_fields,
+            correction_context_messages=correction_context_messages,
             strip_thinking=strip_thinking,
             json_repair=json_repair,
             on_unresolved=on_unresolved,

@@ -18,7 +18,7 @@ from typing import Any, Literal, TypeAlias
 
 from json_repair import repair_json
 from langchain_core.callbacks.base import Callbacks
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as _as_tool
 from pydantic import AliasChoices, BaseModel
@@ -84,6 +84,116 @@ class CallContext:
     def conversation(self) -> tuple[BaseMessage, ...]:
         """Messages up to and including the planned ``AIMessage``."""
         return self.messages[: self.ai_index + 1]
+
+
+#: Per-message character cap for the conversation context in a correction prompt.
+_CONTEXT_CHAR_LIMIT = 2000
+
+#: Content-block types that carry tool calls; rendered from ``tool_calls`` instead.
+_TOOL_CALL_BLOCK_TYPES = frozenset({"tool_use", "tool_call", "invalid_tool_call", "function_call"})
+
+
+def render_conversation(messages: Sequence[BaseMessage], ai_index: int, limit: int) -> str | None:
+    """Render the messages before the ``AIMessage`` at *ai_index* as prompt text.
+
+    Rendered as plain text rather than passed as chat messages: the history
+    references tools the correction model does not have bound, which
+    providers reject.
+
+    Args:
+        messages: The full message list from the graph state.
+        ai_index: Index of the ``AIMessage`` whose calls are being corrected.
+        limit: How many preceding messages to include; ``0`` disables the context.
+
+    Returns:
+        One block per message, oldest first and system messages excluded,
+        followed by the ``AIMessage``'s own text (its stated intent); ``None``
+        when there is nothing to render.
+    """
+    if limit <= 0:
+        return None
+    preceding = [m for m in messages[:ai_index] if not isinstance(m, SystemMessage)][-limit:]
+    blocks = [_render_message(message) for message in preceding]
+    intent = _text_of(messages[ai_index].content)
+    if intent:
+        blocks.append(_truncate(f"[assistant] {intent}"))
+    return "\n".join(blocks) if blocks else None
+
+
+def build_correction_prompt(
+    *,
+    tool_name: str,
+    description: str,
+    arguments: str,
+    error_text: str | None,
+    conversation: str | None,
+) -> str:
+    """Assemble the single user prompt of the correction cycle.
+
+    Args:
+        tool_name: The tool the invalid call targets.
+        description: The tool's description; omitted when empty.
+        arguments: The invalid arguments (raw string or JSON).
+        error_text: The structured validation errors, if any.
+        conversation: Output of :func:`render_conversation`, if any.
+
+    Returns:
+        The prompt text.
+    """
+    parts = [f"An AI agent produced an invalid call to the tool '{tool_name}'."]
+    if description:
+        parts.append(f"Tool description:\n{description}")
+    parts.append(f"Invalid arguments:\n{arguments}")
+    if error_text:
+        parts.append(f"Validation errors:\n{error_text}")
+    if conversation:
+        parts.append(f"Conversation so far (oldest first):\n{conversation}")
+    parts.append(
+        "Return the corrected tool arguments. Preserve the original intent; change only "
+        "what is needed to satisfy the schema. Use only values that appear in the invalid "
+        "arguments or the conversation; never invent missing values."
+    )
+    return "\n\n".join(parts)
+
+
+def _render_message(message: BaseMessage) -> str:
+    """One message as ``[role] text``, tool calls compact, capped in length."""
+    text = _text_of(message.content)
+    if isinstance(message, HumanMessage):
+        line = f"[user] {text}"
+    elif isinstance(message, ToolMessage):
+        line = f"[tool result: {message.name or 'unknown'}] {text}"
+    elif isinstance(message, AIMessage):
+        calls = "".join(
+            f"\n  -> {call['name']}({json.dumps(call['args'], ensure_ascii=False, default=str)})"
+            for call in message.tool_calls
+        )
+        line = f"[assistant] {text}{calls}"
+    else:
+        line = f"[{message.type}] {text}"
+    return _truncate(line)
+
+
+def _text_of(content: str | list[str | dict[Any, Any]]) -> str:
+    """Plain text of a message's content; non-text blocks become placeholders."""
+    if isinstance(content, str):
+        return content.strip()
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+        elif block.get("type") == "text" and isinstance(block.get("text"), str):
+            parts.append(block["text"])
+        elif block.get("type") not in _TOOL_CALL_BLOCK_TYPES:
+            parts.append(f"[{block.get('type', 'content')}]")
+    return " ".join(part.strip() for part in parts if part.strip())
+
+
+def _truncate(text: str) -> str:
+    """Cap *text* at :data:`_CONTEXT_CHAR_LIMIT` characters."""
+    if len(text) <= _CONTEXT_CHAR_LIMIT:
+        return text
+    return text[: _CONTEXT_CHAR_LIMIT - 1] + "…"
 
 
 #: Network-level retry config for the correction cycle's ``extract_data`` call.
@@ -190,6 +300,8 @@ class ToolCallPipeline:
         correction_mode: Extraction mode of the correction cycle.
         correct_missing_fields: Let the correction model fill missing required
             fields from the conversation instead of sending such calls to the agent.
+        correction_context_messages: How many messages before the AIMessage the
+            correction prompt includes; 0 disables the conversation context.
         strip_thinking: Strip ``<think>`` blocks from raw invalid-call args.
         json_repair: Apply json-repair to raw invalid-call args that do not parse.
         on_unresolved: What happens to calls that stay invalid: ``"feedback"``
@@ -210,6 +322,7 @@ class ToolCallPipeline:
         max_correction_retries: int,
         correction_mode: ExtractionMode,
         correct_missing_fields: bool = False,
+        correction_context_messages: int = 10,
         strip_thinking: bool,
         json_repair: bool,
         on_unresolved: OnUnresolved = "feedback",
@@ -219,6 +332,7 @@ class ToolCallPipeline:
         self._max_correction_retries = max_correction_retries
         self._correction_mode = correction_mode
         self._correct_missing_fields = correct_missing_fields
+        self._correction_context_messages = correction_context_messages
         self._strip_thinking = strip_thinking
         self._json_repair = json_repair
         self._on_unresolved = on_unresolved
@@ -507,12 +621,15 @@ class ToolCallPipeline:
             if plan.raw_args is not None
             else json.dumps(plan.call["args"], ensure_ascii=False, default=str)
         )
-        prompt = (
-            f"An AI agent produced an invalid call to the tool '{name}'.\n\n"
-            f"Invalid arguments:\n{raw}\n\n"
-            + (f"Validation errors:\n{plan.error_text}\n\n" if plan.error_text else "")
-            + "Return the corrected tool arguments. Preserve the original intent; "
-            "change only what is needed to satisfy the schema."
+        tool = self._tools_by_name.get(name)
+        prompt = build_correction_prompt(
+            tool_name=name,
+            description=tool.description if tool is not None else "",
+            arguments=raw,
+            error_text=plan.error_text,
+            conversation=render_conversation(
+                ctx.messages, ctx.ai_index, self._correction_context_messages
+            ),
         )
         try:
             instance, stats = await extract_data(
