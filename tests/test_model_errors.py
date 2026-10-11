@@ -12,6 +12,7 @@ from langchain_core import exceptions as lc
 import saidex
 from saidex import ModelErrorKind, classify_model_error
 from saidex import retry as retry_mod
+from saidex.retry import RetryConfig, with_retry
 
 # The CI lowest-direct job re-runs the core suite on langchain-core 0.3.69, which
 # has no standard model exceptions; the missing-module path is covered by
@@ -111,3 +112,49 @@ def test_model_error_kind_values_and_export() -> None:
     ]
     assert "ModelErrorKind" in saidex.__all__
     assert "classify_model_error" in saidex.__all__
+
+
+async def _fail_then_succeed(exc: BaseException, calls: list[int]) -> str:
+    calls.append(1)
+    if len(calls) == 1:
+        raise exc
+    return "ok"
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [lc.ModelAPIError, lc.ModelConnectionError, lc.ModelTimeoutError, openai.InternalServerError],
+)
+async def test_default_config_retries_retryable_errors(cls: type[BaseException]) -> None:
+    config = RetryConfig(retry_delays=[0.0])
+    calls: list[int] = []
+    result = await with_retry(lambda: _fail_then_succeed(_bare(cls), calls), config)
+    assert result.result == "ok" and result.retry_count == 1
+
+
+@pytest.mark.parametrize(
+    "cls",
+    [
+        lc.ModelAuthenticationError,
+        lc.ModelInvalidRequestError,
+        lc.ContextOverflowError,
+        openai.BadRequestError,
+    ],
+)
+async def test_default_config_does_not_retry_permanent_errors(cls: type[BaseException]) -> None:
+    config = RetryConfig(retry_delays=[0.0])
+    calls: list[int] = []
+    with pytest.raises(cls):
+        await with_retry(lambda: _fail_then_succeed(_bare(cls), calls), config)
+    assert len(calls) == 1
+
+
+def test_default_rate_limit_exceptions_include_core_class() -> None:
+    config = RetryConfig()
+    assert lc.ModelRateLimitError in config.rate_limit_exceptions
+    assert openai.RateLimitError in config.rate_limit_exceptions
+
+
+def test_default_retryable_includes_httpx2_when_installed() -> None:
+    httpx2 = pytest.importorskip("httpx2")
+    assert httpx2.ConnectError in RetryConfig().retryable_exceptions

@@ -132,35 +132,36 @@ def classify_model_error(exc: BaseException) -> ModelErrorKind:
 
 
 def _default_retryable_exceptions() -> tuple[type[Exception], ...]:
-    """Return sensible defaults for retryable network exceptions.
+    """Return the default transient (retry-with-backoff) exception types.
 
-    Attempts to import ``openai`` and ``httpx``; silently falls back to an
-    empty tuple when neither is installed so the library stays dependency-free.
+    Follows langchain-core's ``is_retryable`` model exceptions (langchain-core
+    >= 1.6: connection, timeout and 5xx server errors) plus the matching
+    ``openai`` / ``httpx`` / ``httpx2`` types for older versions and direct SDK
+    use.  Missing packages are skipped, so the library stays dependency-free.
     """
-    exceptions: list[type[Exception]] = []
-    try:
-        import httpx
-
-        exceptions.extend([httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError])
-    except ImportError:
-        pass
-    try:
-        import openai
-
-        exceptions.extend([openai.APIConnectionError, openai.APITimeoutError])
-    except ImportError:
-        pass
-    return tuple(exceptions)
+    network = ("ConnectError", "TimeoutException", "RemoteProtocolError")
+    classes = (
+        _optional_classes("httpx", *network)
+        + _optional_classes("httpx2", *network)
+        + _optional_classes(
+            "openai", "APIConnectionError", "APITimeoutError", "InternalServerError"
+        )
+        + _optional_classes(
+            "langchain_core.exceptions",
+            "ModelConnectionError",
+            "ModelTimeoutError",
+            "ModelAPIError",
+        )
+    )
+    return tuple(c for c in classes if issubclass(c, Exception))
 
 
 def _default_rate_limit_exceptions() -> tuple[type[Exception], ...]:
-    """Return rate-limit exception types when ``openai`` is installed."""
-    try:
-        import openai
-
-        return (openai.RateLimitError,)
-    except ImportError:
-        return ()
+    """Return the default rate-limit exception types (openai and langchain-core >= 1.6)."""
+    classes = _optional_classes("openai", "RateLimitError") + _optional_classes(
+        "langchain_core.exceptions", "ModelRateLimitError"
+    )
+    return tuple(c for c in classes if issubclass(c, Exception))
 
 
 @dataclass
@@ -180,11 +181,13 @@ class RetryConfig:
         retry_delays: Per-attempt sleep durations in seconds.  The last value
             is reused when the retry count exceeds the list length.
         retryable_exceptions: Exception types that trigger a transient retry.
-            Defaults to common ``httpx`` / ``openai`` network errors when those
-            packages are installed.
+            Defaults to langchain-core's standard model errors
+            (``ModelConnectionError``, ``ModelTimeoutError``, ``ModelAPIError``
+            for 5xx) plus common ``httpx`` / ``httpx2`` / ``openai`` network and
+            server errors, for whichever packages are installed.
         rate_limit_exceptions: Exception types that trigger rate-limit retry
-            logic.  Defaults to ``openai.RateLimitError`` when ``openai`` is
-            installed.
+            logic.  Defaults to langchain-core's ``ModelRateLimitError`` and
+            ``openai.RateLimitError`` for whichever are installed.
         rate_limit_retry_interval: Seconds to wait between rate-limit retries.
         rate_limit_max_duration_seconds: Total seconds before giving up on
             rate-limit retries and re-raising the exception.
@@ -202,7 +205,7 @@ class RetryConfig:
     rate_limit_max_duration_seconds: float = 900.0
 
 
-#: Ready-to-use default configuration with OpenAI / httpx error handling.
+#: Ready-to-use default configuration: langchain-core model errors, 5xx, openai, httpx/httpx2.
 DEFAULT_RETRY_CONFIG = RetryConfig()
 
 
