@@ -813,7 +813,7 @@ async def test_invalid_call_with_no_id_produces_no_orphan_tool_message(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """No id => no way to answer it: no ToolMessage, no fabricated empty id."""
-    caplog.set_level("WARNING", logger="saidex.langgraph")
+    caplog.set_level("WARNING", logger="saidex")
     state = {"messages": [_ai(invalid=[_invalid_no_id("add", "garbage")], msg_id="ai-1")]}
     result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
 
@@ -853,7 +853,7 @@ async def test_id_less_tool_calls_entry_dropped_not_executed_not_retained(
     copied back into the sanitized AIMessage's ``tool_calls`` — a call the
     node itself guarantees nothing will ever answer, contradicting its own
     docstring and warning text."""
-    caplog.set_level("WARNING", logger="saidex.langgraph")
+    caplog.set_level("WARNING", logger="saidex")
     state = {
         "messages": [
             _ai(
@@ -885,7 +885,7 @@ async def test_invalid_call_with_empty_string_id_treated_as_no_id(
     ``entry_id = entry.get("id") or None`` at construction makes "" agree with
     "no id" everywhere, so this call is now dropped like any other id-less
     entry: no repair attempt, no ToolMessage, no sanitized-history entry."""
-    caplog.set_level("WARNING", logger="saidex.langgraph")
+    caplog.set_level("WARNING", logger="saidex")
     raw = '<think>let me compute</think>{"a": 2, "b": 3}'
     state = {"messages": [_ai(invalid=[_invalid("add", raw, "")], msg_id="ai-1")]}
     result = await SaidexToolNode([add]).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
@@ -1298,7 +1298,7 @@ async def test_empty_string_id_tool_calls_entry_dropped_not_executed_not_retaine
     slipped past the drop-check as answerable and could reach
     _feedback_message as an orphan ``ToolMessage(tool_call_id="")`` answering
     no real call. The drop-check is now falsy-based so both sides agree."""
-    caplog.set_level("WARNING", logger="saidex.langgraph")
+    caplog.set_level("WARNING", logger="saidex")
     state = {
         "messages": [
             _ai(
