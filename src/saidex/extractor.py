@@ -1939,7 +1939,9 @@ async def _run_extractor_agent_with_model(
         if not tool_calls and not invalid_tool_calls:
             if final_answer_mode is ExtractionMode.JSON:
                 # LLM is done calling tools — parse the response text as JSON.
-                args, format_error = _parse_json_response(response, schema.__name__, model_label)
+                args, format_error = _parse_json_response(
+                    response, schema.__name__, model_label, schema
+                )
                 if format_error is not None:
                     format_errors += 1
                     failure_reason = FailureReason.PARSE_ERROR
@@ -2755,7 +2757,7 @@ async def _try_with_model(
         if mode is ExtractionMode.TOOL_CALLING:
             args, format_error = _parse_tool_response(response, schema_label, model_label)
         else:
-            args, format_error = _parse_json_response(response, schema_label, model_label)
+            args, format_error = _parse_json_response(response, schema_label, model_label, schema)
 
         if format_error is not None:
             messages.append(HumanMessage(content=format_error))
@@ -2962,15 +2964,97 @@ def _build_json_instructions(schema: type[BaseModel]) -> str:
     )
 
 
+def _field_keys(info: FieldInfo, name: str) -> set[str]:
+    """Every key under which *info* may appear in a JSON object."""
+    keys = {name}
+    if info.alias:
+        keys.add(info.alias)
+    alias = info.validation_alias
+    if isinstance(alias, str):
+        keys.add(alias)
+    elif isinstance(alias, AliasChoices):
+        keys.update(choice for choice in alias.choices if isinstance(choice, str))
+    return keys
+
+
+def _sole_model_list_field(schema: Any) -> str | None:
+    """JSON key of the only field when it is a ``list`` of models, else ``None``."""
+    if not (inspect.isclass(schema) and issubclass(schema, BaseModel)):
+        return None
+    if len(schema.model_fields) != 1:
+        return None
+    (name, info), *_ = schema.model_fields.items()
+    annotation = info.annotation
+    origin = get_origin(annotation)
+    if not (inspect.isclass(origin) and issubclass(origin, (Sequence, tuple))):
+        return None
+    args = [a for a in get_args(annotation) if a is not Ellipsis]
+    if not args or not all(inspect.isclass(a) and issubclass(a, BaseModel) for a in args):
+        return None
+    return info.alias or (info.validation_alias if isinstance(info.validation_alias, str) else name)
+
+
+def _unwrap_json_array(
+    parsed: list[Any], schema: Any, schema_name: str, model_label: str
+) -> tuple[Any, str | None]:
+    """Resolve a top-level JSON array against *schema*.
+
+    Returns ``(value, feedback)``: a dict to continue with, or feedback for the model, or
+    the unchanged list when no rule applies.
+    """
+    if not all(isinstance(item, dict) for item in parsed):
+        return parsed, None
+    list_key = _sole_model_list_field(schema)
+    if list_key is not None:
+        return {list_key: parsed}, None
+    if len(parsed) == 1:
+        if inspect.isclass(schema) and issubclass(schema, BaseModel):
+            known = {k for n, i in schema.model_fields.items() for k in _field_keys(i, n)}
+            if not known & set(parsed[0]):
+                return parsed, None
+        logger.debug(
+            "%s: JSON response for %s was a single object wrapped in an array; unwrapping.",
+            model_label,
+            schema_name,
+        )
+        return parsed[0], None
+    if len(parsed) >= 2:
+        logger.warning(
+            "%s: JSON response for %s contained %d separate objects.",
+            model_label,
+            schema_name,
+            len(parsed),
+        )
+        return None, (
+            f"Your response contained {len(parsed)} separate JSON objects. "
+            f"Return exactly one JSON object that matches the '{schema_name}' "
+            f"schema — if you need several records, put them inside that object "
+            f"as the schema describes."
+        )
+    return parsed, None
+
+
 def _parse_json_response(
     response: Any,
     schema_name: str,
     model_label: str,
+    schema: Any = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Parse a raw-JSON response's content into an argument dict.
 
-    Returns ``(args, None)`` on success, or ``(None, feedback_message)`` when
-    the content was not parseable as a JSON object.
+    A top-level array is resolved against *schema*: it is wrapped into the sole
+    ``list[Model]`` field of a container schema, a single object sharing a key with the
+    schema is unwrapped, and several objects are sent back for correction.
+
+    Args:
+        response: The model response; its ``content`` is parsed.
+        schema_name: Schema name used in feedback messages.
+        model_label: Label of the model for log messages.
+        schema: The target schema class, used to interpret top-level arrays.
+
+    Returns:
+        ``(args, None)`` on success, or ``(None, feedback_message)`` when the content
+        was not parseable as a JSON object.
     """
     content = getattr(response, "content", "")
     try:
@@ -2988,27 +3072,10 @@ def _parse_json_response(
             f"'{schema_name}' schema — no code fences and no extra text."
         )
 
-    if isinstance(parsed, list) and parsed and all(isinstance(item, dict) for item in parsed):
-        if len(parsed) == 1:
-            logger.debug(
-                "%s: JSON response for %s was a single object wrapped in an array; unwrapping.",
-                model_label,
-                schema_name,
-            )
-            parsed = parsed[0]
-        else:
-            logger.warning(
-                "%s: JSON response for %s contained %d separate objects.",
-                model_label,
-                schema_name,
-                len(parsed),
-            )
-            return None, (
-                f"Your response contained {len(parsed)} separate JSON objects. "
-                f"Return exactly one JSON object that matches the '{schema_name}' "
-                f"schema — if you need several records, put them inside that object "
-                f"as the schema describes."
-            )
+    if isinstance(parsed, list):
+        parsed, array_feedback = _unwrap_json_array(parsed, schema, schema_name, model_label)
+        if array_feedback is not None:
+            return None, array_feedback
 
     if not isinstance(parsed, dict):
         logger.warning(
