@@ -1998,3 +1998,70 @@ def test_ctor_rejects_validator_for_dict_schema_tool() -> None:
     )
     with pytest.raises(ValueError, match="Pydantic"):
         SaidexToolNode([raw], validators={"raw": _no_negative})
+
+
+# ---------------------------------------------------------------------------
+# Correctability: missing required fields go to the agent
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_missing_required_field_goes_to_agent_not_correction_model() -> None:
+    correction = _correction_llm([{"a": 1, "b": 2}])
+    state = {"messages": [_ai([_call("add", {"a": 1}, "c1")])]}
+    async with collect_stats() as sink:
+        result = await SaidexToolNode([add], correction_model=correction).ainvoke(
+            state, runtime=_NO_GRAPH_RUNTIME
+        )
+    assert _tool_messages(result)[0].status == "error"
+    correction.bind_tools.assert_not_called()
+    correction.ainvoke.assert_not_called()
+    stats = sink.all()[0]
+    assert isinstance(stats, ToolNodeStats)
+    assert stats.calls[0].correction_attempted is False
+
+
+@pytest.mark.asyncio
+async def test_missing_field_with_unknown_key_is_corrected() -> None:
+    correction = _correction_llm([{"a": 1, "b": 2}])
+    state = {"messages": [_ai([_call("add", {"a": 1, "second": 2}, "c1")])]}
+    result = await SaidexToolNode([add], correction_model=correction).ainvoke(
+        state, runtime=_NO_GRAPH_RUNTIME
+    )
+    assert _tool_messages(result)[0].content == "3"
+    correction.bind_tools.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_correct_missing_fields_opt_in() -> None:
+    correction = _correction_llm([{"a": 1, "b": 2}])
+    state = {"messages": [_ai([_call("add", {"a": 1}, "c1")])]}
+    node = SaidexToolNode([add], correction_model=correction, correct_missing_fields=True)
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].content == "3"
+
+
+@pytest.mark.asyncio
+async def test_correction_attempted_reported_in_stats() -> None:
+    correction = _correction_llm([{"a": 5, "b": 2}])
+    state = {
+        "messages": [
+            _ai([_call("add", {"a": "five", "b": 2}, "typo"), _call("add", {"a": 1}, "missing")])
+        ]
+    }
+    async with collect_stats() as sink:
+        await SaidexToolNode([add], correction_model=correction).ainvoke(
+            state, runtime=_NO_GRAPH_RUNTIME
+        )
+    stats = sink.all()[0]
+    assert isinstance(stats, ToolNodeStats)
+    assert [c.correction_attempted for c in stats.calls] == [True, False]
+    assert [c.outcome for c in stats.calls] == ["corrected", "feedback"]
+
+
+@pytest.mark.asyncio
+async def test_validator_rejection_is_still_corrected() -> None:
+    correction = _correction_llm([{"a": 5, "b": 2}])
+    node = SaidexToolNode([add], validators={"add": _no_negative}, correction_model=correction)
+    result = await node.ainvoke(_ok_state(a=-1), runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].content == "7"

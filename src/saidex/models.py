@@ -555,6 +555,10 @@ class ToolCallStats:
         correction_retries: LLM attempts consumed by the correction cycle
             (``0`` unless the correction cycle ran for this call (a
             ``correction_model`` is set)).
+        correction_attempted: Whether the LLM correction cycle ran for this
+            call — distinguishes "never corrected" (correction off, or skipped
+            because a required field is missing) from "corrected on the first
+            attempt".
         field_issues: Field-level validation problems observed before the
             policy was applied.
     """
@@ -565,6 +569,7 @@ class ToolCallStats:
     repaired: bool = False
     prevalidated: bool = True
     correction_retries: int = 0
+    correction_attempted: bool = False
     field_issues: tuple[FieldIssue, ...] = ()
 
 

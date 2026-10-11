@@ -143,6 +143,11 @@ class SaidexToolNode(Runnable[Any, Any]):
             must be at least 1 when ``correction_model`` is set.
         correction_mode: Extraction mode for the correction cycle — use
             :attr:`~saidex.ExtractionMode.JSON` for models without tool calling.
+        correct_missing_fields: By default a call missing a required field is
+            answered with feedback so the agent fills it in; set True to let the
+            correction model fill it from the conversation instead. A call whose
+            arguments contain keys the schema does not know is always corrected
+            (likely a misnamed field).
         on_unresolved: What happens to calls that stay invalid: ``"feedback"``
             (default) answers them with an error ``ToolMessage``; ``"raise"``
             raises :class:`ToolCallValidationError` before any call executes;
@@ -189,6 +194,7 @@ class SaidexToolNode(Runnable[Any, Any]):
         correction_model: Any = None,
         max_correction_retries: int = 2,
         correction_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
+        correct_missing_fields: bool = False,
         on_unresolved: OnUnresolved = "feedback",
         validators: Mapping[str, ToolValidator] | None = None,
         strip_thinking: bool = True,
@@ -236,6 +242,7 @@ class SaidexToolNode(Runnable[Any, Any]):
             correction_model=correction_model,
             max_correction_retries=max_correction_retries,
             correction_mode=correction_mode,
+            correct_missing_fields=correct_missing_fields,
             strip_thinking=strip_thinking,
             json_repair=json_repair,
             on_unresolved=on_unresolved,
@@ -308,11 +315,10 @@ class SaidexToolNode(Runnable[Any, Any]):
         if self._pipeline.correction_enabled:
             callbacks: Callbacks = (config or {}).get("callbacks")
             for plan in plans:
-                # Unanswerable (id-less) plans are never corrected: there is
-                # no tool_call_id to answer with even if the correction
-                # succeeds, so a "corrected" id-less plan would still have to
-                # be dropped — see the id-less handling in ToolCallPipeline.plan.
-                if not plan.executable and plan.answerable:
+                # is_correctable excludes id-less plans (nothing to answer even
+                # after a successful correction) and missing required fields (left
+                # to the agent).
+                if self._pipeline.is_correctable(plan):
                     await self._pipeline.correct_one(plan, ctx, callbacks)
 
         feedback: list[BaseMessage] = list(await self._pipeline.resolve(plans, ctx))

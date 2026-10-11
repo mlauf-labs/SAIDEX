@@ -21,7 +21,7 @@ from langchain_core.callbacks.base import Callbacks
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as _as_tool
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel
 
 from .extractor import (
     ValidatorResult,
@@ -162,6 +162,21 @@ class ToolCallValidationError(Exception):
         )
 
 
+def _input_keys(schema: type[BaseModel]) -> set[str]:
+    """Every key under which *schema* accepts input: field names plus string aliases."""
+    keys: set[str] = set()
+    for name, info in schema.model_fields.items():
+        keys.add(name)
+        if info.alias:
+            keys.add(info.alias)
+        alias = info.validation_alias
+        if isinstance(alias, str):
+            keys.add(alias)
+        elif isinstance(alias, AliasChoices):
+            keys.update(choice for choice in alias.choices if isinstance(choice, str))
+    return keys
+
+
 class ToolCallPipeline:
     """Plan, correct and answer the tool calls of one ``AIMessage``.
 
@@ -173,6 +188,8 @@ class ToolCallPipeline:
         correction_model: Chat model for the LLM correction cycle, or ``None``.
         max_correction_retries: LLM attempts per call in the correction cycle.
         correction_mode: Extraction mode of the correction cycle.
+        correct_missing_fields: Let the correction model fill missing required
+            fields from the conversation instead of sending such calls to the agent.
         strip_thinking: Strip ``<think>`` blocks from raw invalid-call args.
         json_repair: Apply json-repair to raw invalid-call args that do not parse.
         on_unresolved: What happens to calls that stay invalid: ``"feedback"``
@@ -192,6 +209,7 @@ class ToolCallPipeline:
         correction_model: Any,
         max_correction_retries: int,
         correction_mode: ExtractionMode,
+        correct_missing_fields: bool = False,
         strip_thinking: bool,
         json_repair: bool,
         on_unresolved: OnUnresolved = "feedback",
@@ -200,6 +218,7 @@ class ToolCallPipeline:
         self._correction_model = correction_model
         self._max_correction_retries = max_correction_retries
         self._correction_mode = correction_mode
+        self._correct_missing_fields = correct_missing_fields
         self._strip_thinking = strip_thinking
         self._json_repair = json_repair
         self._on_unresolved = on_unresolved
@@ -215,6 +234,36 @@ class ToolCallPipeline:
     def tool_names(self) -> frozenset[str]:
         """Names of every tool in the schema registry."""
         return frozenset(self._tools_by_name)
+
+    def is_correctable(self, plan: CallPlan) -> bool:
+        """Whether the LLM correction cycle should try to fix *plan*.
+
+        A missing required field is left to the agent, which has the context
+        the correction model lacks — unless the arguments carry keys the schema
+        does not know (the field is most likely just misnamed) or
+        ``correct_missing_fields`` is set.
+
+        Args:
+            plan: A planned call.
+
+        Returns:
+            ``True`` when the call is invalid, answerable and worth correcting.
+        """
+        if (
+            not self.correction_enabled
+            or plan.executable
+            or not plan.answerable
+            or plan.missing_name
+        ):
+            return False
+        schema = plan.schema or self.schema_for(plan.call["name"])
+        if schema is None:
+            return False
+        if not plan.recoverable or plan.rejected_by_validator or self._correct_missing_fields:
+            return True
+        if not any(issue.category == "missing" for issue in plan.issues):
+            return True
+        return bool(set(plan.call["args"]) - _input_keys(schema))
 
     async def plan(self, message: AIMessage, ctx: CallContext) -> list[CallPlan]:
         """Classify every call on *message* into an executable/invalid plan.
@@ -757,6 +806,7 @@ class ToolCallPipeline:
                     repaired=plan.repaired,
                     prevalidated=plan.prevalidated,
                     correction_retries=plan.correction_retries,
+                    correction_attempted=plan.correction_attempted,
                     field_issues=plan.issues,
                 )
                 for plan in plans
