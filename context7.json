@@ -16,7 +16,8 @@
     "To reject hallucinated values, mark fields with Grounded() (Annotated marker) or GroundedField() so the extracted value is verified against the source text",
     "Pass LangChain callback handlers via callbacks= to trace runs: each extraction becomes one chain-run span with nested LLM generations and, in the agent loop, per-tool spans; enable capture_source_text=True only if exporting the input text to the tracing backend is acceptable",
     "In LangGraph agents, use saidex.langgraph.SaidexToolNode (extra: saidex[langgraph]) as a drop-in for langgraph.prebuilt.ToolNode — it repairs invalid_tool_calls, validates args against the tool schema, and feeds structured errors back to the model",
-    "To enforce business rules after Pydantic validation, pass validator= to any extract_data* function; return None to accept, a str to reject, or a list of str and/or saidex.ValidationIssue(message, field_path=..., error_type=..., on_mismatch='retry'|'flag') to report several per-field findings — 'flag' issues are recorded in stats.field_issues without consuming a retry"
+    "To enforce business rules after Pydantic validation, pass validator= to any extract_data* function; return None to accept, a str to reject, or a list of str and/or saidex.ValidationIssue(message, field_path=..., error_type=..., on_mismatch='retry'|'flag') to report several per-field findings — 'flag' issues are recorded in stats.field_issues without consuming a retry",
+    "stats.failure_reason is a saidex.FailureReason StrEnum (validation_exhausted, parse_error, llm_error, no_tool_call) or None on success; it describes only the last attempt, and comparing it with the plain string still works"
   ],
   "previousVersions": [
     {

@@ -240,7 +240,7 @@ When a validation attempt fails, the library appends a **detailed error message*
 result, stats = await extract_data(...)
 
 stats.success           # bool — did the run produce a validated instance?
-stats.failure_reason    # str | None — why it failed (None on success)
+stats.failure_reason    # FailureReason | None — why it failed (None on success)
 stats.primary_retries   # int — retries against the primary model
 stats.fallback_retries  # int — retries against the fallback model
 stats.total_retries     # int — sum of both

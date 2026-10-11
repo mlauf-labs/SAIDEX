@@ -258,6 +258,9 @@ if result is None:
 process(result)
 ```
 
+`stats.failure_reason` tells you *why* the run failed and whether retrying later
+is worthwhile — see [Failure reasons](failure-reasons.md).
+
 ### Tracking retry costs
 
 `ExtractDataStats` lets you track quality metrics over time:

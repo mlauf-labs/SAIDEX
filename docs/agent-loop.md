@@ -245,6 +245,11 @@ resolution, stats = await extract_data_with_tools(
 `ExtractorRunStats` instances support `+` to merge (used internally to combine
 primary and fallback attempts).
 
+`failure_reason` uses the same [`FailureReason`](failure-reasons.md) values as
+`extract_data`, plus `no_tool_call`, which only the agent loop produces. In the agent loop
+`validation_exhausted` is also reported when `max_iterations` ran out before a
+valid final answer; then raise `max_iterations`.
+
 ---
 
 ## Synchronous usage

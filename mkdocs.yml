@@ -52,6 +52,7 @@ nav:
       - Image Extraction: images.md
   - Reliability:
       - Retry & Fallback: retry-and-fallback.md
+      - Failure Reasons: failure-reasons.md
       - Observability: observability.md
       - Quality Analytics: quality-analytics.md
       - Token Counting: token-counting.md
