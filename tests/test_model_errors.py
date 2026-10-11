@@ -28,11 +28,21 @@ from saidex import retry as retry_mod
 from saidex.retry import RetryConfig, with_retry
 from tests._mock_llm import make_llm, make_response
 
-# The CI lowest-direct job re-runs the core suite on langchain-core 0.3.69, which
-# has no standard model exceptions; the missing-module path is covered by
-# test_missing_optional_modules_are_skipped via monkeypatching on newer versions.
-if not hasattr(lc, "ModelError"):
-    pytest.skip("langchain-core < 1.6 has no standard model exceptions", allow_module_level=True)
+# langchain-core < 1.6 (CI lowest-direct) has no standard model exceptions; tests that need
+# them are skipped there, while the openai/httpx/builtin mapping still runs. A module-level
+# skip would crash old pytest-asyncio collection, so the guard is per test.
+requires_lc16 = pytest.mark.skipif(
+    not hasattr(lc, "ModelError"),
+    reason="langchain-core < 1.6 has no standard model exceptions",
+)
+
+
+def _lc(name: str) -> Any:
+    return getattr(lc, name, None)
+
+
+def _lcp(name: str, *rest: Any) -> Any:
+    return pytest.param(_lc(name), *rest, marks=requires_lc16)
 
 
 def _bare(cls: type[BaseException]) -> BaseException:
@@ -43,15 +53,15 @@ def _bare(cls: type[BaseException]) -> BaseException:
 @pytest.mark.parametrize(
     ("cls", "kind"),
     [
-        (lc.ModelRateLimitError, ModelErrorKind.RATE_LIMIT),
-        (lc.ModelTimeoutError, ModelErrorKind.TIMEOUT),
-        (lc.ModelConnectionError, ModelErrorKind.CONNECTION),
-        (lc.ModelAPIError, ModelErrorKind.SERVER_ERROR),
-        (lc.ModelAuthenticationError, ModelErrorKind.AUTHENTICATION),
-        (lc.ModelPermissionDeniedError, ModelErrorKind.PERMISSION_DENIED),
-        (lc.ModelInvalidRequestError, ModelErrorKind.INVALID_REQUEST),
-        (lc.ModelNotFoundError, ModelErrorKind.NOT_FOUND),
-        (lc.ContextOverflowError, ModelErrorKind.CONTEXT_OVERFLOW),
+        _lcp("ModelRateLimitError", ModelErrorKind.RATE_LIMIT),
+        _lcp("ModelTimeoutError", ModelErrorKind.TIMEOUT),
+        _lcp("ModelConnectionError", ModelErrorKind.CONNECTION),
+        _lcp("ModelAPIError", ModelErrorKind.SERVER_ERROR),
+        _lcp("ModelAuthenticationError", ModelErrorKind.AUTHENTICATION),
+        _lcp("ModelPermissionDeniedError", ModelErrorKind.PERMISSION_DENIED),
+        _lcp("ModelInvalidRequestError", ModelErrorKind.INVALID_REQUEST),
+        _lcp("ModelNotFoundError", ModelErrorKind.NOT_FOUND),
+        _lcp("ContextOverflowError", ModelErrorKind.CONTEXT_OVERFLOW),
         (openai.RateLimitError, ModelErrorKind.RATE_LIMIT),
         (openai.APITimeoutError, ModelErrorKind.TIMEOUT),
         (openai.APIConnectionError, ModelErrorKind.CONNECTION),
@@ -78,6 +88,7 @@ def test_openai_timeout_is_timeout_not_connection() -> None:
     assert classify_model_error(_bare(openai.APITimeoutError)) is ModelErrorKind.TIMEOUT
 
 
+@requires_lc16
 def test_context_overflow_beats_bad_request() -> None:
     class OverflowLikeLangchainOpenAI(openai.BadRequestError, lc.ContextOverflowError):
         pass
@@ -86,6 +97,7 @@ def test_context_overflow_beats_bad_request() -> None:
     assert classify_model_error(exc) is ModelErrorKind.CONTEXT_OVERFLOW
 
 
+@requires_lc16
 def test_provider_subclass_of_both_sdk_and_core_class() -> None:
     class OpenAIRateLimitLike(openai.RateLimitError, lc.ModelRateLimitError):
         pass
@@ -137,7 +149,12 @@ async def _fail_then_succeed(exc: BaseException, calls: list[int]) -> str:
 
 @pytest.mark.parametrize(
     "cls",
-    [lc.ModelAPIError, lc.ModelConnectionError, lc.ModelTimeoutError, openai.InternalServerError],
+    [
+        _lcp("ModelAPIError"),
+        _lcp("ModelConnectionError"),
+        _lcp("ModelTimeoutError"),
+        openai.InternalServerError,
+    ],
 )
 async def test_default_config_retries_retryable_errors(cls: type[BaseException]) -> None:
     config = RetryConfig(retry_delays=[0.0])
@@ -149,9 +166,9 @@ async def test_default_config_retries_retryable_errors(cls: type[BaseException])
 @pytest.mark.parametrize(
     "cls",
     [
-        lc.ModelAuthenticationError,
-        lc.ModelInvalidRequestError,
-        lc.ContextOverflowError,
+        _lcp("ModelAuthenticationError"),
+        _lcp("ModelInvalidRequestError"),
+        _lcp("ContextOverflowError"),
         openai.BadRequestError,
     ],
 )
@@ -163,6 +180,7 @@ async def test_default_config_does_not_retry_permanent_errors(cls: type[BaseExce
     assert len(calls) == 1
 
 
+@requires_lc16
 def test_default_rate_limit_exceptions_include_core_class() -> None:
     config = RetryConfig()
     assert lc.ModelRateLimitError in config.rate_limit_exceptions
@@ -192,6 +210,7 @@ def _item_call(value: Any = 1) -> Any:
     return make_response([{"name": "Item", "args": {"name": "a", "value": value}, "id": "c"}])
 
 
+@requires_lc16
 async def test_extract_data_records_kind_of_invocation_error() -> None:
     _, stats = await extract_data(
         make_llm([lc.ModelRateLimitError("slow down")]), Item, _msgs(), retry_config=_NO_RETRY
@@ -217,6 +236,7 @@ async def test_no_kind_on_success_or_non_llm_failure() -> None:
     assert invalid.llm_error_kind is None
 
 
+@requires_lc16
 async def test_kind_follows_the_combined_reason() -> None:
     _, stats = await extract_data(
         make_llm([lc.ModelRateLimitError("x")]),
@@ -230,6 +250,7 @@ async def test_kind_follows_the_combined_reason() -> None:
     assert stats.llm_error_kind is None
 
 
+@requires_lc16
 async def test_fallback_llm_error_kind_wins() -> None:
     _, stats = await extract_data(
         make_llm([_item_call("x")]),
@@ -243,6 +264,7 @@ async def test_fallback_llm_error_kind_wins() -> None:
     assert stats.llm_error_kind is ModelErrorKind.TIMEOUT
 
 
+@requires_lc16
 async def test_salvaged_run_has_no_llm_error_kind() -> None:
     _, stats = await extract_data(
         make_llm([_item_call(), lc.ModelConnectionError("down")]),
@@ -257,6 +279,7 @@ async def test_salvaged_run_has_no_llm_error_kind() -> None:
     assert stats.llm_error_kind is None
 
 
+@requires_lc16
 async def test_list_variant_keeps_kind() -> None:
     _, stats = await extract_data_list(
         make_llm([lc.ModelNotFoundError("no model")]), Item, _msgs(), retry_config=_NO_RETRY
@@ -264,6 +287,7 @@ async def test_list_variant_keeps_kind() -> None:
     assert stats.llm_error_kind is ModelErrorKind.NOT_FOUND
 
 
+@requires_lc16
 async def test_agent_loop_records_kind() -> None:
     _, stats = await extract_data_with_tools(
         make_llm([lc.ModelAPIError("boom")]), Item, "task", tools=[], retry_config=_NO_RETRY
@@ -272,6 +296,7 @@ async def test_agent_loop_records_kind() -> None:
     assert stats.llm_error_kind is ModelErrorKind.SERVER_ERROR
 
 
+@requires_lc16
 async def test_agent_fallback_kind_follows_reason() -> None:
     _, stats = await extract_data_with_tools(
         make_llm([lc.ModelAuthenticationError("no")]),
@@ -294,6 +319,7 @@ def test_add_combines_kinds() -> None:
     assert (a + ExtractorRunStats(success=True)).llm_error_kind is None
 
 
+@requires_lc16
 async def test_trace_output_kind_is_plain_str() -> None:
     class Capture(AsyncCallbackHandler):
         def __init__(self) -> None:
