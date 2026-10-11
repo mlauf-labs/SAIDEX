@@ -519,9 +519,9 @@ class ExtractionEvent:
         return self.stats.last_rejection
 
 
-#: The four outcomes a SaidexToolNode-processed tool call can have. See
+#: What a SaidexToolNode-processed tool call can end as. See
 #: :attr:`ToolCallStats.outcome` for what each value means.
-ToolCallOutcome = Literal["executed", "corrected", "feedback", "dropped"]
+ToolCallOutcome = Literal["executed", "corrected", "salvaged", "feedback", "dropped"]
 
 
 @dataclass(frozen=True)
@@ -538,10 +538,11 @@ class ToolCallStats:
             answered; see ``outcome="dropped"``.
         outcome: What ultimately happened — ``"executed"`` (ran, possibly after
             deterministic repair), ``"corrected"`` (ran after an LLM correction
-            cycle), ``"feedback"`` (not run; a corrective ``ToolMessage`` was
-            emitted instead) or ``"dropped"`` (not run and not answered — the
-            call carried no ``tool_call_id`` at all, so no ``ToolMessage``
-            could be produced for it either).
+            cycle), ``"salvaged"`` (ran with arguments returned by an
+            ``on_unresolved`` hook and re-validated), ``"feedback"`` (not run;
+            a corrective ``ToolMessage`` was emitted instead) or ``"dropped"``
+            (not run and not answered — the call carried no ``tool_call_id``
+            at all, so no ``ToolMessage`` could be produced for it either).
         repaired: Whether the call was deterministically recovered from
             ``invalid_tool_calls`` (think-tag stripping / json-repair).
         prevalidated: Whether the args were validated against the tool's
@@ -552,7 +553,8 @@ class ToolCallStats:
             a dropped id-less call is **not** passed through at all — see
             ``outcome``.
         correction_retries: LLM attempts consumed by the correction cycle
-            (``0`` unless ``on_invalid="correct"`` ran for this call).
+            (``0`` unless the correction cycle ran for this call (a
+            ``correction_model`` is set)).
         field_issues: Field-level validation problems observed before the
             policy was applied.
     """
@@ -588,6 +590,11 @@ class ToolNodeStats:
         return sum(1 for c in self.calls if c.outcome == "corrected")
 
     @property
+    def salvaged_count(self) -> int:
+        """Calls that executed with arguments returned by an ``on_unresolved`` hook."""
+        return sum(1 for c in self.calls if c.outcome == "salvaged")
+
+    @property
     def feedback_count(self) -> int:
         """Calls that were answered with a corrective feedback message."""
         return sum(1 for c in self.calls if c.outcome == "feedback")
@@ -614,3 +621,38 @@ class ToolNodeEvent:
 
     node_name: str
     stats: ToolNodeStats
+
+
+@dataclass(frozen=True)
+class UnresolvedToolCall:
+    """A tool call that is still invalid after repair and correction.
+
+    Passed to a ``SaidexToolNode`` ``on_unresolved`` hook and collected on
+    ``ToolCallValidationError.calls``.
+
+    Attributes:
+        tool_name: The tool the call targeted, or ``""`` when the model sent no name.
+        tool_call_id: The call id the answer must reference.
+        args: The last candidate arguments, or ``None`` when the payload never
+            parsed into a JSON object.
+        raw_args: The raw argument string from ``invalid_tool_calls``, or
+            ``None`` for calls that arrived in ``tool_calls``.
+        issues: Field-level problems found by validation.
+        error_text: The structured error text SAIDEX sends to the agent.
+        correction_attempted: Whether the LLM correction cycle ran for this call.
+        correction_retries: LLM attempts the correction cycle consumed.
+        messages: The conversation up to and including the ``AIMessage`` that
+            made the call.
+        state: The graph state as the node received it.
+    """
+
+    tool_name: str
+    tool_call_id: str
+    args: dict[str, Any] | None
+    raw_args: str | None
+    issues: tuple[FieldIssue, ...]
+    error_text: str | None
+    correction_attempted: bool
+    correction_retries: int
+    messages: tuple[BaseMessage, ...]
+    state: Any

@@ -32,14 +32,16 @@ except ImportError as exc:  # keep langgraph an optional dependency
 
 from langchain_core.tools import BaseTool
 
-from ._tool_calls import ToolCallPipeline, ToolCallValidationError
-from .models import ExtractionMode, ToolNodeEvent
+from ._tool_calls import CallContext, OnUnresolved, ToolCallPipeline, ToolCallValidationError
+from .models import ExtractionMode, ToolNodeEvent, UnresolvedToolCall
 from .observability import dispatch_tool_node_event
 from .sync import _run_blocking
 
 __all__ = [
+    "OnUnresolved",
     "SaidexToolNode",
     "ToolCallValidationError",
+    "UnresolvedToolCall",
 ]
 
 logger = logging.getLogger(__name__)
@@ -135,7 +137,11 @@ class SaidexToolNode(Runnable[Any, Any]):
             :attr:`~saidex.ExtractionMode.JSON` for models without tool calling.
         on_unresolved: What happens to calls that stay invalid: ``"feedback"``
             (default) answers them with an error ``ToolMessage``; ``"raise"``
-            raises :class:`ToolCallValidationError` before any call executes.
+            raises :class:`ToolCallValidationError` before any call executes;
+            or a hook (sync or async) receiving an :class:`UnresolvedToolCall`
+            that returns salvaged args (dict, re-validated, then executed), a
+            custom feedback text (str) or None (default feedback); an exception
+            raised by the hook propagates.
         strip_thinking: Strip ``<think>`` blocks from raw invalid-call args
             before parsing.
         json_repair: Apply ``json-repair`` to raw invalid-call args that do not
@@ -168,7 +174,7 @@ class SaidexToolNode(Runnable[Any, Any]):
         correction_model: Any = None,
         max_correction_retries: int = 2,
         correction_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
-        on_unresolved: Literal["feedback", "raise"] = "feedback",
+        on_unresolved: OnUnresolved = "feedback",
         strip_thinking: bool = True,
         json_repair: bool = True,
         sanitize_messages: bool = True,
@@ -182,8 +188,10 @@ class SaidexToolNode(Runnable[Any, Any]):
             correction_model, on_unresolved = _apply_deprecated_on_invalid(
                 on_invalid, correction_model, on_unresolved
             )
-        if on_unresolved not in ("feedback", "raise"):
-            raise ValueError(f"on_unresolved must be 'feedback' or 'raise', got {on_unresolved!r}")
+        if not (on_unresolved in ("feedback", "raise") or callable(on_unresolved)):
+            raise ValueError(
+                f"on_unresolved must be 'feedback', 'raise' or a callable, got {on_unresolved!r}"
+            )
         if correction_model is not None and max_correction_retries < 1:
             raise ValueError(
                 "max_correction_retries must be at least 1 when a correction_model is set, "
@@ -266,6 +274,7 @@ class SaidexToolNode(Runnable[Any, Any]):
             return await self._inner.ainvoke(input, config, **kwargs)
         messages, shape = _extract_messages(input, self._messages_key)
         ai_message, ai_index = _last_ai_message(messages)
+        ctx = CallContext(messages=tuple(messages), ai_index=ai_index, state=input)
         plans = self._pipeline.plan(ai_message)
 
         if self._pipeline.correction_enabled:
@@ -278,7 +287,7 @@ class SaidexToolNode(Runnable[Any, Any]):
                 if not plan.executable and plan.answerable:
                     await self._pipeline.correct_one(plan, callbacks)
 
-        feedback: list[BaseMessage] = list(self._pipeline.resolve(plans))
+        feedback: list[BaseMessage] = list(await self._pipeline.resolve(plans, ctx))
 
         executable_calls = [plan.call for plan in plans if plan.executable]
         inner_output: Any = None
@@ -289,9 +298,9 @@ class SaidexToolNode(Runnable[Any, Any]):
             # counted here explicitly. Otherwise a corrected call originating
             # from tool_calls (same id count, repaired=False) would look
             # unchanged and the inner node would run the ORIGINAL bad args.
-            changed = any(plan.repaired or plan.outcome == "corrected" for plan in plans) or len(
-                executable_calls
-            ) != len(ai_message.tool_calls)
+            changed = any(
+                plan.repaired or plan.outcome in ("corrected", "salvaged") for plan in plans
+            ) or len(executable_calls) != len(ai_message.tool_calls)
             if changed:
                 delegated = ai_message.model_copy(
                     update={"tool_calls": executable_calls, "invalid_tool_calls": []}
@@ -333,8 +342,8 @@ class SaidexToolNode(Runnable[Any, Any]):
 
 
 def _apply_deprecated_on_invalid(
-    on_invalid: Any, correction_model: Any, on_unresolved: Literal["feedback", "raise"]
-) -> tuple[Any, Literal["feedback", "raise"]]:
+    on_invalid: Any, correction_model: Any, on_unresolved: OnUnresolved
+) -> tuple[Any, OnUnresolved]:
     """Translate the deprecated v1 ``on_invalid`` policy into the v2 parameters."""
     warnings.warn(
         "SaidexToolNode(on_invalid=...) is deprecated and will be removed in a future "

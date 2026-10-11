@@ -10,24 +10,64 @@ the message and builds stats.  It never executes tools and never imports
 from __future__ import annotations
 
 import dataclasses
+import inspect
 import json
 import logging
-from collections.abc import Callable, Sequence
-from typing import Any, Literal
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Any, Literal, TypeAlias
 
 from json_repair import repair_json
 from langchain_core.callbacks.base import Callbacks
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as _as_tool
 from pydantic import BaseModel
 
 from .extractor import _strip_code_fences, _strip_thinking_tags, extract_data
-from .models import ExtractionMode, FieldIssue, ToolCallOutcome, ToolCallStats, ToolNodeStats
+from .models import (
+    ExtractionMode,
+    FieldIssue,
+    ToolCallOutcome,
+    ToolCallStats,
+    ToolNodeStats,
+    UnresolvedToolCall,
+)
 from .retry import RetryConfig
 from .utils import create_instance_with_issues
 
 logger = logging.getLogger(__name__)
+
+#: What an ``on_unresolved`` hook returns: salvaged arguments (``dict``), a
+#: custom feedback text (``str``), or ``None`` for the default feedback.
+UnresolvedDecision: TypeAlias = dict[str, Any] | str | None
+
+#: ``on_unresolved`` policy: ``"feedback"``, ``"raise"``, or a sync or async
+#: hook receiving an :class:`~saidex.models.UnresolvedToolCall`.
+OnUnresolved: TypeAlias = (
+    Literal["feedback", "raise"]
+    | Callable[[UnresolvedToolCall], UnresolvedDecision | Awaitable[UnresolvedDecision]]
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class CallContext:
+    """Where the planned ``AIMessage`` sits in the graph state.
+
+    Attributes:
+        messages: The full message list from the state.
+        ai_index: Index of the ``AIMessage`` whose calls are processed.
+        state: The raw state as the node received it.
+    """
+
+    messages: tuple[BaseMessage, ...]
+    ai_index: int
+    state: Any
+
+    @property
+    def conversation(self) -> tuple[BaseMessage, ...]:
+        """Messages up to and including the planned ``AIMessage``."""
+        return self.messages[: self.ai_index + 1]
+
 
 #: Network-level retry config for the correction cycle's ``extract_data`` call.
 #: The cycle already has its own bounded retry budget (``max_correction_retries``
@@ -57,12 +97,13 @@ class CallPlan:
     issues: tuple[FieldIssue, ...] = ()
     executable: bool = False
     #: ``""`` is the pre-dispatch default; ``ToolCallPipeline.resolve``
-    #: finalizes every plan to one of the four real ``ToolCallOutcome``
+    #: finalizes every plan to one of the real ``ToolCallOutcome``
     #: values before stats are built — see ``_finalized_outcome``, which
     #: turns that invariant into a type-checked narrowing at the point
     #: ``ToolCallStats`` is constructed.
     outcome: ToolCallOutcome | Literal[""] = ""
     correction_retries: int = 0
+    correction_attempted: bool = False
     #: False when the call carries no ``id`` at all. A ``ToolMessage`` requires
     #: a ``tool_call_id``, so an id-less call has no way to be answered — it
     #: must not get a fabricated-id feedback message, and must be dropped (not
@@ -80,10 +121,18 @@ class ToolCallValidationError(Exception):
     Attributes:
         failures: One ``(tool_name, tool_call_id, error_text)`` triple per
             invalid call, in original call order.
+        calls: One :class:`~saidex.models.UnresolvedToolCall` per answerable
+            invalid call (calls without an id are counted in ``failures`` only).
     """
 
-    def __init__(self, failures: Sequence[tuple[str, str | None, str]]) -> None:
+    def __init__(
+        self,
+        failures: Sequence[tuple[str, str | None, str]],
+        *,
+        calls: Sequence[UnresolvedToolCall] = (),
+    ) -> None:
         self.failures = tuple(failures)
+        self.calls = tuple(calls)
         lines = [
             f"- {name} (id={call_id}): {error.splitlines()[0]}"
             for name, call_id, error in self.failures
@@ -108,7 +157,10 @@ class ToolCallPipeline:
         json_repair: Apply json-repair to raw invalid-call args that do not parse.
         on_unresolved: What happens to calls that stay invalid: ``"feedback"``
             answers them with an error ToolMessage, ``"raise"`` raises
-            ToolCallValidationError before any call executes.
+            ToolCallValidationError before any call executes, and a sync or
+            async hook receives each one as an
+            :class:`~saidex.models.UnresolvedToolCall` and returns salvaged
+            args, a custom feedback text, or ``None`` for the default feedback.
     """
 
     def __init__(
@@ -120,7 +172,7 @@ class ToolCallPipeline:
         correction_mode: ExtractionMode,
         strip_thinking: bool,
         json_repair: bool,
-        on_unresolved: Literal["feedback", "raise"] = "feedback",
+        on_unresolved: OnUnresolved = "feedback",
     ) -> None:
         self._correction_model = correction_model
         self._max_correction_retries = max_correction_retries
@@ -263,6 +315,7 @@ class ToolCallPipeline:
             # never carried a tool name) — leave the plan invalid; feedback
             # applies.
             return
+        plan.correction_attempted = True
         raw = (
             plan.raw_args
             if plan.raw_args is not None
@@ -329,11 +382,12 @@ class ToolCallPipeline:
         plan.executable = True
         plan.outcome = "corrected"
 
-    def resolve(self, plans: list[CallPlan]) -> list[ToolMessage]:
+    async def resolve(self, plans: list[CallPlan], ctx: CallContext) -> list[ToolMessage]:
         """Apply ``on_unresolved`` and finalize every plan's ``outcome``.
 
         Args:
             plans: The planned (and possibly corrected) calls.
+            ctx: Where the ``AIMessage`` sits; handed to a hook.
 
         Returns:
             One error ``ToolMessage`` per call answered with feedback, in call order.
@@ -341,26 +395,107 @@ class ToolCallPipeline:
         Raises:
             ToolCallValidationError: With ``on_unresolved="raise"``, before any
                 call executes, when at least one call is not executable.
+            TypeError: A hook returned something other than ``dict``, ``str`` or ``None``.
         """
         if self._on_unresolved == "raise":
-            failures = [
-                (plan.call["name"], plan.call.get("id"), plan.error_text or "invalid tool call")
-                for plan in plans
-                if not plan.executable
-            ]
-            if failures:
-                raise ToolCallValidationError(failures)
+            failing = [plan for plan in plans if not plan.executable]
+            if failing:
+                raise ToolCallValidationError(
+                    [
+                        (
+                            plan.call["name"],
+                            plan.call.get("id"),
+                            plan.error_text or "invalid tool call",
+                        )
+                        for plan in failing
+                    ],
+                    calls=[self._unresolved(plan, ctx) for plan in failing if plan.answerable],
+                )
         feedback: list[ToolMessage] = []
         for plan in plans:
             if plan.executable:
                 if not plan.outcome:
                     plan.outcome = "executed"
-            elif plan.answerable:
-                plan.outcome = "feedback"
-                feedback.append(self.feedback_message(plan))
-            else:
+            elif not plan.answerable:
                 plan.outcome = "dropped"
+            else:
+                message = await self._apply_policy(plan, ctx)
+                if message is not None:
+                    plan.outcome = "feedback"
+                    feedback.append(message)
         return feedback
+
+    async def _apply_policy(self, plan: CallPlan, ctx: CallContext) -> ToolMessage | None:
+        """Answer one unresolved call; ``None`` means the hook salvaged it."""
+        policy = self._on_unresolved
+        if isinstance(policy, str):
+            return self.feedback_message(plan)
+        decision = policy(self._unresolved(plan, ctx))
+        if inspect.isawaitable(decision):
+            decision = await decision
+        if decision is None:
+            return self.feedback_message(plan)
+        if isinstance(decision, str):
+            return self._custom_feedback(plan, decision)
+        if isinstance(decision, dict):
+            if await self._salvage(plan, decision):
+                return None
+            return self.feedback_message(plan)
+        raise TypeError(f"on_unresolved must return a dict, a str or None; got {decision!r}")
+
+    async def _salvage(self, plan: CallPlan, args: dict[str, Any]) -> bool:
+        """Re-validate hook-supplied *args*; on success make *plan* executable with them."""
+        name = plan.call["name"]
+        schema = plan.schema or (self.schema_for(name) if name else None)
+        if schema is None:
+            logger.warning(
+                "on_unresolved returned arguments for tool call %r (id=%r), but the tool has "
+                "no known Pydantic schema to validate them; answering with feedback",
+                name,
+                plan.call["id"],
+            )
+            return False
+        try:
+            _, _, error_text = create_instance_with_issues(schema, **args)
+        except TypeError as exc:
+            error_text = f"arguments not valid: {exc}"
+        if error_text is not None:
+            logger.warning(
+                "on_unresolved returned invalid arguments for tool call %r (id=%r): %s",
+                name,
+                plan.call["id"],
+                error_text,
+            )
+            return False
+        plan.call["args"] = dict(args)
+        plan.recoverable = True
+        plan.prevalidated = True
+        plan.executable = True
+        plan.outcome = "salvaged"
+        return True
+
+    def _custom_feedback(self, plan: CallPlan, content: str) -> ToolMessage:
+        """Error ``ToolMessage`` carrying a hook's own feedback text."""
+        if plan.missing_name:
+            return ToolMessage(content=content, tool_call_id=plan.call["id"], status="error")
+        return ToolMessage(
+            content=content, name=plan.call["name"], tool_call_id=plan.call["id"], status="error"
+        )
+
+    def _unresolved(self, plan: CallPlan, ctx: CallContext) -> UnresolvedToolCall:
+        """Public view of an answerable, still invalid *plan*."""
+        return UnresolvedToolCall(
+            tool_name=str(plan.call.get("name") or ""),
+            tool_call_id=str(plan.call["id"]),
+            args=dict(plan.call["args"]) if plan.recoverable else None,
+            raw_args=plan.raw_args,
+            issues=plan.issues,
+            error_text=plan.error_text,
+            correction_attempted=plan.correction_attempted,
+            correction_retries=plan.correction_retries,
+            messages=ctx.conversation,
+            state=ctx.state,
+        )
 
     def schema_for(self, name: str) -> type[BaseModel] | None:
         """Return tool *name*'s Pydantic args schema, or ``None`` if unknown/non-Pydantic."""
@@ -511,7 +646,7 @@ def _finalized_outcome(outcome: ToolCallOutcome | Literal[""]) -> ToolCallOutcom
 
     ``""`` only ever exists as ``CallPlan.outcome``'s pre-dispatch default —
     ``ToolCallPipeline.resolve`` sets every plan's outcome to one of the
-    four real values before stats are built. This turns that invariant into an
+    real values before stats are built. This turns that invariant into an
     explicit, type-checked guarantee instead of silently letting an
     unfinalized ``""`` leak into the public ``ToolCallStats`` API.
     """

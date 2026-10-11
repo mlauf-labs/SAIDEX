@@ -39,6 +39,8 @@ Public API
         ToolCallStats,
         ToolNodeStats,
         ToolNodeEvent,
+        UnresolvedToolCall,
+        OnUnresolved,
         OnComplete,
         OnExhausted,
         OnExhaustedList,
@@ -87,6 +89,7 @@ Public API
 """
 
 from ._reasoning import ReasoningEscalation
+from ._tool_calls import OnUnresolved
 from .analytics import (
     FieldIssueSummary,
     FieldProblemStat,
@@ -131,6 +134,7 @@ from .models import (
     ToolCallStats,
     ToolNodeEvent,
     ToolNodeStats,
+    UnresolvedToolCall,
     ValidationIssue,
     ValidatorContext,
 )
@@ -213,6 +217,8 @@ __all__ = [
     "ToolCallStats",
     "ToolNodeStats",
     "ToolNodeEvent",
+    "UnresolvedToolCall",
+    "OnUnresolved",
     "OnComplete",
     "OnExhausted",
     "OnExhaustedList",

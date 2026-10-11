@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Annotated, Any
+from typing import Annotated, Any, get_type_hints
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +20,13 @@ from langgraph.runtime import Runtime  # noqa: E402
 from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from saidex import ToolNodeStats, collect_stats, on_extraction, on_tool_node  # noqa: E402
+from saidex import (  # noqa: E402
+    ToolNodeStats,
+    UnresolvedToolCall,
+    collect_stats,
+    on_extraction,
+    on_tool_node,
+)
 from saidex.langgraph import SaidexToolNode, ToolCallValidationError  # noqa: E402
 from tests._mock_llm import make_llm, make_response  # noqa: E402
 
@@ -1622,3 +1628,192 @@ async def test_callbacks_see_tool_span_and_correction_llm() -> None:
     )
     assert "add" in recorder.tool_starts  # inner ToolNode span reached the handler
     assert any("extract_data" in name for name in recorder.chain_starts)  # correction chain
+
+
+# ---------------------------------------------------------------------------
+# on_unresolved hook
+# ---------------------------------------------------------------------------
+
+
+def _bad_add_state() -> dict[str, Any]:
+    return {
+        "messages": [
+            HumanMessage(content="add five and two", id="h-1"),
+            _ai([_call("add", {"a": "five", "b": 2}, "c1")], msg_id="ai-1"),
+        ],
+        "extra": "kept",
+    }
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_hook_salvages_args() -> None:
+    seen: list[UnresolvedToolCall] = []
+
+    def hook(call: UnresolvedToolCall) -> dict[str, Any]:
+        seen.append(call)
+        return {"a": 5, "b": 2}
+
+    result = await SaidexToolNode([add], on_unresolved=hook).ainvoke(
+        _bad_add_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+
+    assert _tool_messages(result)[0].content == "7"
+    assert EXECUTED == ["add:5+2"]
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.tool_calls[0]["args"] == {"a": 5, "b": 2}
+    call = seen[0]
+    assert (call.tool_name, call.tool_call_id) == ("add", "c1")
+    assert call.args == {"a": "five", "b": 2}
+    assert call.raw_args is None
+    assert call.correction_attempted is False
+    assert [m.id for m in call.messages] == ["h-1", "ai-1"]
+    assert call.state["extra"] == "kept"
+    assert any(issue.field_path == "a" for issue in call.issues)
+    assert call.error_text is not None
+
+
+@pytest.mark.asyncio
+async def test_salvaged_call_reported_in_stats() -> None:
+    async with collect_stats() as sink:
+        await SaidexToolNode([add], on_unresolved=lambda call: {"a": 1, "b": 1}).ainvoke(
+            _bad_add_state(), runtime=_NO_GRAPH_RUNTIME
+        )
+    stats = sink.all()[0]
+    assert isinstance(stats, ToolNodeStats)
+    assert stats.calls[0].outcome == "salvaged"
+    assert (stats.salvaged_count, stats.executed_count) == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_async_hook() -> None:
+    async def hook(call: UnresolvedToolCall) -> dict[str, Any]:
+        return {"a": 2, "b": 2}
+
+    result = await SaidexToolNode([add], on_unresolved=hook).ainvoke(
+        _bad_add_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+    assert _tool_messages(result)[0].content == "4"
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_hook_invalid_args_fall_back_to_feedback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("WARNING", logger="saidex")
+    result = await SaidexToolNode([add], on_unresolved=lambda call: {"a": "still bad"}).ainvoke(
+        _bad_add_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert "was NOT executed" in str(tool_message.content)
+    assert EXECUTED == []
+    assert any("on_unresolved returned invalid arguments" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_hook_non_string_keys_fall_back_to_feedback() -> None:
+    result = await SaidexToolNode([add], on_unresolved=lambda call: {1: 5, "b": 2}).ainvoke(
+        _bad_add_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+    assert _tool_messages(result)[0].status == "error"
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_hook_dict_for_nameless_call_falls_back_to_feedback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level("WARNING", logger="saidex")
+    state = {"messages": [_ai(invalid=[_invalid_no_name("garbage", "c9")])]}
+    result = await SaidexToolNode([add], on_unresolved=lambda call: {"a": 1, "b": 2}).ainvoke(
+        state, runtime=_NO_GRAPH_RUNTIME
+    )
+    tool_message = _tool_messages(result)[0]
+    assert (tool_message.tool_call_id, tool_message.status) == ("c9", "error")
+    assert EXECUTED == []
+    assert any("no known Pydantic schema" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_hook_custom_feedback_text() -> None:
+    node = SaidexToolNode([add], on_unresolved=lambda call: f"Please retry {call.tool_name}")
+    result = await node.ainvoke(_bad_add_state(), runtime=_NO_GRAPH_RUNTIME)
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.content == "Please retry add"
+    assert (tool_message.status, tool_message.name, tool_message.tool_call_id) == (
+        "error",
+        "add",
+        "c1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_hook_none_means_default_feedback() -> None:
+    result = await SaidexToolNode([add], on_unresolved=lambda call: None).ainvoke(
+        _bad_add_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+    assert "was NOT executed" in str(_tool_messages(result)[0].content)
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_hook_exception_propagates_before_execution() -> None:
+    def hook(call: UnresolvedToolCall) -> None:
+        raise RuntimeError("stop the run")
+
+    state = {
+        "messages": [
+            _ai([_call("add", {"a": 1, "b": 2}, "ok-1"), _call("add", {"a": "x", "b": 2}, "bad")])
+        ]
+    }
+    with pytest.raises(RuntimeError, match="stop the run"):
+        await SaidexToolNode([add], on_unresolved=hook).ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_hook_bad_return_type_raises() -> None:
+    with pytest.raises(TypeError, match="on_unresolved"):
+        await SaidexToolNode([add], on_unresolved=lambda call: 42).ainvoke(  # type: ignore[arg-type,return-value]
+            _bad_add_state(), runtime=_NO_GRAPH_RUNTIME
+        )
+
+
+@pytest.mark.asyncio
+async def test_hook_sees_failed_correction() -> None:
+    seen: list[UnresolvedToolCall] = []
+    node = SaidexToolNode(
+        [add],
+        correction_model=_correction_llm([None, None]),
+        max_correction_retries=2,
+        on_unresolved=lambda call: seen.append(call),  # type: ignore[func-returns-value]
+    )
+    await node.ainvoke(_bad_add_state(), runtime=_NO_GRAPH_RUNTIME)
+    assert seen[0].correction_attempted is True
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_raise_carries_unresolved_calls() -> None:
+    with pytest.raises(ToolCallValidationError) as excinfo:
+        await SaidexToolNode([add], on_unresolved="raise").ainvoke(_bad_add_state())
+    assert EXECUTED == []
+    assert [c.tool_call_id for c in excinfo.value.calls] == ["c1"]
+    assert excinfo.value.failures[0][:2] == ("add", "c1")
+
+
+@pytest.mark.asyncio
+async def test_on_unresolved_raise_counts_idless_call_but_omits_it_from_calls() -> None:
+    state = {"messages": [_ai(invalid=[_invalid_no_id("add", "garbage")])]}
+    with pytest.raises(ToolCallValidationError) as excinfo:
+        await SaidexToolNode([add], on_unresolved="raise").ainvoke(state)
+    assert len(excinfo.value.failures) == 1
+    assert excinfo.value.calls == ()
+
+
+def test_ctor_accepts_callable_on_unresolved() -> None:
+    SaidexToolNode([add], on_unresolved=lambda call: None)
+
+
+def test_saidex_toolnode_type_hints_resolve() -> None:
+    hints = get_type_hints(SaidexToolNode.__init__)
+    assert "on_unresolved" in hints
