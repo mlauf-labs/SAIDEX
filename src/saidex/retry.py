@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import functools
+import importlib
 import logging
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any, Generic, TypeVar
+
+from .models import ModelErrorKind
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +29,106 @@ class RetryResult(Generic[T]):
 
     result: T
     retry_count: int = 0
+
+
+def _optional_classes(module: str, *names: str) -> tuple[type[BaseException], ...]:
+    """Return the exception classes *names* from *module*, skipping what is missing.
+
+    Optional providers (``openai``, ``httpx``, ``httpx2``) and newer
+    langchain-core classes may not be installed; a missing module or name is
+    simply left out.
+    """
+    try:
+        mod = importlib.import_module(module)
+    except ImportError:
+        return ()
+    found: list[type[BaseException]] = []
+    for name in names:
+        cls = getattr(mod, name, None)
+        if isinstance(cls, type) and issubclass(cls, BaseException):
+            found.append(cls)
+    return tuple(found)
+
+
+@functools.cache
+def _error_kind_table() -> tuple[tuple[ModelErrorKind, tuple[type[BaseException], ...]], ...]:
+    """Ordered ``(kind, classes)`` rows; the first matching row wins.
+
+    Order matters: context overflow before invalid request (langchain-openai's
+    overflow error is also an ``openai.BadRequestError``) and timeout before
+    connection (``openai.APITimeoutError`` subclasses ``APIConnectionError``).
+    """
+    lc = "langchain_core.exceptions"
+    return (
+        (ModelErrorKind.CONTEXT_OVERFLOW, _optional_classes(lc, "ContextOverflowError")),
+        (
+            ModelErrorKind.RATE_LIMIT,
+            _optional_classes(lc, "ModelRateLimitError")
+            + _optional_classes("openai", "RateLimitError"),
+        ),
+        (
+            ModelErrorKind.TIMEOUT,
+            _optional_classes(lc, "ModelTimeoutError")
+            + _optional_classes("openai", "APITimeoutError")
+            + _optional_classes("httpx", "TimeoutException")
+            + _optional_classes("httpx2", "TimeoutException")
+            + (TimeoutError,),
+        ),
+        (
+            ModelErrorKind.CONNECTION,
+            _optional_classes(lc, "ModelConnectionError")
+            + _optional_classes("openai", "APIConnectionError")
+            + _optional_classes("httpx", "ConnectError", "RemoteProtocolError", "NetworkError")
+            + _optional_classes("httpx2", "ConnectError", "RemoteProtocolError", "NetworkError")
+            + (ConnectionError,),
+        ),
+        (
+            ModelErrorKind.SERVER_ERROR,
+            _optional_classes(lc, "ModelAPIError")
+            + _optional_classes("openai", "InternalServerError"),
+        ),
+        (
+            ModelErrorKind.AUTHENTICATION,
+            _optional_classes(lc, "ModelAuthenticationError")
+            + _optional_classes("openai", "AuthenticationError"),
+        ),
+        (
+            ModelErrorKind.PERMISSION_DENIED,
+            _optional_classes(lc, "ModelPermissionDeniedError")
+            + _optional_classes("openai", "PermissionDeniedError"),
+        ),
+        (
+            ModelErrorKind.NOT_FOUND,
+            _optional_classes(lc, "ModelNotFoundError")
+            + _optional_classes("openai", "NotFoundError"),
+        ),
+        (
+            ModelErrorKind.INVALID_REQUEST,
+            _optional_classes(lc, "ModelInvalidRequestError")
+            + _optional_classes("openai", "BadRequestError"),
+        ),
+    )
+
+
+def classify_model_error(exc: BaseException) -> ModelErrorKind:
+    """Map a model-call exception to a provider-independent :class:`ModelErrorKind`.
+
+    Uses langchain-core's standard model exceptions (langchain-core ≥ 1.6), which
+    provider integrations raise alongside their SDK's own types, and falls back
+    to the ``openai`` / ``httpx`` / ``httpx2`` types and builtin
+    ``TimeoutError`` / ``ConnectionError``.  Modules that are not installed are
+    skipped.
+
+    Args:
+        exc: The exception raised by a chat-model call.
+
+    Returns:
+        The matching kind, or :attr:`ModelErrorKind.OTHER`.
+    """
+    for kind, classes in _error_kind_table():
+        if classes and isinstance(exc, classes):
+            return kind
+    return ModelErrorKind.OTHER
 
 
 def _default_retryable_exceptions() -> tuple[type[Exception], ...]:

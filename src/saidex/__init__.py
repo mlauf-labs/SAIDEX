@@ -32,6 +32,7 @@ Public API
         ToolCallConfig,
         ExtractDataStats,
         FailureReason,
+        ModelErrorKind,
         FieldIssue,
         ExtractionEvent,
         ToolCallStats,
@@ -56,6 +57,7 @@ Public API
         ExtractionListener,
         ToolNodeListener,
         RetryConfig,
+        classify_model_error,
         create_instance_safe,
         # Source grounding (schema-declared, source-aware field checks)
         Grounded,
@@ -122,6 +124,7 @@ from .models import (
     ExtractorRunStats,
     FailureReason,
     FieldIssue,
+    ModelErrorKind,
     ToolCallConfig,
     ToolCallStats,
     ToolNodeEvent,
@@ -138,7 +141,13 @@ from .observability import (
     on_extraction,
     on_tool_node,
 )
-from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
+from .retry import (
+    DEFAULT_RETRY_CONFIG,
+    RetryConfig,
+    RetryResult,
+    classify_model_error,
+    with_retry,
+)
 from .sync import (
     extract_data_from_text_sync,
     extract_data_list_from_text_sync,
@@ -195,6 +204,7 @@ __all__ = [
     "ToolCallConfig",
     "ExtractDataStats",
     "FailureReason",
+    "ModelErrorKind",
     "FieldIssue",
     "ExtractionEvent",
     "ToolCallStats",
@@ -228,6 +238,7 @@ __all__ = [
     "RetryResult",
     "DEFAULT_RETRY_CONFIG",
     "with_retry",
+    "classify_model_error",
     "create_instance_safe",
     # source grounding / schema-declared field checks
     "Grounded",

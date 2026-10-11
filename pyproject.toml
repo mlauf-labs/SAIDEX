@@ -138,4 +138,6 @@ dev = [
     "python-dateutil>=2.8.2",
     # Exercises the optional saidex[langgraph] extra in the test suite.
     "langgraph>=1.1.5",
+    # Exercises the openai exception mappings in retry.py / classify_model_error.
+    "openai>=1.0.0",
 ]

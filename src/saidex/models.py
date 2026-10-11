@@ -222,6 +222,41 @@ class FailureReason(StrEnum):
     NO_TOOL_CALL = "no_tool_call"
 
 
+class ModelErrorKind(StrEnum):
+    """Provider-independent category of the error that ended a model run.
+
+    Set on ``stats.llm_error_kind`` when ``failure_reason`` is
+    :attr:`FailureReason.LLM_ERROR`.  Derived by
+    :func:`saidex.classify_model_error` from langchain-core's standard model
+    exceptions (langchain-core ≥ 1.6) and, for older versions, from the
+    ``openai`` / ``httpx`` exception types.
+
+    Attributes:
+        RATE_LIMIT: The provider rejected the request because of a rate limit (HTTP 429).
+        TIMEOUT: The request timed out.
+        CONNECTION: The provider could not be reached.
+        SERVER_ERROR: The provider reported a server failure (HTTP 5xx).
+        AUTHENTICATION: Authentication failed (HTTP 401).
+        PERMISSION_DENIED: The credentials lack permission (HTTP 403).
+        INVALID_REQUEST: The provider rejected the request as invalid (HTTP 400),
+            including tool-binding flags it does not accept.
+        NOT_FOUND: The requested model was not found (HTTP 404).
+        CONTEXT_OVERFLOW: The input exceeded the model's context window.
+        OTHER: Anything not covered above.
+    """
+
+    RATE_LIMIT = "rate_limit"
+    TIMEOUT = "timeout"
+    CONNECTION = "connection"
+    SERVER_ERROR = "server_error"
+    AUTHENTICATION = "authentication"
+    PERMISSION_DENIED = "permission_denied"
+    INVALID_REQUEST = "invalid_request"
+    NOT_FOUND = "not_found"
+    CONTEXT_OVERFLOW = "context_overflow"
+    OTHER = "other"
+
+
 def _combine_failure_reasons(
     primary: FailureReason | None,
     fallback: FailureReason | None,
