@@ -114,11 +114,11 @@ def extract_data_sync(
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
         on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
-
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`~saidex.extract_data`.
+
     Returns:
         ``(model_instance, stats)`` — see :func:`~saidex.extract_data`.
 
@@ -189,11 +189,11 @@ def extract_data_from_text_sync(
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
         on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
-
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`~saidex.extract_data`.
+
     Returns:
         ``(model_instance, stats)`` — see :func:`~saidex.extract_data_from_text`.
 
@@ -263,11 +263,11 @@ def extract_data_list_sync(
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
         on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
-
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`~saidex.extract_data`.
+
     Returns:
         ``(items, stats)`` — see :func:`~saidex.extract_data_list`.
 
@@ -338,11 +338,11 @@ def extract_data_list_from_text_sync(
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
         on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
-
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`~saidex.extract_data`.
+
     Returns:
         ``(items, stats)`` — see :func:`~saidex.extract_data_list_from_text`.
 
@@ -391,6 +391,8 @@ def extract_data_with_tools_sync(
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
     on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_with_tools`.
 
@@ -411,6 +413,10 @@ def extract_data_with_tools_sync(
         max_validation_retries: Max final-answer validation failures tolerated.
         retry_config: Network-level retry configuration.
         on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`~saidex.extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — see :func:`~saidex.extract_data_with_tools`.
@@ -435,6 +441,8 @@ def extract_data_with_tools_sync(
             capture_source_text=capture_source_text,
             validator=validator,
             on_exhausted=on_exhausted,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
         ),
         sync_name="extract_data_with_tools_sync",
         async_name="extract_data_with_tools",
@@ -457,6 +465,8 @@ def run_extractor_agent_sync(
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
     on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.run_extractor_agent`.
 
@@ -476,6 +486,10 @@ def run_extractor_agent_sync(
         max_validation_retries: Max final-answer validation failures tolerated.
         retry_config: Network-level retry configuration.
         on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`~saidex.extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — see :func:`~saidex.run_extractor_agent`.
@@ -499,6 +513,8 @@ def run_extractor_agent_sync(
             capture_source_text=capture_source_text,
             validator=validator,
             on_exhausted=on_exhausted,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
         ),
         sync_name="run_extractor_agent_sync",
         async_name="run_extractor_agent",

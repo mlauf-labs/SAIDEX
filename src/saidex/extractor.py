@@ -1027,11 +1027,11 @@ async def extract_data_from_text(
             trace inputs sent to attached *callbacks* — see :func:`extract_data`.
         validator: Optional external validation callable — see :func:`extract_data`.
         on_exhausted: Optional salvage hook — see :func:`extract_data`.
-
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`extract_data`.
+
     Returns:
         Same as :func:`extract_data`.
 
@@ -1170,11 +1170,11 @@ async def extract_data_list(
             (a ``dict`` included) raises ``TypeError``.  The items are copies,
             and the kept list is re-validated like a single result — see
             :func:`extract_data`.
-
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`extract_data`.
+
     Returns:
         A tuple of ``(items, stats)``:
 
@@ -1369,11 +1369,11 @@ async def extract_data_list_from_text(
             :func:`extract_data_list`.
         on_exhausted: Optional salvage hook for the item list — see
             :func:`extract_data_list`.
-
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`extract_data`.
+
     Returns:
         Same as :func:`extract_data_list`.
 
@@ -1435,6 +1435,8 @@ async def extract_data_with_tools(
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
     on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Run an agentic tool-loop to produce a validated Pydantic model.
 
@@ -1478,6 +1480,13 @@ async def extract_data_with_tools(
             ``max_validation_retries + 1``; ``max_iterations`` can end the loop
             before any attempt is final.
         on_exhausted: Optional salvage hook — see :func:`extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`extract_data`.  Levels advance per final-answer
+            attempt (parse or validation failure); helper-tool iterations keep
+            the current level.  In ``JSON`` mode the level is bound on the raw
+            model.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -1518,6 +1527,8 @@ async def extract_data_with_tools(
         capture_source_text=capture_source_text,
         validator=validator,
         on_exhausted=on_exhausted,
+        reasoning_escalation=reasoning_escalation,
+        fallback_reasoning_escalation=fallback_reasoning_escalation,
     )
 
 
@@ -1537,6 +1548,8 @@ async def run_extractor_agent(
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
     on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Low-level agent loop that accepts a full message list.
 
@@ -1558,11 +1571,28 @@ async def run_extractor_agent(
         validator: Optional external validation callable applied to the final
             answer — see :func:`extract_data_with_tools`.
         on_exhausted: Optional salvage hook — see :func:`extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`extract_data`.  Levels advance per final-answer
+            attempt (parse or validation failure); helper-tool iterations keep
+            the current level.  In ``JSON`` mode the level is bound on the raw
+            model.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
         failure.
     """
+    primary_levels = _resolve_reasoning_levels(
+        llm_model, reasoning_escalation, param="reasoning_escalation"
+    )
+    fallback_levels = (
+        _resolve_reasoning_levels(
+            fallback_llm_model, fallback_reasoning_escalation, param="fallback_reasoning_escalation"
+        )
+        if fallback_llm_model is not None
+        else ()
+    )
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
     original_messages = list(messages)
     grounding_source = _source_text_from_messages(original_messages)
@@ -1635,6 +1665,7 @@ async def run_extractor_agent(
             retry_config=effective_retry_config,
             validator=validator,
             source_text=grounding_source,
+            reasoning_levels=primary_levels,
             is_last_model=fallback_llm_model is None,
         )
 
@@ -1669,6 +1700,7 @@ async def run_extractor_agent(
                 retry_config=effective_retry_config,
                 validator=validator,
                 source_text=grounding_source,
+                reasoning_levels=fallback_levels,
                 is_last_model=True,
             )
             succeeded = result is not None
@@ -1700,6 +1732,7 @@ async def run_extractor_agent(
                 field_issues=(*primary_stats.field_issues, *fallback_stats.field_issues),
                 last_candidate=last_candidate,
                 last_rejection=last_rejection,
+                reasoning_effort=fallback_stats.reasoning_effort,
             )
             if succeeded:
                 logger.info("Fallback model succeeded for agent loop (%s).", schema.__name__)
@@ -1799,6 +1832,7 @@ async def _run_extractor_agent_with_model(
     is_last_model: bool,
     validator: Validator[MODEL_T] | None = None,
     source_text: str | None = None,
+    reasoning_levels: tuple[str, ...] = (),
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Execute the agent loop with one model; return (instance, stats)."""
     from .tools import Tool as ToolType  # noqa: F401 – used for type clarity only
@@ -1832,6 +1866,7 @@ async def _run_extractor_agent_with_model(
     llm_error_kind: ModelErrorKind | None = None
     candidate: MODEL_T | None = None
     rejection: tuple[FieldIssue, ...] = ()
+    current_level: str | None = None
 
     def _stats(success: bool, reason: FailureReason | None) -> ExtractorRunStats:
         return ExtractorRunStats(
@@ -1848,13 +1883,17 @@ async def _run_extractor_agent_with_model(
             field_issues=tuple(agent_issues),
             last_candidate=None if success else candidate,
             last_rejection=() if success else rejection,
+            reasoning_effort=current_level,
         )
 
     while iterations < max_iterations:
         # ── LLM invocation with network-level retries ─────────────────────
         try:
+            current_level = _level_for_attempt(reasoning_levels, validation_retries)
             invoke_result = await with_retry(
-                operation=partial(trace.invoke_llm, llm, messages),
+                operation=partial(
+                    trace.invoke_llm, _with_reasoning_effort(llm, current_level), messages
+                ),
                 config=retry_config,
                 operation_name=f"agent_loop({model_label})",
             )
@@ -1928,6 +1967,7 @@ async def _run_extractor_agent_with_model(
                         max_attempts=max_validation_retries + 1,
                         model_label=model_label,
                         is_last_model=is_last_model,
+                        reasoning_effort=current_level,
                     ),
                     source_text=source_text,
                     validator=validator,
@@ -2074,6 +2114,7 @@ async def _run_extractor_agent_with_model(
                             max_attempts=max_validation_retries + 1,
                             model_label=model_label,
                             is_last_model=is_last_model,
+                            reasoning_effort=current_level,
                         ),
                         source_text=source_text,
                         validator=validator,

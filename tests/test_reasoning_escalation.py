@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -10,10 +11,14 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from saidex import (
+    ExtractionMode,
+    Tool,
     ValidatorContext,
     extract_data,
     extract_data_list,
     extract_data_sync,
+    extract_data_with_tools,
+    extract_data_with_tools_sync,
     with_context,
 )
 from saidex._reasoning import (
@@ -288,5 +293,99 @@ def test_sync_wrapper_forwards() -> None:
     llm = make_llm([_item()])
     _, stats = extract_data_sync(
         llm, Item, _msgs(), retry_config=_NO_RETRY, reasoning_escalation=["low"]
+    )
+    assert stats.reasoning_effort == "low"
+
+
+class Answer(BaseModel):
+    result: str
+
+
+class _Args(BaseModel):
+    q: str
+
+
+async def _noop(**kwargs: Any) -> dict[str, Any]:
+    return {"ok": True}
+
+
+def _final(call_id: str) -> Any:
+    return make_response([{"name": "Answer", "args": {"result": "x"}, "id": call_id}])
+
+
+def _reject_answer(answer: Answer) -> str:
+    return "no"
+
+
+async def test_agent_levels_follow_final_answer_attempts() -> None:
+    llm = make_llm([_final(f"f{i}") for i in range(3)])
+    _, stats = await extract_data_with_tools(
+        llm,
+        Answer,
+        "task",
+        tools=[],
+        max_validation_retries=2,
+        retry_config=_NO_RETRY,
+        validator=_reject_answer,
+        reasoning_escalation=["low", "high"],
+    )
+    assert _efforts(llm) == ["low", "high", "high"]
+    assert stats.reasoning_effort == "high"
+
+
+async def test_agent_helper_iterations_keep_the_level() -> None:
+    tool = Tool(name="lookup", description=".", parameters=_Args, handler=_noop)
+    helper = make_response([{"name": "lookup", "args": {"q": "x"}, "id": "h"}])
+    llm = make_llm([helper, helper, _final("f0"), helper, _final("f1")])
+    await extract_data_with_tools(
+        llm,
+        Answer,
+        "task",
+        tools=[tool],
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=_reject_answer,
+        reasoning_escalation=["low", "high"],
+    )
+    assert _efforts(llm) == ["low", "low", "low", "high", "high"]
+
+
+async def test_agent_fallback_uses_its_own_levels() -> None:
+    primary = make_llm([_final("p")])
+    fallback = make_llm([_final("f")])
+    _, stats = await extract_data_with_tools(
+        primary,
+        Answer,
+        "task",
+        tools=[],
+        fallback_llm_model=fallback,
+        max_validation_retries=0,
+        retry_config=_NO_RETRY,
+        validator=_reject_answer,
+        reasoning_escalation=["low"],
+        fallback_reasoning_escalation=["high"],
+    )
+    assert _efforts(primary) == ["low"] and _efforts(fallback) == ["high"]
+    assert stats.reasoning_effort == "high"
+
+
+async def test_agent_json_mode_binds_the_raw_model() -> None:
+    llm = make_llm([make_response(content=json.dumps({"result": "x"}))])
+    await extract_data_with_tools(
+        llm,
+        Answer,
+        "task",
+        tools=[],
+        final_answer_mode=ExtractionMode.JSON,
+        retry_config=_NO_RETRY,
+        reasoning_escalation=["medium"],
+    )
+    llm.bind.assert_called_once_with(reasoning_effort="medium")
+
+
+def test_agent_sync_wrapper_forwards() -> None:
+    llm = make_llm([_final("f")])
+    _, stats = extract_data_with_tools_sync(
+        llm, Answer, "task", tools=[], retry_config=_NO_RETRY, reasoning_escalation=["low"]
     )
     assert stats.reasoning_effort == "low"
