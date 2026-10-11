@@ -1497,6 +1497,14 @@ right where they are declared.</p>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="n">note</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">Field</span><span class="p">(</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Free summary&quot;</span><span class="p">)</span>       <span class="c1"># not grounded</span>
 </code></pre></div>
 <hr />
+<div class="admonition warning">
+<p class="admonition-title">Optional fields</p>
+<p>Put the check on the field itself for optional values: <code>GroundedStr | None</code> or
+<code>GroundedStr | MISSING</code> is <strong>not</strong> grounded because Annotated metadata inside a union
+is not picked up. Use <code>Annotated[str | None, Grounded()]</code> or
+<code>field_check(Grounded(), default=MISSING)</code>; see
+<a href="../schema-design/#fields-that-may-be-missing-missing">Fields that may be missing</a>.</p>
+</div>
 <h2 id="how-it-fits-the-retry-loop">How it fits the retry loop<a class="headerlink" href="#how-it-fits-the-retry-loop" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>LLM produces output
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>        │
