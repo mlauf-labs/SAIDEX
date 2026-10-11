@@ -918,6 +918,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../failure-reasons/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Reasons
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../observability/" class="md-nav__link">
         
   
@@ -1841,6 +1869,10 @@ failed. The returned <code>ExtractorRunStats</code> are the <strong>sum of both 
 </table>
 <p><code>ExtractorRunStats</code> instances support <code>+</code> to merge (used internally to combine
 primary and fallback attempts).</p>
+<p><code>failure_reason</code> uses the same <a href="../failure-reasons/"><code>FailureReason</code></a> values as
+<code>extract_data</code>, plus <code>no_tool_call</code>, which only the agent loop produces. In the agent loop
+<code>validation_exhausted</code> is also reported when <code>max_iterations</code> ran out before a
+valid final answer; then raise <code>max_iterations</code>.</p>
 <hr />
 <h2 id="synchronous-usage">Synchronous usage<a class="headerlink" href="#synchronous-usage" title="Permanent link">&para;</a></h2>
 <p>Both functions are async, but each has a synchronous wrapper —

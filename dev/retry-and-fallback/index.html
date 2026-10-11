@@ -16,7 +16,7 @@
         <link rel="prev" href="../images/">
       
       
-        <link rel="next" href="../observability/">
+        <link rel="next" href="../failure-reasons/">
       
       
         
@@ -952,6 +952,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../failure-reasons/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Failure Reasons
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../observability/" class="md-nav__link">
         
   
@@ -1843,6 +1871,8 @@ note on how to add Langfuse tracing via callbacks.</p>
 <a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a><span class="c1"># result is guaranteed valid here</span>
 <a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a><span class="n">process</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
 </code></pre></div>
+<p><code>stats.failure_reason</code> tells you <em>why</em> the run failed and whether retrying later
+is worthwhile — see <a href="../failure-reasons/">Failure reasons</a>.</p>
 <h3 id="tracking-retry-costs">Tracking retry costs<a class="headerlink" href="#tracking-retry-costs" title="Permanent link">&para;</a></h3>
 <p><code>ExtractDataStats</code> lets you track quality metrics over time:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
