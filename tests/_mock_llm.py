@@ -33,7 +33,11 @@ def make_llm(responses: list[MagicMock] | list[Any]) -> MagicMock:
     """
     bound = MagicMock()
     bound.ainvoke = AsyncMock(side_effect=responses)
+    # .bind(...) (e.g. reasoning_effort) returns the same double and records its kwargs.
+    bound.bind = MagicMock(return_value=bound)
     llm = MagicMock()
     llm.bind_tools = MagicMock(return_value=bound)
     llm.ainvoke = bound.ainvoke  # for JSON mode without tools
+    llm.bind = MagicMock(return_value=llm)
+    llm.profile = None
     return llm
