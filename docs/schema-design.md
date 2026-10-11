@@ -38,6 +38,49 @@ class Example(BaseModel):
 Without the `None` default, the field is still required.  With it, a missing
 value is silently populated as `None` and no retry is needed.
 
+### Fields that may be missing (`MISSING`)
+
+With pydantic 2.14 or newer you can mark a field as "may be absent from the source"
+instead of "may be `null`" using pydantic's `MISSING` sentinel:
+
+```python
+from pydantic import BaseModel, MISSING
+
+class Contact(BaseModel):
+    name: str
+    note: str | MISSING = MISSING
+```
+
+`MISSING` does not exist before pydantic 2.14 (`from pydantic import MISSING` raises
+`ImportError`), so only use it when your pinned pydantic is recent enough.
+
+- **The model omits the key.** When the source has no note, the model leaves `note` out
+  and the field holds the `MISSING` sentinel itself.
+- **`null` is not "missing".** `str | MISSING` does not accept `None`: a `null` fails
+  validation and is retried with the error fed back. Use `str | None` if you want nulls.
+- **Results serialize without the key.** `model_dump()` and `model_dump_json()` drop
+  absent fields, so `"note" not in result.model_dump()`.
+- **Check with `is MISSING`.** In external validators, `on_exhausted` hooks and your own
+  code, test `value is MISSING` rather than `value is None` or truthiness.
+- **Strict tool schemas cannot express omission.** Strict mode makes every property
+  required, so SAIDEX binds schemas containing `MISSING` fields non-strict and logs one
+  warning per schema. Pass `ToolCallConfig.COMPATIBLE` or use `ExtractionMode.JSON` to
+  avoid the warning (see [Strict tool schemas](extraction-modes.md#strict-tool-schemas)).
+- **Grounding.** To ground such a field, use `field_check(Grounded(), default=MISSING)`
+  or `Annotated[str | MISSING, Grounded()]`; an absent value is skipped, a bad one is
+  flagged. Do not write `GroundedStr | MISSING`: Annotated metadata inside a union is not
+  picked up, so the check silently never runs (the same rule as `GroundedStr | None`).
+
+```python
+from typing import Annotated
+from saidex import Grounded, field_check
+
+class Contact(BaseModel):
+    note: str | MISSING = field_check(Grounded(), default=MISSING)  # grounded
+    memo: Annotated[str | MISSING, Grounded()] = MISSING            # grounded
+    # GroundedStr | MISSING = MISSING  -> never grounded
+```
+
 ### Lists
 
 ```python
