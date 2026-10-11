@@ -10,6 +10,9 @@ field-level retry loop, exactly like a Pydantic failure, so the model self-corre
 Return a list of ``ValidationIssue`` objects to report several findings at once,
 each with its own field path and ``retry``/``flag`` behaviour.
 
+Wrap a validator with ``with_context`` to receive a ``ValidatorContext`` (attempt number,
+budget, ``is_final``) and be strict early but lenient on the last attempt.
+
 The validator may be **sync or async**, and is available on every entry point —
 ``extract_data``, ``extract_data_from_text``, the batch variants, the agent loop,
 and all the ``*_sync`` wrappers.
@@ -25,7 +28,7 @@ import asyncio
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import ValidationIssue, extract_data_from_text
+from saidex import ValidationIssue, ValidatorContext, extract_data_from_text, with_context
 
 # ---------------------------------------------------------------------------
 # Schema — note there is NO cross-field check inside the model itself.
@@ -106,6 +109,18 @@ def check_invoice_rules(inv: Invoice) -> list[ValidationIssue]:
     return issues
 
 
+def lenient_on_final_attempt(inv: Invoice, ctx: ValidatorContext) -> ValidationIssue | None:
+    """Ask for a correction while retries remain; on the last attempt, accept and flag."""
+    if abs(sum(line.amount for line in inv.lines) - inv.total) < 0.01:
+        return None
+    return ValidationIssue(
+        message=f"Line items do not add up to the stated total (attempt {ctx.attempt}).",
+        field_path="total",
+        error_type="total_mismatch",
+        on_mismatch="flag" if ctx.is_final else "retry",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Run extraction
 # ---------------------------------------------------------------------------
@@ -151,6 +166,17 @@ async def main() -> None:
         validator=check_invoice_rules,
     )
     print(f"\nStructured validator — success: {stats.success}, retries: {stats.total_retries}")
+    for issue in stats.field_issues:
+        print(f"  attempt {issue.attempt}: {issue.field_path} [{issue.error_type}] {issue.message}")
+
+    # Attempt-aware validator: strict while retries remain, lenient on the last one.
+    invoice, stats = await extract_data_from_text(
+        llm,
+        Invoice,
+        document,
+        validator=with_context(lenient_on_final_attempt),
+    )
+    print(f"\nContext-aware validator — success: {stats.success}, retries: {stats.total_retries}")
     for issue in stats.field_issues:
         print(f"  attempt {issue.attempt}: {issue.field_path} [{issue.error_type}] {issue.message}")
 
