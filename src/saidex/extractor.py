@@ -1939,7 +1939,9 @@ async def _run_extractor_agent_with_model(
         if not tool_calls and not invalid_tool_calls:
             if final_answer_mode is ExtractionMode.JSON:
                 # LLM is done calling tools — parse the response text as JSON.
-                args, format_error = _parse_json_response(response, schema.__name__, model_label)
+                args, format_error = _parse_json_response(
+                    response, schema.__name__, model_label, schema
+                )
                 if format_error is not None:
                     format_errors += 1
                     failure_reason = FailureReason.PARSE_ERROR
@@ -2755,7 +2757,7 @@ async def _try_with_model(
         if mode is ExtractionMode.TOOL_CALLING:
             args, format_error = _parse_tool_response(response, schema_label, model_label)
         else:
-            args, format_error = _parse_json_response(response, schema_label, model_label)
+            args, format_error = _parse_json_response(response, schema_label, model_label, schema)
 
         if format_error is not None:
             messages.append(HumanMessage(content=format_error))
@@ -2962,15 +2964,116 @@ def _build_json_instructions(schema: type[BaseModel]) -> str:
     )
 
 
+def _field_keys(info: FieldInfo, name: str) -> set[str]:
+    """Every key under which *info* may appear in a JSON object."""
+    keys = {name}
+    if info.alias:
+        keys.add(info.alias)
+    alias = info.validation_alias
+    if isinstance(alias, str):
+        keys.add(alias)
+    elif isinstance(alias, AliasChoices):
+        keys.update(choice for choice in alias.choices if isinstance(choice, str))
+    return keys
+
+
+def _constructor_key(name: str, info: FieldInfo) -> str:
+    """Key under which ``schema(**data)`` accepts field *name* (aliases win over names)."""
+    alias = info.validation_alias
+    if isinstance(alias, AliasChoices):
+        alias = next((c for c in alias.choices if isinstance(c, str)), None)
+    if isinstance(alias, str):
+        return alias
+    return info.alias or name
+
+
+def _schema_input_keys(schema: Any) -> set[str] | None:
+    """Every key a JSON object may use for *schema*'s fields; ``None`` if not a model."""
+    if not (inspect.isclass(schema) and issubclass(schema, BaseModel)):
+        return None
+    return {
+        key
+        for name, info in schema.model_fields.items()
+        for key in (*_field_keys(info, name), _constructor_key(name, info))
+    }
+
+
+def _sole_model_list_field(schema: Any) -> str | None:
+    """JSON key of the only field when it is a ``list`` of models, else ``None``."""
+    if not (inspect.isclass(schema) and issubclass(schema, BaseModel)):
+        return None
+    if len(schema.model_fields) != 1:
+        return None
+    (name, info), *_ = schema.model_fields.items()
+    annotation = info.annotation
+    origin = get_origin(annotation)
+    if not (inspect.isclass(origin) and issubclass(origin, (Sequence, tuple))):
+        return None
+    args = [a for a in get_args(annotation) if a is not Ellipsis]
+    if not args or not all(inspect.isclass(a) and issubclass(a, BaseModel) for a in args):
+        return None
+    return _constructor_key(name, info)
+
+
+def _unwrap_json_array(
+    parsed: list[Any], schema: Any, schema_name: str, model_label: str
+) -> tuple[Any, str | None]:
+    """Resolve a top-level JSON array against *schema*.
+
+    Returns ``(value, feedback)``: a dict to continue with, or feedback for the model, or
+    the unchanged list when no rule applies.
+    """
+    if not all(isinstance(item, dict) for item in parsed):
+        return parsed, None
+    if len(parsed) == 1:
+        known = _schema_input_keys(schema)
+        if known is None or known & set(parsed[0]):
+            logger.debug(
+                "%s: JSON response for %s was a single object wrapped in an array; unwrapping.",
+                model_label,
+                schema_name,
+            )
+            return parsed[0], None
+    list_key = _sole_model_list_field(schema)
+    if list_key is not None:
+        return {list_key: parsed}, None
+    if len(parsed) >= 2:
+        logger.warning(
+            "%s: JSON response for %s contained %d separate objects.",
+            model_label,
+            schema_name,
+            len(parsed),
+        )
+        return None, (
+            f"Your response contained {len(parsed)} separate JSON objects. "
+            f"Return exactly one JSON object that matches the '{schema_name}' "
+            f"schema — if you need several records, put them inside that object "
+            f"as the schema describes."
+        )
+    return parsed, None
+
+
 def _parse_json_response(
     response: Any,
     schema_name: str,
     model_label: str,
+    schema: Any = None,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Parse a raw-JSON response's content into an argument dict.
 
-    Returns ``(args, None)`` on success, or ``(None, feedback_message)`` when
-    the content was not parseable as a JSON object.
+    A top-level array is resolved against *schema*: it is wrapped into the sole
+    ``list[Model]`` field of a container schema, a single object sharing a key with the
+    schema is unwrapped, and several objects are sent back for correction.
+
+    Args:
+        response: The model response; its ``content`` is parsed.
+        schema_name: Schema name used in feedback messages.
+        model_label: Label of the model for log messages.
+        schema: The target schema class, used to interpret top-level arrays.
+
+    Returns:
+        ``(args, None)`` on success, or ``(None, feedback_message)`` when the content
+        was not parseable as a JSON object.
     """
     content = getattr(response, "content", "")
     try:
@@ -2987,6 +3090,11 @@ def _parse_json_response(
             f"Return ONLY a single valid JSON object that matches the "
             f"'{schema_name}' schema — no code fences and no extra text."
         )
+
+    if isinstance(parsed, list):
+        parsed, array_feedback = _unwrap_json_array(parsed, schema, schema_name, model_label)
+        if array_feedback is not None:
+            return None, array_feedback
 
     if not isinstance(parsed, dict):
         logger.warning(
@@ -3049,7 +3157,37 @@ def _extract_json_from_content(content: Any) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError as json_exc:
-        # Fallback 1: isolate the outermost { ... } block and retry.
+        # Fallback 1: isolate the outermost { ... } block of the *unstripped* text, so every
+        # reply that parsed before comment stripping existed still parses identically.
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+
+        # Comments are stripped only from the JSON region: apostrophes and URLs in leading
+        # prose ("Here's ...", "Source: https://...") would otherwise be taken for string
+        # delimiters and comment markers. json-repair mangles values that follow a comment
+        # (``"age": /* x */ 36`` becomes ``""``), hence the stripping before it runs.
+        first = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
+        if first != -1:
+            text = text[first:]
+            stripped = _strip_json_comments(text)
+            if stripped != text:
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    text = stripped
+
+        # json-repair merges concatenated objects that share keys (the last one wins),
+        # which would silently drop data; surface them as a list instead.
+        objects = _split_concatenated_objects(text)
+        if objects is not None:
+            return objects
+
+        # Fallback 1b: the outermost { ... } block of the comment-free text.
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
@@ -3070,6 +3208,83 @@ def _extract_json_from_content(content: Any) -> Any:
         raise ValueError(
             f"json-repair could not produce a dict/list from content: {text[:200]!r}"
         ) from json_exc
+
+
+def _split_concatenated_objects(text: str) -> list[dict[str, Any]] | None:
+    """Return the objects of ``{...}{...}`` / ``{...},{...}`` text, else ``None``.
+
+    Args:
+        text: Candidate text that is not valid JSON as a whole.
+
+    Returns:
+        A list of at least two dicts when *text* consists solely of JSON objects
+        separated by whitespace or commas, otherwise ``None``.
+    """
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i].isspace() or text[i] == ",":
+            i += 1
+            continue
+        try:
+            value, i = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(value, dict):
+            return None
+        objects.append(value)
+    return objects if len(objects) >= 2 else None
+
+
+#: Text ending in a URL scheme (``http:``, ``s3:``); a following ``//`` belongs to the URL.
+_URL_SCHEME_BEFORE = re.compile(r"(?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]*:$")
+
+
+def _strip_json_comments(text: str) -> str:
+    """Remove ``//`` and ``/* */`` comments that sit outside string literals.
+
+    Both ``"…"`` and ``'…'`` strings (with backslash escapes) are skipped, so URLs
+    and comment-like text inside values survive. A block comment becomes a single
+    space so neighbouring tokens do not merge; an unterminated one runs to the end.
+
+    Args:
+        text: Raw JSON-ish text, possibly containing comments.
+
+    Returns:
+        The text without comments.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    quote = ""
+    while i < n:
+        ch = text[i]
+        if quote:
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+        elif ch in "\"'":
+            quote = ch
+            out.append(ch)
+            i += 1
+        elif text.startswith("//", i) and not _URL_SCHEME_BEFORE.search(text[max(0, i - 40) : i]):
+            end = text.find("\n", i)
+            i = n if end == -1 else end
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            out.append(" ")
+            i = n if end == -1 else end + 2
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
 
 
 def _strip_code_fences(text: str) -> str:
