@@ -1,0 +1,18 @@
+{
+  "users": [
+    {
+      "name": "Ada",
+      "roles": [
+        "a",
+        "b"
+      ]
+    },
+    {
+      "name": "Bob",
+      "roles": []
+    }
+  ],
+  "meta": {
+    "count": 2
+  }
+}

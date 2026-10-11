@@ -1,0 +1,1 @@
+{"name": "Zo\u00eb", "city": "München", "emoji": "😀", "quote": "say \"hi\"\n"}

@@ -1,0 +1,2 @@
+<thinking>I should output {a, b} carefully.</thinking>
+{"name": "Ada", "age": 36}
