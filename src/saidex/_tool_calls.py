@@ -244,6 +244,11 @@ class CallPlan:
     #: id is real), but no tool name may be fabricated into the feedback
     #: message or the sanitized history.
     missing_name: bool = False
+    #: JSON form of a corrected or salvaged call's args, for the sanitized
+    #: message: providers ``json.dumps`` stored args on the next turn.
+    #: ``call["args"]`` keeps the typed values the tool runs with, because a
+    #: JSON round trip is lossy (``SecretStr`` is masked, for example).
+    stored_args: dict[str, Any] | None = None
 
 
 class ToolCallValidationError(Exception):
@@ -660,6 +665,7 @@ class ToolCallPipeline:
             # feedback policy exactly like an extract_data failure — not
             # crash the node.
             corrected_args = instance.model_dump(exclude_unset=True)
+            stored_args = instance.model_dump(mode="json", exclude_unset=True)
         except _InvalidValidatorResultError:
             # A validator returning the wrong type is a programming error in the
             # caller's code, not a failed correction — same as in extract_data.
@@ -682,6 +688,7 @@ class ToolCallPipeline:
             )
             return
         plan.call["args"] = corrected_args
+        plan.stored_args = stored_args
         # Deliberately NOT plan.repaired = True: that flag means
         # "deterministically recovered from invalid_tool_calls" (see
         # ToolCallStats.repaired) — an LLM correction is a distinct outcome
@@ -845,7 +852,7 @@ class ToolCallPipeline:
             instance, error_text = None, f"arguments not valid: {exc}"
         if instance is not None:
             _, error_text = await self._run_tool_validator(plan, instance, ctx, phase="salvage")
-        if error_text is not None:
+        if instance is None or error_text is not None:
             logger.warning(
                 "on_unresolved returned invalid arguments for tool call %r (id=%r): %s",
                 name,
@@ -854,6 +861,7 @@ class ToolCallPipeline:
             )
             return False
         plan.call["args"] = dict(args)
+        plan.stored_args = instance.model_dump(mode="json", exclude_unset=True)
         plan.recoverable = True
         plan.prevalidated = True
         plan.executable = True
@@ -970,8 +978,12 @@ class ToolCallPipeline:
         the stored message carries no trace of the malformed arguments. Feedback
         calls stay untouched — their id must keep matching the feedback message.
         """
-        tool_calls = [plan.call for plan in plans if not plan.from_invalid and plan.answerable]
-        tool_calls += [plan.call for plan in plans if plan.from_invalid and plan.executable]
+        tool_calls = [
+            _stored_call(plan) for plan in plans if not plan.from_invalid and plan.answerable
+        ]
+        tool_calls += [
+            _stored_call(plan) for plan in plans if plan.from_invalid and plan.executable
+        ]
         invalid_tool_calls = [
             plan.raw_entry
             for plan in plans
@@ -981,7 +993,7 @@ class ToolCallPipeline:
             and plan.raw_entry is not None
         ]
         rewritten = {
-            str(plan.call["id"]): plan.call
+            str(plan.call["id"]): _stored_call(plan)
             for plan in plans
             if plan.executable
             and plan.call.get("id")
@@ -1034,6 +1046,13 @@ class ToolCallPipeline:
 # ---------------------------------------------------------------------------
 # Module-level helpers
 # ---------------------------------------------------------------------------
+
+
+def _stored_call(plan: CallPlan) -> dict[str, Any]:
+    """*plan*'s call as the sanitized message stores it (args in JSON form)."""
+    if plan.stored_args is None:
+        return plan.call
+    return {**plan.call, "args": plan.stored_args}
 
 
 def _rewrite_content(

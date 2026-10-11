@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import threading
+from datetime import date
+from decimal import Decimal
 from typing import Annotated, Any, get_type_hints
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID
 
 import pytest
 
@@ -14,13 +18,14 @@ pytest.importorskip("langgraph")
 
 from langchain_core.callbacks.base import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage  # noqa: E402
-from langchain_core.tools import InjectedToolCallId, StructuredTool, tool  # noqa: E402
+from langchain_core.messages.utils import convert_to_openai_messages  # noqa: E402
+from langchain_core.tools import BaseTool, InjectedToolCallId, StructuredTool, tool  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
 from langgraph.prebuilt import InjectedState, ToolNode  # noqa: E402
 from langgraph.runtime import Runtime  # noqa: E402
 from langgraph.types import Command  # noqa: E402
-from pydantic import BaseModel  # noqa: E402
+from pydantic import BaseModel, SecretStr  # noqa: E402
 
 from saidex import (  # noqa: E402
     ToolCallValidatorContext,
@@ -2316,3 +2321,85 @@ async def test_sanitize_keeps_content_of_feedback_calls() -> None:
     )
     result = await SaidexToolNode([add]).ainvoke({"messages": [message]}, runtime=_NO_GRAPH_RUNTIME)
     assert _ai_of(result) is None
+
+
+# ---------------------------------------------------------------------------
+# Corrected / salvaged args are stored in JSON form
+# ---------------------------------------------------------------------------
+
+_ORDER_ID = UUID("12345678-1234-5678-1234-567812345678")
+_BOOKING_JSON = {"when": "2026-10-11", "amount": "9.50", "order": str(_ORDER_ID)}
+
+
+def _booking_tool() -> tuple[BaseTool, list[tuple[Any, Any, Any]]]:
+    received: list[tuple[Any, Any, Any]] = []
+
+    @tool
+    def book(when: date, amount: Decimal, order: UUID) -> str:
+        """Book an order for a date."""
+        received.append((when, amount, order))
+        return "booked"
+
+    return book, received
+
+
+def _bad_booking_state() -> dict[str, Any]:
+    args = {"when": "next friday", "amount": "9.50", "order": str(_ORDER_ID)}
+    return {"messages": [_ai([_call("book", args, "c1")], msg_id="ai-1")]}
+
+
+def _assert_typed_execution_and_json_history(
+    result: Any, received: list[tuple[Any, Any, Any]]
+) -> None:
+    assert _tool_messages(result)[0].content == "booked"
+    assert received == [(date(2026, 10, 11), Decimal("9.50"), _ORDER_ID)]
+    assert [tuple(type(value) for value in values) for values in received] == [
+        (date, Decimal, UUID)
+    ]
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.tool_calls[0]["args"] == _BOOKING_JSON
+    # The provider serializes the stored message on the next turn; a typed
+    # value left in the args makes json.dumps raise and breaks the thread.
+    converted = convert_to_openai_messages([updated])
+    arguments = converted[0]["tool_calls"][0]["function"]["arguments"]  # type: ignore[index]
+    assert json.loads(arguments) == _BOOKING_JSON
+
+
+@pytest.mark.asyncio
+async def test_corrected_args_are_stored_in_json_form() -> None:
+    book, received = _booking_tool()
+    node = SaidexToolNode([book], correction_model=_correction_llm([_BOOKING_JSON]))
+    result = await node.ainvoke(_bad_booking_state(), runtime=_NO_GRAPH_RUNTIME)
+    _assert_typed_execution_and_json_history(result, received)
+
+
+@pytest.mark.asyncio
+async def test_salvaged_args_are_stored_in_json_form() -> None:
+    book, received = _booking_tool()
+    typed = {"when": date(2026, 10, 11), "amount": Decimal("9.50"), "order": _ORDER_ID}
+    node = SaidexToolNode([book], on_unresolved=lambda call: typed)
+    result = await node.ainvoke(_bad_booking_state(), runtime=_NO_GRAPH_RUNTIME)
+    _assert_typed_execution_and_json_history(result, received)
+
+
+@pytest.mark.asyncio
+async def test_corrected_secret_reaches_the_tool_but_is_masked_in_history() -> None:
+    received: list[str] = []
+
+    @tool
+    def login(token: SecretStr) -> str:
+        """Log in with an access token."""
+        received.append(token.get_secret_value())
+        return "logged in"
+
+    state = {"messages": [_ai([_call("login", {"token": 42}, "c1")], msg_id="ai-1")]}
+    node = SaidexToolNode([login], correction_model=_correction_llm([{"token": "hunter2"}]))
+    result = await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result)[0].content == "logged in"
+    assert received == ["hunter2"]
+    updated = _ai_of(result)
+    assert updated is not None
+    assert updated.tool_calls[0]["args"] == {"token": "**********"}
+    convert_to_openai_messages([updated])

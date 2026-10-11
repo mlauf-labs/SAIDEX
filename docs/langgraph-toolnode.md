@@ -194,6 +194,12 @@ concurrently, so a validator should not share mutable state without protection.
   `tool_use` block), so the corrected arguments reach the provider either way;
   rewriting the blocks keeps the stored state clean too.
 
+  Corrected and salvaged arguments are stored in JSON form, as a model would
+  send them (a `date` as `"2026-10-11"`, a `Decimal` as a string), so the next
+  model call can serialize the history; the tool itself still receives the
+  typed values. `SecretStr` fields appear masked (`"**********"`) in the
+  stored arguments.
+
 ## Errors raised by a tool
 
 Exceptions raised while a tool runs are handled exactly like the stock node
