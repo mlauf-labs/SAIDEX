@@ -287,6 +287,7 @@ with `with_context`; it then receives a `ValidatorContext` as second argument:
 | `is_final` | `True` only on the last allowed attempt of the **whole run** — not on the primary's last attempt when a fallback model will still run |
 | `model_label` | `"primary"` or `"fallback"` |
 | `is_fallback` | Whether the fallback model produced the candidate |
+| `reasoning_effort` | Reasoning-effort level of this attempt, or `None` without escalation |
 
 ```python
 from saidex import ValidationIssue, ValidatorContext, extract_data, with_context

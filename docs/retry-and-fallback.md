@@ -110,6 +110,57 @@ HumanMessage(
 
 ---
 
+## Reasoning-effort escalation
+
+Reasoning models can think harder at a higher cost. Start cheap and only spend
+more effort when an attempt is rejected:
+
+```python
+result, stats = await extract_data(
+    llm,                                   # e.g. ChatOpenAI(model="gpt-5-mini")
+    Invoice,
+    messages,
+    reasoning_escalation=["low", "medium", "high"],
+)
+print(stats.reasoning_effort)              # level of the attempt that decided the run
+```
+
+- Attempt *n* of a model binds `reasoning_effort=levels[min(n-1, len-1)]`; the
+  last level repeats. Parse errors use up an attempt too.
+- `reasoning_escalation=True` uses the levels from the model's profile
+  (`llm.profile["reasoning_effort_levels"]`); without them nothing is escalated.
+  `True` starts at the profile's first (cheapest) level and only climbs as far
+  as the attempt budget allows: with the defaults, `gpt-5-mini` gets
+  minimal, low, medium and never high. Pass an explicit list to start higher.
+  It does nothing on langchain-core versions without model profiles (< 1.x).
+  If the profile data is stale, override `llm.profile` to bypass the check.
+- The accepted type is exported as `saidex.ReasoningEscalation`.
+- The fallback model only escalates with its own `fallback_reasoning_escalation`.
+- With a profile, unknown level names raise `ValueError` before any call; a
+  plain string (`"high"`) or an empty list is rejected too.
+- In the agent loop, only final-answer attempts move to the next level;
+  helper-tool calls keep the current one.
+- The level is bound as `reasoning_effort`, so the integration must accept it:
+  - `ChatOpenAI` works (Chat Completions maps it to `reasoning_effort`, the
+    Responses API to `reasoning.effort`).
+  - Recent `ChatAnthropic` works: langchain-anthropic maps `reasoning_effort`
+    to `output_config.effort`. On adaptive-thinking models this enables
+    thinking, which Anthropic rejects together with a forced `tool_choice`.
+    SAIDEX then relaxes the tool binding automatically at the cost of one
+    extra call, so pass `tool_config=ToolCallConfig.COMPATIBLE`. The agent
+    loop is unaffected.
+  - Integrations that do not accept the kwarg (e.g. `ChatOllama`), or a
+    `ChatOpenAI(reasoning=...)` set on the model (conflict), fail on the
+    first attempt with `failure_reason="llm_error"` and
+    `llm_error_kind="invalid_request"`.
+- Validators wrapped with `with_context` see the level as
+  `ctx.reasoning_effort`.
+
+Higher levels cost more tokens and latency — escalation keeps the common case
+cheap and pays more only for hard documents.
+
+---
+
 ## Network retries (`RetryConfig`)
 
 > **Runnable example:** [`examples/04_custom_retry_config.py`](../examples/04_custom_retry_config.py)

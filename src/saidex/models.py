@@ -182,6 +182,8 @@ class ValidatorContext:
             with ``is_final=True``.
         model_label: ``"primary"`` or ``"fallback"``.
         is_fallback: Whether the fallback model produced the candidate.
+        reasoning_effort: The ``reasoning_effort`` level bound for this attempt
+            (reasoning-effort escalation), or ``None``.
     """
 
     attempt: int
@@ -189,6 +191,7 @@ class ValidatorContext:
     is_final: bool
     model_label: str
     is_fallback: bool
+    reasoning_effort: str | None = None
 
 
 class FailureReason(StrEnum):
@@ -352,6 +355,9 @@ class _ExtractionStatsBase:
             check this flag to tell it apart from a clean success.
         llm_error_kind: Why the model call failed, as a :class:`ModelErrorKind`,
             when :attr:`failure_reason` is ``llm_error``; otherwise ``None``.
+        reasoning_effort: Reasoning-effort level of the last attempt of the model
+            run that produced the outcome (the fallback's when it ran), or
+            ``None`` when escalation was off.
     """
 
     success: bool = False
@@ -365,6 +371,7 @@ class _ExtractionStatsBase:
     last_rejection: tuple[FieldIssue, ...] = ()
     salvaged: bool = False
     llm_error_kind: ModelErrorKind | None = None
+    reasoning_effort: str | None = None
 
     @property
     def problem_fields(self) -> tuple[str, ...]:
@@ -394,7 +401,7 @@ class ExtractDataStats(_ExtractionStatsBase):
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
     ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
     ``last_candidate``, ``last_rejection``, ``salvaged``, ``llm_error_kind``,
-    ``problem_fields``)
+    ``reasoning_effort``, ``problem_fields``)
     is available.
     """
 
@@ -424,7 +431,7 @@ class ExtractorRunStats(_ExtractionStatsBase):
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
     ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
     ``last_candidate``, ``last_rejection``, ``salvaged``, ``llm_error_kind``,
-    ``problem_fields``)
+    ``reasoning_effort``, ``problem_fields``)
     is available.
     """
 
@@ -465,6 +472,7 @@ class ExtractorRunStats(_ExtractionStatsBase):
                 other.llm_error_kind,
                 success=success,
             ),
+            reasoning_effort=other.reasoning_effort,
         )
 
 

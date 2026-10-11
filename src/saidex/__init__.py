@@ -33,6 +33,7 @@ Public API
         ExtractDataStats,
         FailureReason,
         ModelErrorKind,
+        ReasoningEscalation,
         FieldIssue,
         ExtractionEvent,
         ToolCallStats,
@@ -85,6 +86,7 @@ Public API
     )
 """
 
+from ._reasoning import ReasoningEscalation
 from .analytics import (
     FieldIssueSummary,
     FieldProblemStat,
@@ -205,6 +207,7 @@ __all__ = [
     "ExtractDataStats",
     "FailureReason",
     "ModelErrorKind",
+    "ReasoningEscalation",
     "FieldIssue",
     "ExtractionEvent",
     "ToolCallStats",
