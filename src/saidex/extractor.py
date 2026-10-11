@@ -23,6 +23,12 @@ from pydantic import AliasChoices, BaseModel, Field, RootModel, ValidationError,
 from pydantic.fields import FieldInfo
 
 from ._callbacks import _ChainRun
+from ._reasoning import (
+    ReasoningEscalation,
+    _level_for_attempt,
+    _resolve_reasoning_levels,
+    _with_reasoning_effort,
+)
 from .grounding import _collect_field_checks
 from .models import (
     EXTERNAL_VALIDATOR_PATH,
@@ -533,6 +539,7 @@ def _validator_context(
     max_attempts: int,
     model_label: str,
     is_last_model: bool,
+    reasoning_effort: str | None = None,
 ) -> ValidatorContext:
     """Build the :class:`ValidatorContext` for the attempt at *attempt_index* (0-based)."""
     attempt = attempt_index + 1
@@ -542,6 +549,7 @@ def _validator_context(
         is_final=is_last_model and attempt >= max_attempts,
         model_label=model_label,
         is_fallback=model_label == "fallback",
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -624,6 +632,8 @@ async def extract_data(
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
     on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
     # Private: suppresses observer dispatch for the internal container
     # sub-extraction inside extract_data_list. Not part of the public API.
     _notify_observers: bool = True,
@@ -715,6 +725,18 @@ async def extract_data(
             out), so aliases and field serializers do not interfere; an invalid
             result keeps the run failed and adds an ``on_exhausted_invalid``
             issue.  Exceptions propagate.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model.  A list of levels (e.g. ``["low", "medium", "high"]``) binds
+            ``reasoning_effort=levels[n]`` on attempt *n* (the last level repeats
+            once the list runs out); ``True`` uses the levels listed in the
+            model's ``profile["reasoning_effort_levels"]`` (no escalation when
+            the profile lists none).  Parse and validation failures each
+            consume a level.  Raises ``ValueError`` before any model call for a
+            plain string, an empty list, non-string entries, or a level the
+            model profile does not list.  Requires an integration that accepts
+            ``reasoning_effort`` (e.g. OpenAI-compatible chat models).
+        fallback_reasoning_escalation: Same as *reasoning_escalation*, for the
+            fallback model.  The fallback never inherits the primary's levels.
 
     Returns:
         A tuple of ``(model_instance, stats)``:
@@ -737,6 +759,16 @@ async def extract_data(
             llm, MySchema, messages, mode=ExtractionMode.JSON
         )
     """
+    primary_levels = _resolve_reasoning_levels(
+        llm_model, reasoning_escalation, param="reasoning_escalation"
+    )
+    fallback_levels = (
+        _resolve_reasoning_levels(
+            fallback_llm_model, fallback_reasoning_escalation, param="fallback_reasoning_escalation"
+        )
+        if fallback_llm_model is not None
+        else ()
+    )
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
 
     original_messages = list(messages)
@@ -818,6 +850,7 @@ async def extract_data(
             validator=validator,
             source_text=grounding_source,
             is_last_model=fallback_llm_model is None or max_fallback_retries <= 0,
+            reasoning_levels=primary_levels,
         )
 
         if primary.instance is not None:
@@ -829,6 +862,7 @@ async def extract_data(
                     schema_name=schema.__name__,
                     format_errors=primary.format_errors,
                     field_issues=tuple(primary.field_issues),
+                    reasoning_effort=primary.reasoning_effort,
                 ),
             )
 
@@ -863,6 +897,7 @@ async def extract_data(
                 validator=validator,
                 source_text=grounding_source,
                 is_last_model=True,
+                reasoning_levels=fallback_levels,
             )
 
             combined_issues = (*primary.field_issues, *fallback.field_issues)
@@ -880,6 +915,7 @@ async def extract_data(
                         schema_name=schema.__name__,
                         format_errors=combined_format_errors,
                         field_issues=combined_issues,
+                        reasoning_effort=fallback.reasoning_effort,
                     ),
                 )
 
@@ -911,6 +947,7 @@ async def extract_data(
                     field_issues=combined_issues,
                     last_candidate=last_candidate,
                     last_rejection=last_rejection,
+                    reasoning_effort=fallback.reasoning_effort,
                 ),
                 last_candidate,
             )
@@ -931,6 +968,7 @@ async def extract_data(
                 field_issues=tuple(primary.field_issues),
                 last_candidate=last_candidate,
                 last_rejection=last_rejection,
+                reasoning_effort=primary.reasoning_effort,
             ),
             last_candidate,
         )
@@ -959,6 +997,8 @@ async def extract_data_from_text(
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
     on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a plain text string.
 
@@ -988,6 +1028,10 @@ async def extract_data_from_text(
         validator: Optional external validation callable — see :func:`extract_data`.
         on_exhausted: Optional salvage hook — see :func:`extract_data`.
 
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`extract_data`.
     Returns:
         Same as :func:`extract_data`.
 
@@ -1026,6 +1070,8 @@ async def extract_data_from_text(
         capture_source_text=capture_source_text,
         validator=validator,
         on_exhausted=on_exhausted,
+        reasoning_escalation=reasoning_escalation,
+        fallback_reasoning_escalation=fallback_reasoning_escalation,
     )
 
 
@@ -1073,6 +1119,8 @@ async def extract_data_list(
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
     on_exhausted: OnExhaustedList[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a message list.
 
@@ -1123,6 +1171,10 @@ async def extract_data_list(
             and the kept list is re-validated like a single result — see
             :func:`extract_data`.
 
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`extract_data`.
     Returns:
         A tuple of ``(items, stats)``:
 
@@ -1214,6 +1266,8 @@ async def extract_data_list(
             capture_source_text=capture_source_text,
             validator=container_validator,
             on_exhausted=container_hook,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
             _notify_observers=False,
             _trace=trace,
         )
@@ -1281,6 +1335,8 @@ async def extract_data_list_from_text(
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
     on_exhausted: OnExhaustedList[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a plain text string.
 
@@ -1314,6 +1370,10 @@ async def extract_data_list_from_text(
         on_exhausted: Optional salvage hook for the item list — see
             :func:`extract_data_list`.
 
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`extract_data`.
     Returns:
         Same as :func:`extract_data_list`.
 
@@ -1353,6 +1413,8 @@ async def extract_data_list_from_text(
         capture_source_text=capture_source_text,
         validator=validator,
         on_exhausted=on_exhausted,
+        reasoning_escalation=reasoning_escalation,
+        fallback_reasoning_escalation=fallback_reasoning_escalation,
     )
 
 
@@ -1698,6 +1760,7 @@ def _common_outputs(result: Any, stats: ExtractDataStats | ExtractorRunStats) ->
         "salvaged": stats.salvaged,
         "problem_fields": list(stats.problem_fields),
         "format_errors": stats.format_errors,
+        "reasoning_effort": stats.reasoning_effort,
     }
 
 
@@ -2185,6 +2248,7 @@ class _ModelAttempt(Generic[MODEL_T]):
             or the external validator, kept across later failures.
         rejection: The retry-level issues that rejected :attr:`candidate`.
         llm_error_kind: Kind of the model error when ``failure_reason`` is ``llm_error``.
+        reasoning_effort: Level bound for the last invocation.
     """
 
     instance: MODEL_T | None
@@ -2195,6 +2259,7 @@ class _ModelAttempt(Generic[MODEL_T]):
     candidate: MODEL_T | None = None
     rejection: tuple[FieldIssue, ...] = ()
     llm_error_kind: ModelErrorKind | None = None
+    reasoning_effort: str | None = None
 
 
 def _last_candidate(
@@ -2224,6 +2289,7 @@ async def _try_with_model(
     tool_config: ToolCallConfig | None = None,
     validator: Validator[MODEL_T] | None = None,
     source_text: str | None = None,
+    reasoning_levels: tuple[str, ...] = (),
 ) -> _ModelAttempt[MODEL_T]:
     """Attempt structured extraction with one model, with validation retries.
 
@@ -2233,7 +2299,9 @@ async def _try_with_model(
     across attempts, the pure parse/format-error count, and a failure reason.
 
     *is_last_model* is ``False`` when another model runs if this one fails; it
-    decides ``ValidatorContext.is_final``.
+    decides ``ValidatorContext.is_final``.  *reasoning_levels* are the
+    ``reasoning_effort`` levels bound per attempt (the last repeats); ``()``
+    disables escalation.
     """
     flags = tool_config or ToolCallConfig.OPENAI
     #: Set once the schema tool has been re-bound with relaxed flags, so a
@@ -2304,12 +2372,15 @@ async def _try_with_model(
     failure_reason: FailureReason | None = None
     candidate: MODEL_T | None = None
     rejection: tuple[FieldIssue, ...] = ()
+    last_level: str | None = None
 
     while remaining > 0:
+        level = _level_for_attempt(reasoning_levels, retries)
+        last_level = level
         # --- LLM invocation with network-level retries ---
         try:
             invoke_result = await with_retry(
-                operation=partial(trace.invoke_llm, llm, messages),
+                operation=partial(trace.invoke_llm, _with_reasoning_effort(llm, level), messages),
                 config=retry_config,
                 operation_name=f"structured_output({model_label})",
             )
@@ -2348,6 +2419,7 @@ async def _try_with_model(
                         candidate,
                         rejection,
                         llm_error_kind=ModelErrorKind.INVALID_REQUEST,
+                        reasoning_effort=last_level,
                     )
                 # Deliberately no ``remaining -= 1``: the relaxed re-bind is a
                 # transport-level correction, not a failed extraction attempt.
@@ -2367,6 +2439,7 @@ async def _try_with_model(
                 candidate,
                 rejection,
                 classify_model_error(exc),
+                reasoning_effort=last_level,
             )
 
         # --- Extract candidate arguments (mode-specific) ---
@@ -2397,6 +2470,7 @@ async def _try_with_model(
                 FailureReason.PARSE_ERROR,
                 candidate,
                 rejection,
+                reasoning_effort=last_level,
             )
 
         if error_text:
@@ -2433,6 +2507,7 @@ async def _try_with_model(
                 max_attempts=max_retries,
                 model_label=model_label,
                 is_last_model=is_last_model,
+                reasoning_effort=level,
             ),
             source_text=source_text,
             validator=validator,
@@ -2477,9 +2552,20 @@ async def _try_with_model(
             continue
 
         logger.debug("%s: successfully extracted %s.", model_label, schema.__name__)
-        return _ModelAttempt(instance, retries, issues, format_errors, None)
+        return _ModelAttempt(
+            instance, retries, issues, format_errors, None, reasoning_effort=last_level
+        )
 
-    return _ModelAttempt(None, retries, issues, format_errors, failure_reason, candidate, rejection)
+    return _ModelAttempt(
+        None,
+        retries,
+        issues,
+        format_errors,
+        failure_reason,
+        candidate,
+        rejection,
+        reasoning_effort=last_level,
+    )
 
 
 # ---------------------------------------------------------------------------
