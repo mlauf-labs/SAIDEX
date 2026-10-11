@@ -203,8 +203,10 @@ OpenAI-*compatible* gateways (Kimi/Moonshot, some Qwen or DeepSeek deployments)
 reject those flags with an HTTP 400. SAIDEX notices such a rejection and
 re-binds the tool **once** with relaxed flags — no configuration needed, and no
 validation retry consumed. With `strict=True` the schema is sent as a real strict
-tool (optional fields arrive as `null`); `dict[...]` and `MISSING`-default fields
-fall back to a non-strict tool with a warning. You can also state the flags up front:
+tool: optional fields arrive as `null` (an `Optional[int] = 5` becomes `None`),
+defaulted fields must be sent explicitly. `dict[...]`, `Any`, `TypedDict`,
+recursive and `MISSING`-default schemas fall back to a non-strict tool with a
+warning; use `COMPATIBLE` when omission semantics matter. You can also state the flags up front:
 
 ```python
 from saidex import ToolCallConfig, extract_data_from_text
@@ -955,7 +957,7 @@ means the keyword argument is **omitted from the request** — not sent as `fals
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `tool_choice` | `"forced" \| "auto" \| None` | `"forced"` | Force the schema tool by name, let the model choose, or send no `tool_choice` |
-| `strict` | `bool \| None` | `True` | Value for `strict` (OpenAI structured outputs), or `None` to omit |
+| `strict` | `bool \| None` | `True` | Request provider-side strict schema adherence (applied to the tool schema; falls back to non-strict for unsupported shapes), or `None` to omit |
 | `parallel_tool_calls` | `bool \| None` | `False` | Value for `parallel_tool_calls`, or `None` to omit |
 | `auto_relax` | `bool` | `True` | On a flag rejection (HTTP 400 or `TypeError`), re-bind once with `COMPATIBLE` instead of failing |
 
