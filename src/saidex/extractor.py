@@ -25,8 +25,8 @@ from pydantic.fields import FieldInfo
 from ._callbacks import _ChainRun
 from ._reasoning import (
     ReasoningEscalation,
-    _level_for_attempt,
     _is_reasoning_effort_rejection,
+    _level_for_attempt,
     _resolve_reasoning_levels,
     _with_reasoning_effort,
 )
@@ -728,8 +728,8 @@ async def extract_data(
             issue.  Exceptions propagate.
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model.  A list of levels (e.g. ``["low", "medium", "high"]``) binds
-            ``reasoning_effort=levels[n]`` on attempt *n* (the last level repeats
-            once the list runs out); ``True`` uses the levels listed in the
+            ``reasoning_effort=levels[min(n - 1, len(levels) - 1)]`` on 1-based
+            attempt *n* (the last level repeats once the list runs out); ``True`` uses the levels listed in the
             model's ``profile["reasoning_effort_levels"]`` (no escalation when
             the profile lists none).  Parse and validation failures each
             consume a level.  Raises ``ValueError`` before any model call for a
