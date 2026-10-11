@@ -434,3 +434,26 @@ async def test_json_mode_unaffected() -> None:
     result, _ = await extract_data(llm, OptStr, _msgs(), mode=ExtractionMode.JSON)
     assert result == OptStr(x="v")
     llm.bind_tools.assert_not_called()
+
+
+def test_enforce_strict_objects_normalises_nested_objects_and_field_named_properties() -> None:
+    """Older langchain-core only made the top-level object strict."""
+    params = {
+        "type": "object",
+        "properties": {
+            "properties": {
+                "type": "object",
+                "properties": {"a": {"type": "string"}, "b": {"type": "integer"}},
+                "required": ["a"],
+            }
+        },
+        "required": [],
+    }
+
+    out = _extractor._enforce_strict_objects(params)
+
+    assert out["required"] == ["properties"]
+    inner = out["properties"]["properties"]
+    assert inner["required"] == ["a", "b"]
+    assert inner["additionalProperties"] is False
+    assert "additionalProperties" not in out["properties"]["properties"]["properties"]

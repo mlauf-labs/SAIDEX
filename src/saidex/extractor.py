@@ -2265,6 +2265,33 @@ def _strip_defaults(node: Any, *, in_properties: bool = False) -> Any:
     return node
 
 
+def _enforce_strict_objects(node: Any, *, in_properties: bool = False) -> Any:
+    """Make every object schema strict: all properties required, no extra keys.
+
+    Older langchain-core releases only apply this to the top-level object, so
+    nested models are normalised here (idempotent for newer releases).
+    """
+    if isinstance(node, dict):
+        out = {
+            key: _enforce_strict_objects(
+                value, in_properties=key == "properties" and not in_properties
+            )
+            for key, value in node.items()
+        }
+        properties = out.get("properties")
+        if (
+            not in_properties
+            and isinstance(properties, dict)
+            and out.get("type", "object") == "object"
+        ):
+            out["required"] = list(properties)
+            out["additionalProperties"] = False
+        return out
+    if isinstance(node, list):
+        return [_enforce_strict_objects(item) for item in node]
+    return node
+
+
 def _annotation_incompatibility(annotation: Any, stack: list[type]) -> str | None:
     """Reason a type annotation cannot be expressed in a strict schema, or ``None``."""
     if annotation is Any or annotation is object:
@@ -2349,7 +2376,8 @@ def _schema_tool(schema: type[BaseModel], *, strict: bool) -> dict[str, Any]:
     if not strict:
         return convert_to_openai_tool(schema)
     tool = convert_to_openai_tool(schema, strict=True)
-    tool["function"]["parameters"] = _strip_defaults(tool["function"]["parameters"])
+    parameters = _enforce_strict_objects(tool["function"]["parameters"])
+    tool["function"]["parameters"] = _strip_defaults(parameters)
     return tool
 
 
