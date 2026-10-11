@@ -275,8 +275,6 @@ async def test_list_variant_forwards() -> None:
 
 
 async def test_json_mode_binds_the_raw_model() -> None:
-    from saidex import ExtractionMode
-
     llm = make_llm([make_response(content='{"name": "a", "value": 1}')])
     await extract_data(
         llm,
@@ -389,3 +387,77 @@ def test_agent_sync_wrapper_forwards() -> None:
         llm, Answer, "task", tools=[], retry_config=_NO_RETRY, reasoning_escalation=["low"]
     )
     assert stats.reasoning_effort == "low"
+
+
+_REJECTION = TypeError("create() got an unexpected keyword argument 'reasoning_effort'")
+
+
+async def test_rejected_reasoning_effort_is_invalid_request(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    llm = make_llm([_REJECTION])
+    result, stats = await extract_data(
+        llm, Item, _msgs(), retry_config=_NO_RETRY, reasoning_escalation=["low"]
+    )
+    assert result is None
+    assert stats.failure_reason == "llm_error"
+    assert stats.llm_error_kind == "invalid_request"
+    assert "reasoning_escalation" in caplog.text
+
+
+async def test_reasoning_typeerror_without_escalation_stays_other() -> None:
+    llm = make_llm([_REJECTION])
+    _, stats = await extract_data(llm, Item, _msgs(), retry_config=_NO_RETRY)
+    assert stats.failure_reason == "llm_error"
+    assert stats.llm_error_kind == "other"
+
+
+async def test_agent_rejected_reasoning_effort_is_invalid_request() -> None:
+    llm = make_llm([_REJECTION])
+    result, stats = await extract_data_with_tools(
+        llm, Answer, "task", tools=[], retry_config=_NO_RETRY, reasoning_escalation=["low"]
+    )
+    assert result is None
+    assert stats.failure_reason == "llm_error"
+    assert stats.llm_error_kind == "invalid_request"
+
+
+async def test_agent_reasoning_typeerror_without_escalation_stays_other() -> None:
+    llm = make_llm([_REJECTION])
+    _, stats = await extract_data_with_tools(llm, Answer, "task", tools=[], retry_config=_NO_RETRY)
+    assert stats.llm_error_kind == "other"
+
+
+async def test_agent_invalid_spec_fails_before_any_call() -> None:
+    llm = make_llm([_final("f")])
+    llm.profile = {"reasoning_effort_levels": ["low", "high"]}
+    with pytest.raises(ValueError, match="reasoning_escalation"):
+        await extract_data_with_tools(
+            llm,
+            Answer,
+            "task",
+            tools=[],
+            retry_config=_NO_RETRY,
+            reasoning_escalation=["turbo"],
+        )
+    llm.bind_tools.return_value.ainvoke.assert_not_called()
+
+
+async def test_agent_validator_context_carries_the_level() -> None:
+    seen: list[str | None] = []
+
+    def record(answer: Answer, ctx: ValidatorContext) -> str:
+        seen.append(ctx.reasoning_effort)
+        return "no"
+
+    await extract_data_with_tools(
+        make_llm([_final("a"), _final("b")]),
+        Answer,
+        "task",
+        tools=[],
+        max_validation_retries=1,
+        retry_config=_NO_RETRY,
+        validator=with_context(record),
+        reasoning_escalation=["low", "high"],
+    )
+    assert seen == ["low", "high"]

@@ -87,3 +87,8 @@ def _with_reasoning_effort(runnable: Any, level: str | None) -> Any:
     if level is None:
         return runnable
     return runnable.bind(reasoning_effort=level)
+
+
+def _is_reasoning_effort_rejection(exc: BaseException) -> bool:
+    """Whether *exc* is a client-side ``TypeError`` refusing the ``reasoning_effort`` kwarg."""
+    return isinstance(exc, TypeError) and "reasoning_effort" in str(exc)

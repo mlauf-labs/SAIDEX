@@ -26,6 +26,7 @@ from ._callbacks import _ChainRun
 from ._reasoning import (
     ReasoningEscalation,
     _level_for_attempt,
+    _is_reasoning_effort_rejection,
     _resolve_reasoning_levels,
     _with_reasoning_effort,
 )
@@ -1907,7 +1908,7 @@ async def _run_extractor_agent_with_model(
         except Exception as exc:
             logger.error("%s: agent loop LLM invocation error: %s", model_label, exc)
             failure_reason = FailureReason.LLM_ERROR
-            llm_error_kind = classify_model_error(exc)
+            llm_error_kind = _classify_invocation_error(exc, current_level, model_label)
             break
 
         iterations += 1
@@ -2255,6 +2256,22 @@ def _bind_schema_tool(
     return llm_model.bind_tools([tool], **kwargs)
 
 
+def _classify_invocation_error(
+    exc: BaseException, level: str | None, model_label: str
+) -> ModelErrorKind:
+    """Classify an LLM invocation error, attributing a rejected ``reasoning_effort`` bind."""
+    if level is not None and _is_reasoning_effort_rejection(exc):
+        logger.error(
+            "%s: model does not accept reasoning_effort=%s (unsupported by this integration "
+            "or conflicting with its own reasoning settings); disable reasoning_escalation "
+            "for this model.",
+            model_label,
+            level,
+        )
+        return ModelErrorKind.INVALID_REQUEST
+    return classify_model_error(exc)
+
+
 def _is_tool_flag_rejection(exc: BaseException) -> bool:
     """Whether *exc* looks like the provider refusing one of the tool-binding flags.
 
@@ -2479,7 +2496,7 @@ async def _try_with_model(
                 FailureReason.LLM_ERROR,
                 candidate,
                 rejection,
-                classify_model_error(exc),
+                _classify_invocation_error(exc, level, model_label),
                 reasoning_effort=last_level,
             )
 
