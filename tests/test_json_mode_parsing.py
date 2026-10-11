@@ -28,11 +28,7 @@ from saidex.extractor import (
     ],
 )
 def test_strip_json_comments(text: str, expected: str) -> None:
-    result = _strip_json_comments(text)
-    if text.startswith('{"a": 1} /* never'):
-        assert result.rstrip() == expected.rstrip()
-    else:
-        assert result == expected
+    assert _strip_json_comments(text) == expected
 
 
 # --- _extract_json_from_content ----------------------------------------------
@@ -50,3 +46,29 @@ def test_extract_valid_json_with_comment_markers_in_string_unchanged() -> None:
         "url": "http://x",
         "k": "//",
     }
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (
+            """Here's the record: {"name": "O'Brien", "note": "see /* x */", "age": 36}""",
+            {"name": "O'Brien", "note": "see /* x */", "age": 36},
+        ),
+        (
+            """Here's the record: {"name": "O'Brien", "url": "https://x.com/a", "age": 36,}""",
+            {"name": "O'Brien", "url": "https://x.com/a", "age": 36},
+        ),
+        (
+            """Source: https://example.com {"name": "Ada", "age": 36}""",
+            {"name": "Ada", "age": 36},
+        ),
+        (
+            """Don't forget: {"name": "x", 'u': 'http://y', // c
+}""",
+            {"name": "x", "u": "http://y"},
+        ),
+    ],
+)
+def test_prose_before_json_does_not_corrupt_values(raw: str, expected: dict[str, object]) -> None:
+    assert _extract_json_from_content(raw) == expected

@@ -3071,14 +3071,29 @@ def _extract_json_from_content(content: Any) -> Any:
     try:
         return json.loads(text)
     except json.JSONDecodeError as json_exc:
-        # json-repair mangles values that follow a comment (``"age": /* x */ 36`` becomes
-        # ``""``), so comments go before every fallback; valid JSON is never touched.
-        stripped = _strip_json_comments(text)
-        if stripped != text:
+        # Fallback 1: isolate the outermost { ... } block of the *unstripped* text, so every
+        # reply that parsed before comment stripping existed still parses identically.
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
             try:
-                return json.loads(stripped)
+                return json.loads(text[start : end + 1])
             except json.JSONDecodeError:
-                text = stripped
+                pass
+
+        # Comments are stripped only from the JSON region: apostrophes and URLs in leading
+        # prose ("Here's ...", "Source: https://...") would otherwise be taken for string
+        # delimiters and comment markers. json-repair mangles values that follow a comment
+        # (``"age": /* x */ 36`` becomes ``""``), hence the stripping before it runs.
+        first = min((i for i in (text.find("{"), text.find("[")) if i != -1), default=-1)
+        if first != -1:
+            text = text[first:]
+            stripped = _strip_json_comments(text)
+            if stripped != text:
+                try:
+                    return json.loads(stripped)
+                except json.JSONDecodeError:
+                    text = stripped
 
         # json-repair merges concatenated objects that share keys (the last one wins),
         # which would silently drop data; surface them as a list instead.
@@ -3086,7 +3101,7 @@ def _extract_json_from_content(content: Any) -> Any:
         if objects is not None:
             return objects
 
-        # Fallback 1: isolate the outermost { ... } block and retry.
+        # Fallback 1b: the outermost { ... } block of the comment-free text.
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end != -1 and end > start:
