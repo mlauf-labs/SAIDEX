@@ -37,6 +37,13 @@ class Invoice(BaseModel):
 
 ---
 
+!!! warning "Optional fields"
+    Put the check on the field itself for optional values: `GroundedStr | None` or
+    `GroundedStr | MISSING` is **not** grounded because Annotated metadata inside a union
+    is not picked up. Use `Annotated[str | None, Grounded()]` or
+    `field_check(Grounded(), default=MISSING)`; see
+    [Fields that may be missing](schema-design.md#fields-that-may-be-missing-missing).
+
 ## How it fits the retry loop
 
 ```text
