@@ -12,7 +12,7 @@ pytest.importorskip("langgraph")
 
 from langchain_core.callbacks.base import BaseCallbackHandler  # noqa: E402
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage  # noqa: E402
-from langchain_core.tools import InjectedToolCallId, tool  # noqa: E402
+from langchain_core.tools import InjectedToolCallId, StructuredTool, tool  # noqa: E402
 from langgraph.graph import END, START, MessagesState, StateGraph  # noqa: E402
 from langgraph.graph.state import CompiledStateGraph  # noqa: E402
 from langgraph.prebuilt import InjectedState, ToolNode  # noqa: E402
@@ -21,8 +21,10 @@ from langgraph.types import Command  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
 from saidex import (  # noqa: E402
+    ToolCallValidatorContext,
     ToolNodeStats,
     UnresolvedToolCall,
+    ValidationIssue,
     collect_stats,
     on_extraction,
     on_tool_node,
@@ -1817,3 +1819,182 @@ def test_ctor_accepts_callable_on_unresolved() -> None:
 def test_saidex_toolnode_type_hints_resolve() -> None:
     hints = get_type_hints(SaidexToolNode.__init__)
     assert "on_unresolved" in hints
+    assert "validators" in hints
+
+
+# ---------------------------------------------------------------------------
+# Per-tool validators
+# ---------------------------------------------------------------------------
+
+
+def _ok_state(a: int = 1, b: int = 2) -> dict[str, Any]:
+    return {
+        "messages": [
+            HumanMessage(content="please add", id="h-1"),
+            _ai([_call("add", {"a": a, "b": b}, "c1")], msg_id="ai-1"),
+        ],
+        "user": "u-7",
+    }
+
+
+def _no_negative(args: Any, ctx: ToolCallValidatorContext) -> str | None:
+    return "a must not be negative" if args.a < 0 else None
+
+
+@pytest.mark.asyncio
+async def test_validator_accepts_valid_args() -> None:
+    result = await SaidexToolNode([add], validators={"add": _no_negative}).ainvoke(
+        _ok_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+    assert _tool_messages(result)[0].content == "3"
+
+
+@pytest.mark.asyncio
+async def test_validator_rejection_becomes_feedback() -> None:
+    result = await SaidexToolNode([add], validators={"add": _no_negative}).ainvoke(
+        _ok_state(a=-1), runtime=_NO_GRAPH_RUNTIME
+    )
+    tool_message = _tool_messages(result)[0]
+    assert tool_message.status == "error"
+    assert "rejected by validation" in str(tool_message.content)
+    assert "a must not be negative" in str(tool_message.content)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_validator_flag_issue_is_recorded_and_call_runs() -> None:
+    def flag(args: Any, ctx: ToolCallValidatorContext) -> ValidationIssue:
+        return ValidationIssue(message="large", field_path="a", on_mismatch="flag")
+
+    async with collect_stats() as sink:
+        result = await SaidexToolNode([add], validators={"add": flag}).ainvoke(
+            _ok_state(), runtime=_NO_GRAPH_RUNTIME
+        )
+    assert _tool_messages(result)[0].content == "3"
+    stats = sink.all()[0]
+    assert isinstance(stats, ToolNodeStats)
+    assert stats.calls[0].outcome == "executed"
+    assert [issue.message for issue in stats.calls[0].field_issues] == ["large"]
+
+
+@pytest.mark.asyncio
+async def test_async_validator() -> None:
+    async def reject(args: Any, ctx: ToolCallValidatorContext) -> str:
+        return "nope"
+
+    result = await SaidexToolNode([add], validators={"add": reject}).ainvoke(
+        _ok_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+    assert "nope" in str(_tool_messages(result)[0].content)
+
+
+@pytest.mark.asyncio
+async def test_raising_validator_rejects() -> None:
+    def boom(args: Any, ctx: ToolCallValidatorContext) -> None:
+        raise ValueError("lookup failed")
+
+    result = await SaidexToolNode([add], validators={"add": boom}).ainvoke(
+        _ok_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+    assert "lookup failed" in str(_tool_messages(result)[0].content)
+
+
+@pytest.mark.asyncio
+async def test_validator_with_invalid_return_type_propagates() -> None:
+    with pytest.raises(TypeError):
+        await SaidexToolNode([add], validators={"add": lambda args, ctx: 42}).ainvoke(  # type: ignore[dict-item]
+            _ok_state(), runtime=_NO_GRAPH_RUNTIME
+        )
+
+
+@pytest.mark.asyncio
+async def test_validator_with_invalid_return_type_propagates_from_correction() -> None:
+    state = {"messages": [_ai([_call("add", {"a": "oops", "b": 2}, "c1")], msg_id="ai-1")]}
+    node = SaidexToolNode(
+        [add],
+        validators={"add": lambda args, ctx: 42},  # type: ignore[dict-item]
+        correction_model=_correction_llm([{"a": 5, "b": 2}]),
+    )
+    with pytest.raises(TypeError):
+        await node.ainvoke(state, runtime=_NO_GRAPH_RUNTIME)
+    assert EXECUTED == []
+
+
+@pytest.mark.asyncio
+async def test_validator_context_in_initial_phase() -> None:
+    seen: list[ToolCallValidatorContext] = []
+
+    def record(args: Any, ctx: ToolCallValidatorContext) -> None:
+        seen.append(ctx)
+
+    await SaidexToolNode([add], validators={"add": record}).ainvoke(
+        _ok_state(), runtime=_NO_GRAPH_RUNTIME
+    )
+    await SaidexToolNode(
+        [add], validators={"add": record}, correction_model=_correction_llm([])
+    ).ainvoke(_ok_state(), runtime=_NO_GRAPH_RUNTIME)
+
+    without_correction, with_correction = seen
+    assert (without_correction.tool_name, without_correction.tool_call_id) == ("add", "c1")
+    assert without_correction.phase == "initial"
+    assert (without_correction.attempt, without_correction.max_attempts) == (1, 1)
+    assert without_correction.is_final is True
+    assert with_correction.is_final is False
+    assert [m.id for m in without_correction.messages] == ["h-1", "ai-1"]
+    assert without_correction.state["user"] == "u-7"
+
+
+@pytest.mark.asyncio
+async def test_validator_runs_inside_correction_cycle() -> None:
+    phases: list[tuple[str, int, bool]] = []
+
+    def no_negative(args: Any, ctx: ToolCallValidatorContext) -> str | None:
+        phases.append((ctx.phase, ctx.attempt, ctx.is_final))
+        return "a must not be negative" if args.a < 0 else None
+
+    correction = _correction_llm([{"a": -5, "b": 2}, {"a": 5, "b": 2}])
+    node = SaidexToolNode(
+        [add],
+        validators={"add": no_negative},
+        correction_model=correction,
+        max_correction_retries=2,
+    )
+    result = await node.ainvoke(_ok_state(a=-1), runtime=_NO_GRAPH_RUNTIME)
+
+    assert _tool_messages(result)[0].content == "7"
+    assert phases[0] == ("initial", 1, False)
+    assert [p[0] for p in phases[1:]] == ["correction", "correction"]
+    assert phases[-1][2] is True
+
+
+@pytest.mark.asyncio
+async def test_validator_checks_salvaged_args() -> None:
+    phases: list[str] = []
+
+    def no_negative(args: Any, ctx: ToolCallValidatorContext) -> str | None:
+        phases.append(ctx.phase)
+        return "a must not be negative" if args.a < 0 else None
+
+    node = SaidexToolNode(
+        [add], validators={"add": no_negative}, on_unresolved=lambda call: {"a": -3, "b": 1}
+    )
+    result = await node.ainvoke(_ok_state(a=-1), runtime=_NO_GRAPH_RUNTIME)
+    assert _tool_messages(result)[0].status == "error"
+    assert phases == ["initial", "salvage"]
+    assert EXECUTED == []
+
+
+def test_ctor_rejects_validator_for_unknown_tool() -> None:
+    with pytest.raises(ValueError, match="validators"):
+        SaidexToolNode([add], validators={"ad": _no_negative})
+
+
+def test_ctor_rejects_validator_for_dict_schema_tool() -> None:
+    raw = StructuredTool.from_function(
+        func=lambda **kw: "ok",
+        name="raw",
+        description="Raw tool.",
+        args_schema={"type": "object", "properties": {"x": {"type": "string"}}},
+    )
+    with pytest.raises(ValueError, match="Pydantic"):
+        SaidexToolNode([raw], validators={"raw": _no_negative})

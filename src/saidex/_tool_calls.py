@@ -13,7 +13,7 @@ import dataclasses
 import inspect
 import json
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Literal, TypeAlias
 
 from json_repair import repair_json
@@ -23,14 +23,24 @@ from langchain_core.tools import BaseTool
 from langchain_core.tools import tool as _as_tool
 from pydantic import BaseModel
 
-from .extractor import _strip_code_fences, _strip_thinking_tags, extract_data
+from .extractor import (
+    ValidatorResult,
+    WithContext,
+    _InvalidValidatorResultError,
+    _run_external_validator,
+    _strip_code_fences,
+    _strip_thinking_tags,
+    extract_data,
+)
 from .models import (
     ExtractionMode,
     FieldIssue,
     ToolCallOutcome,
     ToolCallStats,
+    ToolCallValidatorContext,
     ToolNodeStats,
     UnresolvedToolCall,
+    ValidatorContext,
 )
 from .retry import RetryConfig
 from .utils import create_instance_with_issues
@@ -47,6 +57,13 @@ OnUnresolved: TypeAlias = (
     Literal["feedback", "raise"]
     | Callable[[UnresolvedToolCall], UnresolvedDecision | Awaitable[UnresolvedDecision]]
 )
+
+#: Signature of a ``SaidexToolNode`` tool validator: receives the validated
+#: arguments model and a :class:`~saidex.models.ToolCallValidatorContext`, and
+#: returns a :data:`~saidex.ValidatorResult` (or raises to reject). Sync or async.
+ToolValidator: TypeAlias = Callable[
+    [Any, ToolCallValidatorContext], ValidatorResult | Awaitable[ValidatorResult]
+]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -96,6 +113,9 @@ class CallPlan:
     error_text: str | None = None
     issues: tuple[FieldIssue, ...] = ()
     executable: bool = False
+    #: True when the arguments passed Pydantic validation but a tool validator
+    #: rejected them — only changes the wording of the feedback message.
+    rejected_by_validator: bool = False
     #: ``""`` is the pre-dispatch default; ``ToolCallPipeline.resolve``
     #: finalizes every plan to one of the real ``ToolCallOutcome``
     #: values before stats are built — see ``_finalized_outcome``, which
@@ -161,6 +181,8 @@ class ToolCallPipeline:
             async hook receives each one as an
             :class:`~saidex.models.UnresolvedToolCall` and returns salvaged
             args, a custom feedback text, or ``None`` for the default feedback.
+        validators: Per-tool validators keyed by tool name; they run after
+            Pydantic validation in every phase.
     """
 
     def __init__(
@@ -173,6 +195,7 @@ class ToolCallPipeline:
         strip_thinking: bool,
         json_repair: bool,
         on_unresolved: OnUnresolved = "feedback",
+        validators: Mapping[str, ToolValidator] | None = None,
     ) -> None:
         self._correction_model = correction_model
         self._max_correction_retries = max_correction_retries
@@ -180,6 +203,7 @@ class ToolCallPipeline:
         self._strip_thinking = strip_thinking
         self._json_repair = json_repair
         self._on_unresolved = on_unresolved
+        self._validators: dict[str, ToolValidator] = dict(validators or {})
         self._tools_by_name = _build_registry(tools)
 
     @property
@@ -187,8 +211,21 @@ class ToolCallPipeline:
         """Whether invalid calls go through the LLM correction cycle."""
         return self._correction_model is not None
 
-    def plan(self, message: AIMessage) -> list[CallPlan]:
-        """Classify every call on *message* into an executable/invalid plan."""
+    @property
+    def tool_names(self) -> frozenset[str]:
+        """Names of every tool in the schema registry."""
+        return frozenset(self._tools_by_name)
+
+    async def plan(self, message: AIMessage, ctx: CallContext) -> list[CallPlan]:
+        """Classify every call on *message* into an executable/invalid plan.
+
+        Args:
+            message: The ``AIMessage`` whose calls are planned.
+            ctx: Where the AIMessage sits; handed to tool validators.
+
+        Returns:
+            One :class:`CallPlan` per call, in call order.
+        """
         plans: list[CallPlan] = []
         for call in message.tool_calls:
             plans.append(CallPlan(call=dict(call)))
@@ -276,21 +313,120 @@ class ToolCallPipeline:
             plan.schema = schema
             plan.prevalidated = True
             try:
-                _, issues, error_text = create_instance_with_issues(schema, **plan.call["args"])
+                instance, issues, error_text = create_instance_with_issues(
+                    schema, **plan.call["args"]
+                )
             except TypeError as exc:
                 # Only a malformed-args TypeError (non-mapping args, or a dict
                 # with non-string keys) is something a model can be asked to
                 # correct. Anything else is a genuine bug and must propagate
                 # rather than being laundered into model-facing feedback.
-                issues, error_text = [], f"arguments not valid: {exc}"
-            if error_text is None:
-                plan.executable = True
-            else:
+                instance, issues, error_text = None, [], f"arguments not valid: {exc}"
+            if instance is None:
                 plan.issues = tuple(issues)
                 plan.error_text = error_text
+                continue
+            validator_issues, feedback = await self._run_tool_validator(
+                plan, instance, ctx, phase="initial"
+            )
+            plan.issues = tuple(validator_issues)
+            if feedback is None:
+                plan.executable = True
+            else:
+                plan.error_text = feedback
+                plan.rejected_by_validator = True
         return plans
 
-    async def correct_one(self, plan: CallPlan, callbacks: Callbacks) -> None:
+    async def _run_tool_validator(
+        self,
+        plan: CallPlan,
+        instance: BaseModel,
+        ctx: CallContext,
+        *,
+        phase: Literal["initial", "salvage"],
+    ) -> tuple[list[FieldIssue], str | None]:
+        """Run *plan*'s tool validator outside the correction cycle.
+
+        Args:
+            plan: The plan whose arguments *instance* was built from.
+            instance: The arguments model that already passed Pydantic validation.
+            ctx: Where the AIMessage sits; handed to the validator.
+            phase: ``"initial"`` for the model's own arguments, ``"salvage"``
+                for arguments returned by an ``on_unresolved`` hook.
+
+        Returns:
+            Every finding as a FieldIssue, and the feedback text built from the
+            ``"retry"`` findings (``None`` when the arguments are accepted).
+        """
+        fn = self._validators.get(plan.call["name"])
+        if fn is None:
+            return [], None
+        is_final = phase == "salvage" or not self.correction_enabled
+        tool_ctx = self._validator_context(plan, ctx, phase=phase, is_final=is_final)
+
+        def check(args: BaseModel, _attempt: ValidatorContext) -> Any:
+            return fn(args, tool_ctx)
+
+        issues, _, feedback = await _run_external_validator(
+            WithContext(check),
+            instance,
+            type(instance).__name__,
+            ValidatorContext(
+                attempt=1,
+                max_attempts=1,
+                is_final=is_final,
+                model_label="primary",
+                is_fallback=False,
+            ),
+        )
+        return issues, feedback
+
+    def _correction_validator(
+        self, plan: CallPlan, ctx: CallContext
+    ) -> WithContext[BaseModel] | None:
+        """Adapt *plan*'s tool validator for ``extract_data`` in the correction cycle."""
+        fn = self._validators.get(plan.call["name"])
+        if fn is None:
+            return None
+
+        def check(args: BaseModel, attempt: ValidatorContext) -> Any:
+            return fn(
+                args,
+                self._validator_context(
+                    plan,
+                    ctx,
+                    phase="correction",
+                    attempt=attempt.attempt,
+                    max_attempts=attempt.max_attempts,
+                    is_final=attempt.is_final,
+                ),
+            )
+
+        return WithContext(check)
+
+    def _validator_context(
+        self,
+        plan: CallPlan,
+        ctx: CallContext,
+        *,
+        phase: Literal["initial", "correction", "salvage"],
+        attempt: int = 1,
+        max_attempts: int = 1,
+        is_final: bool,
+    ) -> ToolCallValidatorContext:
+        """Build the context a tool validator receives."""
+        return ToolCallValidatorContext(
+            tool_name=plan.call["name"],
+            tool_call_id=str(plan.call["id"]),
+            messages=ctx.conversation,
+            state=ctx.state,
+            phase=phase,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            is_final=is_final,
+        )
+
+    async def correct_one(self, plan: CallPlan, ctx: CallContext, callbacks: Callbacks) -> None:
         """Run the LLM correction cycle for one invalid, answerable call, mutating *plan*.
 
         On success the plan becomes executable with the corrected args and
@@ -305,6 +441,7 @@ class ToolCallPipeline:
             plan: The invalid, answerable plan to correct (must not already be
                 executable — callers only invoke this for plans that failed
                 pre-validation or could not be parsed at all).
+            ctx: Where the AIMessage sits; handed to the tool validator.
             callbacks: Callbacks pulled from the node's ``RunnableConfig`` so
                 correction LLM calls nest under the node's tracing span.
         """
@@ -337,6 +474,7 @@ class ToolCallPipeline:
                 max_primary_retries=self._max_correction_retries,
                 retry_config=_NO_NETWORK_RETRY,
                 callbacks=callbacks,
+                validator=self._correction_validator(plan, ctx),
                 _notify_observers=False,
             )
             plan.correction_retries = stats.primary_retries
@@ -355,6 +493,10 @@ class ToolCallPipeline:
             # feedback policy exactly like an extract_data failure — not
             # crash the node.
             corrected_args = instance.model_dump(exclude_unset=True)
+        except _InvalidValidatorResultError:
+            # A validator returning the wrong type is a programming error in the
+            # caller's code, not a failed correction — same as in extract_data.
+            raise
         except Exception as exc:
             # extract_data degrades most failures to (None, stats) internally,
             # but a model that rejects tool binding outright (e.g. bind_tools
@@ -438,12 +580,12 @@ class ToolCallPipeline:
         if isinstance(decision, str):
             return self._custom_feedback(plan, decision)
         if isinstance(decision, dict):
-            if await self._salvage(plan, decision):
+            if await self._salvage(plan, decision, ctx):
                 return None
             return self.feedback_message(plan)
         raise TypeError(f"on_unresolved must return a dict, a str or None; got {decision!r}")
 
-    async def _salvage(self, plan: CallPlan, args: dict[str, Any]) -> bool:
+    async def _salvage(self, plan: CallPlan, args: dict[str, Any], ctx: CallContext) -> bool:
         """Re-validate hook-supplied *args*; on success make *plan* executable with them."""
         name = plan.call["name"]
         schema = plan.schema or (self.schema_for(name) if name else None)
@@ -456,9 +598,11 @@ class ToolCallPipeline:
             )
             return False
         try:
-            _, _, error_text = create_instance_with_issues(schema, **args)
+            instance, _, error_text = create_instance_with_issues(schema, **args)
         except TypeError as exc:
-            error_text = f"arguments not valid: {exc}"
+            instance, error_text = None, f"arguments not valid: {exc}"
+        if instance is not None:
+            _, error_text = await self._run_tool_validator(plan, instance, ctx, phase="salvage")
         if error_text is not None:
             logger.warning(
                 "on_unresolved returned invalid arguments for tool call %r (id=%r): %s",
@@ -544,9 +688,14 @@ class ToolCallPipeline:
                 f"Call the tool again with a single valid JSON object as arguments."
             )
         else:
+            reason = (
+                "were rejected by validation"
+                if plan.rejected_by_validator
+                else "did not match the tool's schema"
+            )
             content = (
-                f"The arguments for tool call '{name}' did not match the tool's "
-                f"schema and the call was NOT executed.\n\n{plan.error_text}\n\n"
+                f"The arguments for tool call '{name}' {reason} and the call was NOT "
+                f"executed.\n\n{plan.error_text}\n\n"
                 f"Call the tool again with corrected arguments that fix every "
                 f"issue above."
             )

@@ -656,3 +656,35 @@ class UnresolvedToolCall:
     correction_retries: int
     messages: tuple[BaseMessage, ...]
     state: Any
+
+
+@dataclass(frozen=True)
+class ToolCallValidatorContext:
+    """Second argument of a ``SaidexToolNode`` tool validator.
+
+    Attributes:
+        tool_name: The tool the call targets.
+        tool_call_id: The id of the call being checked.
+        messages: The conversation up to and including the ``AIMessage`` that
+            made the call.
+        state: The graph state as the node received it.
+        phase: ``"initial"`` for the model's own arguments, ``"correction"``
+            inside the LLM correction cycle, ``"salvage"`` for arguments
+            returned by an ``on_unresolved`` hook.
+        attempt: 1-based attempt within the phase.
+        max_attempts: Attempt budget of the phase — ``1`` for ``"initial"`` and
+            ``"salvage"``, ``max_correction_retries`` for ``"correction"``.
+        is_final: ``True`` when no further check follows for this call in this
+            node run: in ``"initial"`` exactly when no correction model is
+            configured, in ``"correction"`` on the cycle's last attempt, always
+            in ``"salvage"``.
+    """
+
+    tool_name: str
+    tool_call_id: str
+    messages: tuple[BaseMessage, ...]
+    state: Any
+    phase: Literal["initial", "correction", "salvage"]
+    attempt: int
+    max_attempts: int
+    is_final: bool

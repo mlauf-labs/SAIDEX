@@ -40,6 +40,8 @@ Public API
         ToolNodeStats,
         ToolNodeEvent,
         UnresolvedToolCall,
+        ToolCallValidatorContext,
+        ToolValidator,
         OnUnresolved,
         OnComplete,
         OnExhausted,
@@ -89,7 +91,7 @@ Public API
 """
 
 from ._reasoning import ReasoningEscalation
-from ._tool_calls import OnUnresolved
+from ._tool_calls import OnUnresolved, ToolValidator
 from .analytics import (
     FieldIssueSummary,
     FieldProblemStat,
@@ -132,6 +134,7 @@ from .models import (
     ModelErrorKind,
     ToolCallConfig,
     ToolCallStats,
+    ToolCallValidatorContext,
     ToolNodeEvent,
     ToolNodeStats,
     UnresolvedToolCall,
@@ -218,6 +221,8 @@ __all__ = [
     "ToolNodeStats",
     "ToolNodeEvent",
     "UnresolvedToolCall",
+    "ToolCallValidatorContext",
+    "ToolValidator",
     "OnUnresolved",
     "OnComplete",
     "OnExhausted",

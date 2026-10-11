@@ -14,7 +14,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
 
 from langchain_core.callbacks.base import Callbacks
@@ -32,8 +32,14 @@ except ImportError as exc:  # keep langgraph an optional dependency
 
 from langchain_core.tools import BaseTool
 
-from ._tool_calls import CallContext, OnUnresolved, ToolCallPipeline, ToolCallValidationError
-from .models import ExtractionMode, ToolNodeEvent, UnresolvedToolCall
+from ._tool_calls import (
+    CallContext,
+    OnUnresolved,
+    ToolCallPipeline,
+    ToolCallValidationError,
+    ToolValidator,
+)
+from .models import ExtractionMode, ToolCallValidatorContext, ToolNodeEvent, UnresolvedToolCall
 from .observability import dispatch_tool_node_event
 from .sync import _run_blocking
 
@@ -41,6 +47,8 @@ __all__ = [
     "OnUnresolved",
     "SaidexToolNode",
     "ToolCallValidationError",
+    "ToolCallValidatorContext",
+    "ToolValidator",
     "UnresolvedToolCall",
 ]
 
@@ -142,6 +150,13 @@ class SaidexToolNode(Runnable[Any, Any]):
             that returns salvaged args (dict, re-validated, then executed), a
             custom feedback text (str) or None (default feedback); an exception
             raised by the hook propagates.
+        validators: Per-tool validators keyed by tool name. Each is called as
+            ``fn(args, ctx)`` with the validated arguments model and a
+            :class:`ToolCallValidatorContext`, sync or async, and returns a
+            :data:`~saidex.ValidatorResult` like ``extract_data``'s ``validator=``.
+            They run after Pydantic validation — on the model's own args, inside
+            the correction cycle and on salvaged args — and never at execution
+            time.
         strip_thinking: Strip ``<think>`` blocks from raw invalid-call args
             before parsing.
         json_repair: Apply ``json-repair`` to raw invalid-call args that do not
@@ -175,6 +190,7 @@ class SaidexToolNode(Runnable[Any, Any]):
         max_correction_retries: int = 2,
         correction_mode: ExtractionMode = ExtractionMode.TOOL_CALLING,
         on_unresolved: OnUnresolved = "feedback",
+        validators: Mapping[str, ToolValidator] | None = None,
         strip_thinking: bool = True,
         json_repair: bool = True,
         sanitize_messages: bool = True,
@@ -223,7 +239,19 @@ class SaidexToolNode(Runnable[Any, Any]):
             strip_thinking=strip_thinking,
             json_repair=json_repair,
             on_unresolved=on_unresolved,
+            validators=validators,
         )
+        for tool_name in validators or {}:
+            if tool_name not in self._pipeline.tool_names:
+                raise ValueError(
+                    f"validators has no tool named {tool_name!r}; "
+                    f"known tools: {sorted(self._pipeline.tool_names)}"
+                )
+            if self._pipeline.schema_for(tool_name) is None:
+                raise ValueError(
+                    f"validators[{tool_name!r}]: the tool has no Pydantic argument schema, "
+                    "so there is no model instance to validate"
+                )
 
     def invoke(self, input: Any, config: RunnableConfig | None = None, **kwargs: Any) -> Any:
         """Synchronous entry point; runs the pipeline through a blocking bridge.
@@ -275,7 +303,7 @@ class SaidexToolNode(Runnable[Any, Any]):
         messages, shape = _extract_messages(input, self._messages_key)
         ai_message, ai_index = _last_ai_message(messages)
         ctx = CallContext(messages=tuple(messages), ai_index=ai_index, state=input)
-        plans = self._pipeline.plan(ai_message)
+        plans = await self._pipeline.plan(ai_message, ctx)
 
         if self._pipeline.correction_enabled:
             callbacks: Callbacks = (config or {}).get("callbacks")
@@ -285,7 +313,7 @@ class SaidexToolNode(Runnable[Any, Any]):
                 # succeeds, so a "corrected" id-less plan would still have to
                 # be dropped — see the id-less handling in ToolCallPipeline.plan.
                 if not plan.executable and plan.answerable:
-                    await self._pipeline.correct_one(plan, callbacks)
+                    await self._pipeline.correct_one(plan, ctx, callbacks)
 
         feedback: list[BaseMessage] = list(await self._pipeline.resolve(plans, ctx))
 
