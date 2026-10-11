@@ -274,6 +274,26 @@ def _combine_failure_reasons(
     return fallback if fallback is not None else primary
 
 
+def _combine_llm_error_kinds(
+    primary_reason: FailureReason | None,
+    primary_kind: ModelErrorKind | None,
+    fallback_reason: FailureReason | None,
+    fallback_kind: ModelErrorKind | None,
+    *,
+    success: bool,
+) -> ModelErrorKind | None:
+    """Pick the error kind belonging to the combined failure reason.
+
+    Mirrors :func:`_combine_failure_reasons`: the fallback's kind when the
+    fallback reported a reason, otherwise the primary's.  A run's kind is only
+    set when its own reason is ``llm_error``, so the result is ``None`` unless
+    the combined reason is ``llm_error``.
+    """
+    if success:
+        return None
+    return fallback_kind if fallback_reason is not None else primary_kind
+
+
 def _combine_candidates(
     primary: _ExtractionStatsBase,
     fallback: _ExtractionStatsBase,
@@ -330,6 +350,8 @@ class _ExtractionStatsBase:
             ``on_exhausted`` hook turned the last candidate into the result.
             Such a run reports ``success=True`` and ``failure_reason=None``;
             check this flag to tell it apart from a clean success.
+        llm_error_kind: Why the model call failed, as a :class:`ModelErrorKind`,
+            when :attr:`failure_reason` is ``llm_error``; otherwise ``None``.
     """
 
     success: bool = False
@@ -342,6 +364,7 @@ class _ExtractionStatsBase:
     last_candidate: BaseModel | list[BaseModel] | None = field(default=None, hash=False, repr=False)
     last_rejection: tuple[FieldIssue, ...] = ()
     salvaged: bool = False
+    llm_error_kind: ModelErrorKind | None = None
 
     @property
     def problem_fields(self) -> tuple[str, ...]:
@@ -370,7 +393,8 @@ class ExtractDataStats(_ExtractionStatsBase):
     In addition to the fields below, every attribute of
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
     ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
-    ``last_candidate``, ``last_rejection``, ``salvaged``, ``problem_fields``)
+    ``last_candidate``, ``last_rejection``, ``salvaged``, ``llm_error_kind``,
+    ``problem_fields``)
     is available.
     """
 
@@ -399,7 +423,8 @@ class ExtractorRunStats(_ExtractionStatsBase):
     In addition to the fields below, every attribute of
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
     ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
-    ``last_candidate``, ``last_rejection``, ``salvaged``, ``problem_fields``)
+    ``last_candidate``, ``last_rejection``, ``salvaged``, ``llm_error_kind``,
+    ``problem_fields``)
     is available.
     """
 
@@ -433,6 +458,13 @@ class ExtractorRunStats(_ExtractionStatsBase):
             last_candidate=last_candidate,
             last_rejection=last_rejection,
             salvaged=salvaged,
+            llm_error_kind=_combine_llm_error_kinds(
+                self.failure_reason,
+                self.llm_error_kind,
+                other.failure_reason,
+                other.llm_error_kind,
+                success=success,
+            ),
         )
 
 
