@@ -1790,8 +1790,8 @@ block, with no signature changes:</p>
 <a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">schema_name</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">success</span><span class="p">,</span> <span class="n">s</span><span class="o">.</span><span class="n">fallback_used</span><span class="p">)</span>
 </code></pre></div>
 <p><code>sink.all()</code> returns the stats in chronological order. The sink stores only the
-stats object of each run — never the messages, result, or source text — so it
-stays PII-light by default.</p>
+stats object of each run, with <code>last_candidate</code> removed — never the messages,
+result, or source text — so it stays PII-light by default.</p>
 <p>It works as a plain <code>with</code> too, so the synchronous wrappers are covered:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">collect_stats</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
@@ -1814,7 +1814,15 @@ its own extractions, while any enclosing block collects those too.</p>
 <p>For process-wide observability (logging, tracing, metrics) register a listener
 with <code>on_extraction</code>. It fires once per top-level extraction — on success and
 failure — with the full <code>ExtractionEvent</code> (stats, result, messages, source
-text). The callback may be sync or async:</p>
+text). The callback may be sync or async.</p>
+<div class="admonition warning">
+<p class="admonition-title">PII</p>
+<p>On a failed run <code>event.last_candidate</code> / <code>stats.last_candidate</code> holds the
+rejected instance, i.e. extracted source data. Handle it like the source
+text; see
+<a href="../external-validators/#when-every-attempt-fails-last_candidate">External Validators</a>.
+Chain-run span outputs carry only <code>has_last_candidate</code>.</p>
+</div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span> <span class="nn">logging</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">on_extraction</span><span class="p">,</span> <span class="n">ExtractionEvent</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>

@@ -1329,28 +1329,28 @@
 <td><code>validation_exhausted</code></td>
 <td>The last attempt produced parseable output, but it failed schema validation, source grounding or the external validator, and no retries were left.</td>
 <td>The model cannot satisfy a strict rule; the value is not in the source text; ambiguous field descriptions.</td>
-<td><strong>Yes.</strong> Grounding and external-validator rejections always follow a schema-valid instance.</td>
+<td><strong>Yes.</strong> Grounding and external-validator rejections always follow a schema-valid instance. Check <code>stats.last_candidate</code>.</td>
 <td>Rarely with the same input and model. Improve the prompt or schema, use a stronger fallback model, or relax the validator. In the agent loop it is also reported when <code>max_iterations</code> ran out before a valid final answer (for example only helper-tool calls): raise <code>max_iterations</code>.</td>
 </tr>
 <tr>
 <td><code>parse_error</code></td>
 <td>The last attempt's output could not be parsed into arguments: malformed JSON or an invalid tool call.</td>
 <td>Small or reasoning models, truncated output (<code>max_tokens</code>), provider quirks.</td>
-<td><strong>Yes</strong>, if an <em>earlier</em> attempt produced one.</td>
+<td><strong>Yes</strong>, if an <em>earlier</em> attempt produced one. Check <code>stats.last_candidate</code>.</td>
 <td>Sometimes. Truncation is often transient; consider a larger <code>max_tokens</code> or JSON mode.</td>
 </tr>
 <tr>
 <td><code>llm_error</code></td>
 <td>The model call failed after all network retries, or the provider rejected the tool binding.</td>
 <td>Outage, authentication, a rate limit beyond the retry budget, unsupported tool-calling flags.</td>
-<td><strong>Yes</strong>, if an <em>earlier</em> attempt produced one.</td>
+<td><strong>Yes</strong>, if an <em>earlier</em> attempt produced one. Check <code>stats.last_candidate</code>.</td>
 <td><strong>Yes</strong> for transient outages and rate limits. No if the tool binding was rejected even after automatic relaxation (or with <code>auto_relax=False</code>): fix <code>tool_config</code>.</td>
 </tr>
 <tr>
 <td><code>no_tool_call</code></td>
 <td>Agent loop with tool-calling final answers only: the model replied with plain text instead of calling a tool, and no retries were left.</td>
 <td>The model ignores tools; the prompt does not ask for the final-answer tool.</td>
-<td><strong>Yes</strong>, if an <em>earlier</em> attempt produced one.</td>
+<td><strong>Yes</strong>, if an <em>earlier</em> attempt produced one. Check <code>stats.last_candidate</code>.</td>
 <td>Rarely. Adjust the prompt, or use <code>final_answer_mode=ExtractionMode.JSON</code>.</td>
 </tr>
 </tbody>
@@ -1363,6 +1363,8 @@ instance that the external validator rejects, and attempt 2 may then return
 malformed JSON: the run ends with <code>parse_error</code> even though a schema-valid
 candidate existed.</p>
 </div>
+<p><code>stats.last_candidate</code> is the authoritative check — see
+<a href="../external-validators/#when-every-attempt-fails-last_candidate">External Validators</a>.</p>
 <h2 id="primary-and-fallback-model">Primary and fallback model<a class="headerlink" href="#primary-and-fallback-model" title="Permanent link">&para;</a></h2>
 <p>When a fallback model is configured and the primary fails, the fallback gets
 fresh attempts. If both fail, the combined reason is the <strong>fallback's</strong>. It is

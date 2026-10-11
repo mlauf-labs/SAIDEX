@@ -1889,6 +1889,8 @@ failed. The returned <code>ExtractorRunStats</code> are the <strong>sum of both 
 </tr>
 </tbody>
 </table>
+<p><code>last_candidate</code> / <code>last_rejection</code> work as in <code>extract_data</code> — see
+<a href="../external-validators/#when-every-attempt-fails-last_candidate">External Validators</a>.</p>
 <p><code>ExtractorRunStats</code> instances support <code>+</code> to merge (used internally to combine
 primary and fallback attempts).</p>
 <p><code>failure_reason</code> uses the same <a href="../failure-reasons/"><code>FailureReason</code></a> values as

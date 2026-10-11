@@ -1541,7 +1541,7 @@ side.</p>
 <div class="admonition note">
 <p class="admonition-title">What the spans contain</p>
 <p>The enclosing span's <strong>output</strong> carries the validated result plus run
-metrics (<code>success</code>, retries, <code>problem_fields</code>, …) — the same values a
+metrics (<code>success</code>, retries, <code>problem_fields</code>, <code>has_last_candidate</code>, …) — the same values a
 tracer already sees inside the LLM generations. The span's <strong>input</strong>
 contains only the schema name and mode by default; the raw source text is
 included <strong>only</strong> when you opt in with <code>capture_source_text=True</code>. Enable

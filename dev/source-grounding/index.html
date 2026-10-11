@@ -1528,6 +1528,7 @@ right where they are declared.</p>
   <code>category="grounding"</code> and the field path (e.g. <code>items -&gt; 2 -&gt; vendor</code>),</li>
 <li>triggers the <strong>fallback model</strong> when the primary exhausts its retries,</li>
 <li>sets <code>stats.failure_reason = "validation_exhausted"</code> if all attempts fail.</li>
+<li>keeps the rejected instance on <code>stats.last_candidate</code> — see <a href="../external-validators/#when-every-attempt-fails-last_candidate">External Validators → last_candidate</a>.</li>
 </ul>
 <p>Grounding runs <strong>before</strong> an <a href="../external-validators/">external validator</a> and only
 on structurally valid instances.</p>
