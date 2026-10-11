@@ -190,6 +190,17 @@ parser is tolerant of common deviations:
   they carry their payload under a `text` key, so a model's private chain of
   thought never reaches the JSON parser.
 
+- **Malformed JSON** — comments (`//`, `/* */`), missing commas, unquoted keys,
+  single quotes and truncated output are repaired before validation.
+- **Array-wrapped object** — a single object inside an array (`[{ ... }]`) is
+  accepted. A reply with several objects is not guessed at: it is sent back with
+  a request for exactly one object.
+
+!!! warning "Truncated string values"
+    A string cut off by `max_tokens` is kept as repaired (`"Mathematician and wri"`),
+    and validation cannot tell it was truncated. For critical text fields consider
+    `min_length` or validators, or raise `max_tokens`.
+
 If parsing still fails, or the JSON is not an object, the model receives a
 correction message and the normal [retry loop](retry-and-fallback.md) applies —
 exactly like a validation failure.
