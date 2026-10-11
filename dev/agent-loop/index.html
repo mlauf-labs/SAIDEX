@@ -1856,6 +1856,10 @@ failed. The returned <code>ExtractorRunStats</code> are the <strong>sum of both 
 <a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>    <span class="n">fallback_llm_model</span><span class="o">=</span><span class="n">strong_llm</span><span class="p">,</span>
 <a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="p">)</span>
 </code></pre></div>
+<p>The loop also accepts <code>reasoning_escalation</code> and <code>fallback_reasoning_escalation</code>.
+Reasoning levels advance with final-answer attempts only; helper-tool calls keep
+the current level. See
+<a href="../retry-and-fallback/#reasoning-effort-escalation">Reasoning-effort escalation</a>.</p>
 <hr />
 <h2 id="extractorrunstats"><code>ExtractorRunStats</code><a class="headerlink" href="#extractorrunstats" title="Permanent link">&para;</a></h2>
 <table>
