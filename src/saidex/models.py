@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -235,6 +235,24 @@ def _combine_failure_reasons(
     return fallback if fallback is not None else primary
 
 
+def _combine_candidates(
+    primary: _ExtractionStatsBase,
+    fallback: _ExtractionStatsBase,
+    *,
+    success: bool,
+) -> tuple[BaseModel | list[BaseModel] | None, tuple[FieldIssue, ...]]:
+    """Pick the run-level ``(last_candidate, last_rejection)`` pair.
+
+    Success clears both; otherwise the fallback's pair wins when it has a
+    candidate, and the primary's is kept when it has none.
+    """
+    if success:
+        return None, ()
+    if fallback.last_candidate is not None:
+        return fallback.last_candidate, fallback.last_rejection
+    return primary.last_candidate, primary.last_rejection
+
+
 @dataclass(frozen=True)
 class _ExtractionStatsBase:
     """Fields shared by every extraction-stats type.
@@ -258,6 +276,14 @@ class _ExtractionStatsBase:
         source_text: The input text the run was performed on, or ``None``.  Only
             populated when the caller opts in via ``capture_source_text=True``
             (off by default for PII/memory reasons).
+        last_candidate: On failure, the most recent instance that passed schema
+            validation but was rejected by source grounding or the external
+            validator — kept even when later attempts failed differently.  A
+            ``list`` of items for the batch variants.  ``None`` on success or
+            when no attempt produced a schema-valid instance.  Contains
+            extracted source data: treat it like ``source_text`` (PII).
+        last_rejection: The ``"retry"``-level issues that rejected
+            :attr:`last_candidate`; ``()`` when there is none.
     """
 
     success: bool = False
@@ -266,6 +292,9 @@ class _ExtractionStatsBase:
     format_errors: int = 0
     field_issues: tuple[FieldIssue, ...] = ()
     source_text: str | None = None
+    # Excluded from hash/repr: models and lists are unhashable, and repr lands in logs (PII).
+    last_candidate: BaseModel | list[BaseModel] | None = field(default=None, hash=False, repr=False)
+    last_rejection: tuple[FieldIssue, ...] = ()
 
     @property
     def problem_fields(self) -> tuple[str, ...]:
@@ -293,7 +322,8 @@ class ExtractDataStats(_ExtractionStatsBase):
 
     In addition to the fields below, every attribute of
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
-    ``schema_name``, ``format_errors``, ``field_issues``, ``problem_fields``)
+    ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
+    ``last_candidate``, ``last_rejection``, ``problem_fields``)
     is available.
     """
 
@@ -321,7 +351,8 @@ class ExtractorRunStats(_ExtractionStatsBase):
 
     In addition to the fields below, every attribute of
     :class:`_ExtractionStatsBase` (``success``, ``failure_reason``,
-    ``schema_name``, ``format_errors``, ``field_issues``, ``problem_fields``)
+    ``schema_name``, ``format_errors``, ``field_issues``, ``source_text``,
+    ``last_candidate``, ``last_rejection``, ``problem_fields``)
     is available.
     """
 
@@ -335,6 +366,7 @@ class ExtractorRunStats(_ExtractionStatsBase):
         if not isinstance(other, ExtractorRunStats):
             return NotImplemented
         success = self.success or other.success
+        last_candidate, last_rejection = _combine_candidates(self, other, success=success)
         return ExtractorRunStats(
             iterations=self.iterations + other.iterations,
             tool_calls=self.tool_calls + other.tool_calls,
@@ -347,6 +379,8 @@ class ExtractorRunStats(_ExtractionStatsBase):
             schema_name=self.schema_name or other.schema_name,
             format_errors=self.format_errors + other.format_errors,
             field_issues=(*self.field_issues, *other.field_issues),
+            last_candidate=last_candidate,
+            last_rejection=last_rejection,
         )
 
 
@@ -377,6 +411,16 @@ class ExtractionEvent:
     stats: ExtractDataStats | ExtractorRunStats
     messages: list[BaseMessage]
     source_text: str | None = None
+
+    @property
+    def last_candidate(self) -> BaseModel | list[BaseModel] | None:
+        """Shortcut for ``stats.last_candidate`` — see :class:`_ExtractionStatsBase`."""
+        return self.stats.last_candidate
+
+    @property
+    def last_rejection(self) -> tuple[FieldIssue, ...]:
+        """Shortcut for ``stats.last_rejection``."""
+        return self.stats.last_rejection
 
 
 #: The four outcomes a SaidexToolNode-processed tool call can have. See

@@ -242,6 +242,9 @@ resolution, stats = await extract_data_with_tools(
 | `validation_retries` | `int` | Final answers that failed schema validation |
 | `fallback_used` | `bool` | Whether the fallback model was invoked |
 
+`last_candidate` / `last_rejection` work as in `extract_data` — see
+[External Validators](external-validators.md#when-every-attempt-fails-last_candidate).
+
 `ExtractorRunStats` instances support `+` to merge (used internally to combine
 primary and fallback attempts).
 

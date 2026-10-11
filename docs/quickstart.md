@@ -75,6 +75,8 @@ stats.fallback_used     # bool — did the fallback model run?
 stats.format_errors     # int — pure parse / tool-call failures
 stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
 stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
+stats.last_candidate    # last schema-valid but rejected instance (None on success)
+stats.last_rejection    # tuple[FieldIssue, ...] — the issues that rejected it
 ```
 
 Prefer `stats.success` over `result is not None` to branch on the outcome.

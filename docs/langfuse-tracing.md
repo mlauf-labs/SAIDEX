@@ -82,7 +82,7 @@ side.
 
 !!! note "What the spans contain"
     The enclosing span's **output** carries the validated result plus run
-    metrics (`success`, retries, `problem_fields`, …) — the same values a
+    metrics (`success`, retries, `problem_fields`, `has_last_candidate`, …) — the same values a
     tracer already sees inside the LLM generations. The span's **input**
     contains only the schema name and mode by default; the raw source text is
     included **only** when you opt in with `capture_source_text=True`. Enable

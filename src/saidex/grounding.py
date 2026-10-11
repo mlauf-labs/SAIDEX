@@ -238,13 +238,33 @@ def collect_field_check_issues(
         and is ``None`` when all failures are advisory (``"flag"``), so the
         caller records the issues without consuming a retry.
     """
+    issues, _, feedback = _collect_field_checks(instance, source_text, schema_name)
+    return issues, feedback
+
+
+def _collect_field_checks(
+    instance: BaseModel,
+    source_text: str | None,
+    schema_name: str,
+) -> tuple[list[FieldIssue], list[FieldIssue], str | None]:
+    """Like :func:`collect_field_check_issues`, plus the rejecting subset.
+
+    Args:
+        instance: The instance that already passed Pydantic validation.
+        source_text: The source text to ground against; when falsy, no checks run.
+        schema_name: Schema name stamped onto each issue.
+
+    Returns:
+        ``(issues, rejecting, feedback)`` where ``rejecting`` holds the issues of
+        ``"retry"`` checks, i.e. the ones that reject the instance.
+    """
     if not source_text:
-        return [], None
+        return [], [], None
 
     failures: list[_Failure] = []
     _walk(instance, source_text, "", failures)
     if not failures:
-        return [], None
+        return [], [], None
 
     issues = [
         FieldIssue(
@@ -258,6 +278,11 @@ def collect_field_check_issues(
         )
         for failure in failures
     ]
+    rejecting = [
+        issue
+        for issue, failure in zip(issues, failures, strict=True)
+        if failure.on_mismatch != "flag"
+    ]
     retry_messages = [f.message for f in failures if f.on_mismatch != "flag"]
     feedback = (
         (
@@ -268,7 +293,7 @@ def collect_field_check_issues(
         if retry_messages
         else None
     )
-    return issues, feedback
+    return issues, rejecting, feedback
 
 
 @dataclass(frozen=True)

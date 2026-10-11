@@ -22,7 +22,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel, Field, create_model
 
 from ._callbacks import _ChainRun
-from .grounding import collect_field_check_issues
+from .grounding import _collect_field_checks
 from .models import (
     EXTERNAL_VALIDATOR_PATH,
     ExtractDataStats,
@@ -34,6 +34,7 @@ from .models import (
     ToolCallConfig,
     ValidationIssue,
     ValidatorContext,
+    _combine_candidates,
     _combine_failure_reasons,
 )
 from .observability import dispatch_to_observers
@@ -249,10 +250,11 @@ async def _run_external_validator(
     instance: MODEL_T,
     schema_name: str,
     context: ValidatorContext,
-) -> tuple[list[FieldIssue], str | None]:
+) -> tuple[list[FieldIssue], list[FieldIssue], str | None]:
     """Run an optional external *validator* against a validated *instance*.
 
-    Mirrors :func:`~saidex.grounding.collect_field_check_issues`: every finding
+    Follows the same ``(issues, rejecting, feedback)`` contract as
+    :func:`~saidex.grounding._collect_field_checks`: every finding
     (``"retry"`` and ``"flag"``) is returned as a :class:`FieldIssue` with
     ``attempt=0`` for the caller to re-stamp, and feedback is built only from
     ``"retry"`` findings.
@@ -265,7 +267,8 @@ async def _run_external_validator(
         context: Attempt context, handed to :class:`WithContext` validators.
 
     Returns:
-        ``(issues, feedback)``. ``feedback`` is ``None`` when the instance is
+        ``(issues, rejecting, feedback)``. ``rejecting`` is the ``"retry"``-level
+        subset of ``issues``. ``feedback`` is ``None`` when the instance is
         accepted — no issues, or only ``"flag"`` issues.
 
     Raises:
@@ -273,9 +276,14 @@ async def _run_external_validator(
             :data:`ValidatorResult`.
     """
     if validator is None:
-        return [], None
+        return [], [], None
     issues = await _call_validator(validator, instance, schema_name, context)
-    return _to_field_issues(issues, schema_name), _validator_feedback(issues)
+    rejecting = [i for i in issues if i.on_mismatch == "retry"]
+    return (
+        _to_field_issues(issues, schema_name),
+        _to_field_issues(rejecting, schema_name),
+        _validator_feedback(issues),
+    )
 
 
 @dataclass(frozen=True)
@@ -285,11 +293,14 @@ class _CandidateCheck:
     Attributes:
         issues: Every finding (``"retry"`` and ``"flag"``), stamped with the
             attempt index — grounding findings first, then validator findings.
+        rejecting: The ``"retry"``-level subset of ``issues`` that rejected the
+            candidate; empty when accepted.
         feedback: Feedback text for the model, or ``None`` when accepted.
         stage: The check that rejected the candidate, or ``None`` when accepted.
     """
 
     issues: list[FieldIssue]
+    rejecting: list[FieldIssue]
     feedback: str | None
     stage: Literal["grounding", "validator"] | None
 
@@ -321,19 +332,21 @@ async def _check_candidate(
     Returns:
         A :class:`_CandidateCheck`; ``feedback is None`` means accepted.
     """
-    grounding_issues, grounding_feedback = collect_field_check_issues(
+    grounding_issues, grounding_rejecting, grounding_feedback = _collect_field_checks(
         instance, source_text, schema_name
     )
     issues = [replace(i, attempt=attempt) for i in grounding_issues]
     if grounding_feedback is not None:
-        return _CandidateCheck(issues, grounding_feedback, "grounding")
-    validator_issues, validator_feedback = await _run_external_validator(
+        rejecting = [replace(i, attempt=attempt) for i in grounding_rejecting]
+        return _CandidateCheck(issues, rejecting, grounding_feedback, "grounding")
+    validator_issues, validator_rejecting, validator_feedback = await _run_external_validator(
         validator, instance, schema_name, context
     )
     issues.extend(replace(i, attempt=attempt) for i in validator_issues)
     if validator_feedback is not None:
-        return _CandidateCheck(issues, validator_feedback, "validator")
-    return _CandidateCheck(issues, None, None)
+        rejecting = [replace(i, attempt=attempt) for i in validator_rejecting]
+        return _CandidateCheck(issues, rejecting, validator_feedback, "validator")
+    return _CandidateCheck(issues, [], None, None)
 
 
 def _validator_context(
@@ -666,6 +679,7 @@ async def extract_data(
                 fallback.retries,
                 primary.retries + fallback.retries,
             )
+            last_candidate, last_rejection = _last_candidate(primary, fallback)
             return await _finish(
                 None,
                 ExtractDataStats(
@@ -678,6 +692,8 @@ async def extract_data(
                     ),
                     format_errors=combined_format_errors,
                     field_issues=combined_issues,
+                    last_candidate=last_candidate,
+                    last_rejection=last_rejection,
                 ),
             )
 
@@ -686,6 +702,7 @@ async def extract_data(
             schema.__name__,
             primary.retries,
         )
+        last_candidate, last_rejection = _last_candidate(primary)
         return await _finish(
             None,
             ExtractDataStats(
@@ -694,6 +711,8 @@ async def extract_data(
                 failure_reason=primary.failure_reason,
                 format_errors=primary.format_errors,
                 field_issues=tuple(primary.field_issues),
+                last_candidate=last_candidate,
+                last_rejection=last_rejection,
             ),
         )
     except BaseException as exc:
@@ -941,7 +960,18 @@ async def extract_data_list(
         # Report the item schema name (not the internal ``…List`` container) so
         # the stats group under the schema the caller actually passed.
         item_issues = tuple(replace(i, schema_name=schema.__name__) for i in stats.field_issues)
-        stats = replace(stats, schema_name=schema.__name__, field_issues=item_issues)
+        container_candidate = stats.last_candidate
+        stats = replace(
+            stats,
+            schema_name=schema.__name__,
+            field_issues=item_issues,
+            last_candidate=(
+                None if container_candidate is None else list(cast(Any, container_candidate).items)
+            ),
+            last_rejection=tuple(
+                replace(i, schema_name=schema.__name__) for i in stats.last_rejection
+            ),
+        )
         items: list[MODEL_T] | None = None if result is None else cast(Any, result).items
         if items is not None:
             stats = replace(stats, item_count=len(items))
@@ -1279,6 +1309,9 @@ async def run_extractor_agent(
                 is_last_model=True,
             )
             succeeded = result is not None
+            last_candidate, last_rejection = _combine_candidates(
+                primary_stats, fallback_stats, success=succeeded
+            )
             combined = ExtractorRunStats(
                 iterations=primary_stats.iterations + fallback_stats.iterations,
                 tool_calls=primary_stats.tool_calls + fallback_stats.tool_calls,
@@ -1295,6 +1328,8 @@ async def run_extractor_agent(
                 ),
                 format_errors=primary_stats.format_errors + fallback_stats.format_errors,
                 field_issues=(*primary_stats.field_issues, *fallback_stats.field_issues),
+                last_candidate=last_candidate,
+                last_rejection=last_rejection,
             )
             if succeeded:
                 logger.info("Fallback model succeeded for agent loop (%s).", schema.__name__)
@@ -1350,6 +1385,7 @@ def _common_outputs(result: Any, stats: ExtractDataStats | ExtractorRunStats) ->
         "success": stats.success,
         "failure_reason": None if stats.failure_reason is None else stats.failure_reason.value,
         "fallback_used": stats.fallback_used,
+        "has_last_candidate": stats.last_candidate is not None,
         "problem_fields": list(stats.problem_fields),
         "format_errors": stats.format_errors,
     }
@@ -1420,6 +1456,8 @@ async def _run_extractor_agent_with_model(
     agent_issues: list[FieldIssue] = []
     format_errors = 0
     failure_reason: FailureReason | None = None
+    candidate: MODEL_T | None = None
+    rejection: tuple[FieldIssue, ...] = ()
 
     def _stats(success: bool, reason: FailureReason | None) -> ExtractorRunStats:
         return ExtractorRunStats(
@@ -1431,6 +1469,8 @@ async def _run_extractor_agent_with_model(
             failure_reason=None if success else reason,
             format_errors=format_errors,
             field_issues=tuple(agent_issues),
+            last_candidate=None if success else candidate,
+            last_rejection=() if success else rejection,
         )
 
     while iterations < max_iterations:
@@ -1517,6 +1557,7 @@ async def _run_extractor_agent_with_model(
                 )
                 agent_issues.extend(check.issues)
                 if check.feedback is not None:
+                    candidate, rejection = instance, tuple(check.rejecting)
                     failure_reason = FailureReason.VALIDATION_EXHAUSTED
                     if validation_retries >= max_validation_retries:
                         break
@@ -1668,6 +1709,7 @@ async def _run_extractor_agent_with_model(
                         found_final_answer = instance
                         final_answer_valid = True
                     else:
+                        candidate, rejection = instance, tuple(check.rejecting)
                         failure_reason = FailureReason.VALIDATION_EXHAUSTED
                         at_limit = validation_retries >= max_validation_retries
                         tool_result_messages.append(
@@ -1824,6 +1866,9 @@ class _ModelAttempt(Generic[MODEL_T]):
             tagged with the attempt index in which it occurred.
         format_errors: Count of pure parse/tool-call (format) failures.
         failure_reason: Why the loop ended without success, or ``None`` on success.
+        candidate: The most recent schema-valid instance rejected by grounding
+            or the external validator, kept across later failures.
+        rejection: The retry-level issues that rejected :attr:`candidate`.
     """
 
     instance: MODEL_T | None
@@ -1831,6 +1876,22 @@ class _ModelAttempt(Generic[MODEL_T]):
     field_issues: list[FieldIssue]
     format_errors: int
     failure_reason: FailureReason | None
+    candidate: MODEL_T | None = None
+    rejection: tuple[FieldIssue, ...] = ()
+
+
+def _last_candidate(
+    *attempts: _ModelAttempt[MODEL_T],
+) -> tuple[MODEL_T | None, tuple[FieldIssue, ...]]:
+    """The most recent schema-valid candidate across model runs, with its rejection.
+
+    Later runs win; a run without a candidate (e.g. a fallback that only
+    produced parse errors) does not overwrite an earlier one.
+    """
+    for attempt in reversed(attempts):
+        if attempt.candidate is not None:
+            return attempt.candidate, attempt.rejection
+    return None, ()
 
 
 async def _try_with_model(
@@ -1910,6 +1971,8 @@ async def _try_with_model(
     issues: list[FieldIssue] = []
     format_errors = 0
     failure_reason: FailureReason | None = None
+    candidate: MODEL_T | None = None
+    rejection: tuple[FieldIssue, ...] = ()
 
     while remaining > 0:
         # --- LLM invocation with network-level retries ---
@@ -1946,7 +2009,13 @@ async def _try_with_model(
                         relaxed_exc,
                     )
                     return _ModelAttempt(
-                        None, retries, issues, format_errors, FailureReason.LLM_ERROR
+                        None,
+                        retries,
+                        issues,
+                        format_errors,
+                        FailureReason.LLM_ERROR,
+                        candidate,
+                        rejection,
                     )
                 # Deliberately no ``remaining -= 1``: the relaxed re-bind is a
                 # transport-level correction, not a failed extraction attempt.
@@ -1957,7 +2026,9 @@ async def _try_with_model(
                 schema.__name__,
                 exc,
             )
-            return _ModelAttempt(None, retries, issues, format_errors, FailureReason.LLM_ERROR)
+            return _ModelAttempt(
+                None, retries, issues, format_errors, FailureReason.LLM_ERROR, candidate, rejection
+            )
 
         # --- Extract candidate arguments (mode-specific) ---
         if mode is ExtractionMode.TOOL_CALLING:
@@ -1979,7 +2050,15 @@ async def _try_with_model(
             instance, attempt_issues, error_text = create_instance_with_issues(schema, **args)
         except Exception as exc:
             logger.error("%s: unexpected parse error for %s: %s", model_label, schema.__name__, exc)
-            return _ModelAttempt(None, retries, issues, format_errors, FailureReason.PARSE_ERROR)
+            return _ModelAttempt(
+                None,
+                retries,
+                issues,
+                format_errors,
+                FailureReason.PARSE_ERROR,
+                candidate,
+                rejection,
+            )
 
         if error_text:
             logger.warning(
@@ -2024,6 +2103,7 @@ async def _try_with_model(
         # rejection produces feedback and re-enters the loop.
         issues.extend(check.issues)
         if check.feedback is not None:
+            candidate, rejection = instance, tuple(check.rejecting)
             failure_reason = FailureReason.VALIDATION_EXHAUSTED
             if check.stage == "grounding":
                 logger.warning(
@@ -2060,7 +2140,7 @@ async def _try_with_model(
         logger.debug("%s: successfully extracted %s.", model_label, schema.__name__)
         return _ModelAttempt(instance, retries, issues, format_errors, None)
 
-    return _ModelAttempt(None, retries, issues, format_errors, failure_reason)
+    return _ModelAttempt(None, retries, issues, format_errors, failure_reason, candidate, rejection)
 
 
 # ---------------------------------------------------------------------------

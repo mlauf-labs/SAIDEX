@@ -145,6 +145,10 @@ async def main() -> None:
 
     if invoice is None:
         print(f"Extraction failed ({stats.failure_reason}) after {stats.total_retries} retries.")
+        if stats.last_candidate is not None:
+            print("   Last rejected candidate:", stats.last_candidate)
+            for issue in stats.last_rejection:
+                print(f"   - {issue.field_path}: {issue.message}")
         return
 
     print("Extracted invoice:")

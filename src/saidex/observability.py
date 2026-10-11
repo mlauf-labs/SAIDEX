@@ -15,16 +15,13 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextvars import ContextVar, Token
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
+from .models import ExtractDataStats, ExtractorRunStats
+
 if TYPE_CHECKING:
-    from .models import (
-        ExtractDataStats,
-        ExtractionEvent,
-        ExtractorRunStats,
-        ToolNodeEvent,
-        ToolNodeStats,
-    )
+    from .models import ExtractionEvent, ToolNodeEvent, ToolNodeStats
 
 logger = logging.getLogger(__name__)
 
@@ -51,16 +48,21 @@ class StatsSink:
     ``collect_stats`` block.
 
     You do not construct this directly — :func:`collect_stats` yields one.  Only
-    each run's stats object is stored (never its messages, result, or source
-    text), so a sink stays PII-light by default.
+    each run's stats object is stored (never its messages, result, source text or
+    ``last_candidate``), so a sink stays PII-light by default.
     """
 
     def __init__(self) -> None:
         self._stats: list[ExtractDataStats | ExtractorRunStats | ToolNodeStats] = []
 
     def _record(self, event: ExtractionEvent | ToolNodeEvent) -> None:
-        """Append one completed run's stats.  Never raises."""
-        self._stats.append(event.stats)
+        """Append one completed run's stats, without the PII-bearing candidate.  Never raises."""
+        stats = event.stats
+        if isinstance(stats, (ExtractDataStats, ExtractorRunStats)) and (
+            stats.last_candidate is not None
+        ):
+            stats = replace(stats, last_candidate=None)
+        self._stats.append(stats)
 
     def all(self) -> list[ExtractDataStats | ExtractorRunStats | ToolNodeStats]:
         """Return the collected stats, oldest first.

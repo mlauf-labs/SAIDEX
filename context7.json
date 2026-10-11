@@ -18,7 +18,8 @@
     "In LangGraph agents, use saidex.langgraph.SaidexToolNode (extra: saidex[langgraph]) as a drop-in for langgraph.prebuilt.ToolNode — it repairs invalid_tool_calls, validates args against the tool schema, and feeds structured errors back to the model",
     "To enforce business rules after Pydantic validation, pass validator= to any extract_data* function; return None to accept, a str to reject, or a list of str and/or saidex.ValidationIssue(message, field_path=..., error_type=..., on_mismatch='retry'|'flag') to report several per-field findings — 'flag' issues are recorded in stats.field_issues without consuming a retry",
     "stats.failure_reason is a saidex.FailureReason StrEnum (validation_exhausted, parse_error, llm_error, no_tool_call) or None on success; it describes only the last attempt, and comparing it with the plain string still works",
-    "To make an external validator depend on the retry round, wrap it with saidex.with_context(fn); fn(instance, ctx) receives a saidex.ValidatorContext(attempt, max_attempts, is_final, model_label, is_fallback) — is_final is true only on the last attempt of the whole run, so returning on_mismatch='flag' there accepts the instance"
+    "To make an external validator depend on the retry round, wrap it with saidex.with_context(fn); fn(instance, ctx) receives a saidex.ValidatorContext(attempt, max_attempts, is_final, model_label, is_fallback) — is_final is true only on the last attempt of the whole run, so returning on_mismatch='flag' there accepts the instance",
+    "When an extraction fails, stats.last_candidate holds the most recent schema-valid instance rejected by grounding or the external validator (a list for extract_data_list), and stats.last_rejection the retry-level FieldIssues that rejected it; both are empty on success and the candidate may contain PII"
   ],
   "previousVersions": [
     {
