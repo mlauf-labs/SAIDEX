@@ -114,9 +114,9 @@ Two exceptions:
 | `"raise"` | `ToolCallValidationError` is raised **before any call executes**. Correction (if enabled) has already been tried. `.calls` holds the unresolved calls that have an id (calls without an id count as failures but cannot be listed). |
 | a hook | Called once per unresolved call with an `UnresolvedToolCall`; sync or async. |
 
-The hook receives the tool name and id, the last candidate arguments, the raw
-payload, the field issues, the error text, whether correction ran, the
-conversation and the graph state. It returns:
+The hook receives the tool name and id, the call's arguments (as they were
+before any correction attempt), the raw payload, the field issues, the error
+text, whether correction ran, the conversation and the graph state. It returns:
 
 - a `dict` — salvaged arguments, re-validated, then executed (`outcome="salvaged"`);
   if they are still invalid the call gets the default feedback and a warning is logged;
@@ -272,7 +272,8 @@ separate correction model's cost is visible on its own (see
 
 ## Migrating from `on_invalid`
 
-`on_invalid` still works but emits a `DeprecationWarning` and will be removed:
+`on_invalid` still works but emits a `DeprecationWarning`; it will be removed
+in the release after next:
 
 | Before | After |
 | --- | --- |
@@ -285,7 +286,10 @@ correction; calls missing a required field go to the agent instead of the
 correction model; the correction prompt carries conversation context
 (`correction_context_messages=0` restores the old prompt); corrections run
 concurrently; content blocks are sanitized too; `invoke()` executes tools on
-the stock sync path.
+the stock sync path, so async-only tools no longer run there — they need
+`ainvoke()`, as with the stock node; `max_correction_retries=0` together with
+a `correction_model` raises `ValueError` (it never called the model in 0.7
+either).
 
 ## Scope
 

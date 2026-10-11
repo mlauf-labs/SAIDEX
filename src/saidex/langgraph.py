@@ -15,7 +15,6 @@ unchanged.
 from __future__ import annotations
 
 import dataclasses
-import logging
 import warnings
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Literal
@@ -55,8 +54,6 @@ __all__ = [
     "ToolValidator",
     "UnresolvedToolCall",
 ]
-
-logger = logging.getLogger(__name__)
 
 #: Sentinel meaning "let the stock ToolNode keep its own default".
 _UNSET: Any = object()

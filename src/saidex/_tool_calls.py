@@ -668,7 +668,8 @@ class ToolCallPipeline:
             plan: The invalid, answerable plan to correct (must not already be
                 executable — callers only invoke this for plans that failed
                 pre-validation or could not be parsed at all).
-            ctx: Where the AIMessage sits; handed to the tool validator.
+            ctx: Where the AIMessage sits; feeds the conversation context of
+                the correction prompt and is handed to the tool validator.
             callbacks: Callbacks pulled from the node's ``RunnableConfig`` so
                 correction LLM calls nest under the node's tracing span.
         """
@@ -1118,7 +1119,8 @@ def _rewrite_block(
         return block
     kind = block.get("type")
     if kind == "function_call":
-        key = block.get("call_id") if block.get("call_id") in rewritten else block.get("id")
+        call_id = block.get("call_id")
+        key = call_id if isinstance(call_id, str) and call_id in rewritten else block.get("id")
         call = rewritten.get(key) if isinstance(key, str) else None
         if call is None:
             return block

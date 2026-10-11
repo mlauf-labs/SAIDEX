@@ -555,12 +555,12 @@ class ToolCallStats:
         correction_retries: LLM attempts consumed by the correction cycle
             (``0`` unless the correction cycle ran for this call (a
             ``correction_model`` is set)).
+        field_issues: Field-level validation problems observed before the
+            policy was applied.
         correction_attempted: Whether the LLM correction cycle ran for this
             call — distinguishes "never corrected" (correction off, or skipped
             because a required field is missing) from "corrected on the first
             attempt".
-        field_issues: Field-level validation problems observed before the
-            policy was applied.
     """
 
     tool_name: str
@@ -569,8 +569,9 @@ class ToolCallStats:
     repaired: bool = False
     prevalidated: bool = True
     correction_retries: int = 0
-    correction_attempted: bool = False
     field_issues: tuple[FieldIssue, ...] = ()
+    # Last, so positional construction keeps the v0.7.0 field positions.
+    correction_attempted: bool = False
 
 
 @dataclass(frozen=True)
@@ -638,7 +639,8 @@ class UnresolvedToolCall:
     Attributes:
         tool_name: The tool the call targeted, or ``""`` when the model sent no name.
         tool_call_id: The call id the answer must reference.
-        args: The last candidate arguments, or ``None`` when the payload never
+        args: The call's arguments before any correction attempt (correction
+            attempts do not overwrite them), or ``None`` when the payload never
             parsed into a JSON object.
         raw_args: The raw argument string from ``invalid_tool_calls``, or
             ``None`` for calls that arrived in ``tool_calls``.

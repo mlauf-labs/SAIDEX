@@ -150,6 +150,13 @@ def test_rewrite_content_function_call_block_by_call_id() -> None:
     ]
 
 
+def test_rewrite_content_function_call_block_with_unhashable_call_id_uses_id() -> None:
+    content = [{"type": "function_call", "id": "c1", "call_id": ["odd"], "arguments": "{bad"}]
+    assert _rewrite_content(content, _FIXED) == [
+        {"type": "function_call", "id": "c1", "call_id": ["odd"], "arguments": '{"a": 2, "b": 3}'}
+    ]
+
+
 def test_rewrite_content_leaves_other_blocks_and_ids_alone() -> None:
     content = [
         {"type": "tool_use", "id": "other", "name": "add", "input": {"a": 0}},
