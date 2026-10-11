@@ -231,6 +231,11 @@ resolution, stats = await extract_data_with_tools(
 )
 ```
 
+The loop also accepts `reasoning_escalation` and `fallback_reasoning_escalation`.
+Reasoning levels advance with final-answer attempts only; helper-tool calls keep
+the current level. See
+[Reasoning-effort escalation](retry-and-fallback.md#reasoning-effort-escalation).
+
 ---
 
 ## `ExtractorRunStats`
