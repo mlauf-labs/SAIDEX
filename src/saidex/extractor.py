@@ -7,11 +7,22 @@ import inspect
 import json
 import logging
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeVar, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    TypeAlias,
+    TypeVar,
+    cast,
+    get_args,
+    get_origin,
+)
 
+import pydantic
 from json_repair import repair_json
 from langchain_core.callbacks.base import Callbacks
 from langchain_core.messages.base import BaseMessage
@@ -2205,6 +2216,9 @@ async def _run_extractor_agent_with_model(
 
 
 #: Keyword arguments of ``bind_tools`` that limited providers are known to reject.
+#: pydantic's ``MISSING`` default sentinel (pydantic >= 2.14), else ``None``.
+_MISSING: Any = getattr(pydantic, "MISSING", None)
+
 _TOOL_FLAG_NAMES = ("strict", "tool_choice", "parallel_tool_calls")
 
 #: Substrings marking a *client* error (as opposed to a transport hiccup).  A
@@ -2223,34 +2237,129 @@ _BAD_REQUEST_MARKERS = (
 )
 
 
+def _strip_defaults(node: Any, *, in_properties: bool = False) -> Any:
+    """Recursively drop JSON-Schema ``default`` keywords, keeping fields *named* ``default``."""
+    if isinstance(node, dict):
+        return {
+            key: _strip_defaults(value, in_properties=key == "properties" and not in_properties)
+            for key, value in node.items()
+            if in_properties or key != "default"
+        }
+    if isinstance(node, list):
+        return [_strip_defaults(item) for item in node]
+    return node
+
+
+def _annotation_incompatibility(annotation: Any, seen: set[type]) -> str | None:
+    """Reason a type annotation cannot be expressed in a strict schema, or ``None``."""
+    if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
+        return _model_incompatibility(annotation, seen)
+    origin = get_origin(annotation)
+    if origin is None:
+        return None
+    if inspect.isclass(origin) and issubclass(origin, Mapping):
+        return "a dict/Mapping-typed field"
+    if origin is Literal:
+        return None
+    for arg in get_args(annotation):
+        reason = _annotation_incompatibility(arg, seen)
+        if reason is not None:
+            return reason
+    return None
+
+
+def _model_incompatibility(model: type[BaseModel], seen: set[type]) -> str | None:
+    if model in seen:
+        return None
+    seen.add(model)
+    for name, info in model.model_fields.items():
+        if _MISSING is not None and info.default is _MISSING:
+            return f"field '{name}' of {model.__name__} has a MISSING default (cannot be omitted)"
+        reason = _annotation_incompatibility(info.annotation, seen)
+        if reason is not None:
+            return f"field '{name}' of {model.__name__} is {reason}"
+    return None
+
+
+def _strict_incompatibility(schema: type[BaseModel]) -> str | None:
+    """Why *schema* cannot be sent as a strict tool, or ``None`` when it can.
+
+    Strict mode makes every property required and forbids free-form keys, so
+    ``dict[...]`` fields (at any depth) would collapse to ``{}`` and ``MISSING``
+    defaults could never be omitted.
+
+    Args:
+        schema: The extraction schema.
+
+    Returns:
+        A human-readable reason, or ``None`` if strict binding is safe.
+    """
+    return _model_incompatibility(schema, set())
+
+
+def _schema_tool(schema: type[BaseModel], *, strict: bool) -> dict[str, Any]:
+    """Build the OpenAI-style tool definition of *schema*, strict or plain.
+
+    Args:
+        schema: The extraction schema.
+        strict: Request OpenAI strict structured outputs.  The ``default``
+            keyword, which strict mode rejects, is removed.
+
+    Returns:
+        The tool definition.
+    """
+    if not strict:
+        return convert_to_openai_tool(schema)
+    tool = convert_to_openai_tool(schema, strict=True)
+    tool["function"]["parameters"] = _strip_defaults(tool["function"]["parameters"])
+    return tool
+
+
 def _bind_schema_tool(
     llm_model: Any,
-    tool: dict[str, Any],
+    schema: type[BaseModel],
     tool_name: str,
     config: ToolCallConfig,
+    model_label: str = "",
 ) -> Any:
-    """Bind *tool* to *llm_model*, sending only the flags *config* asks for.
+    """Bind the tool for *schema* to *llm_model*, sending only the flags *config* asks for.
 
     A ``None`` field means the keyword argument is left out of the request
     entirely — some OpenAI-compatible gateways reject the mere presence of
-    ``strict`` or ``parallel_tool_calls``.
+    ``strict`` or ``parallel_tool_calls``.  With ``strict=True`` the schema itself
+    is converted strictly, unless it uses shapes strict mode cannot express, in
+    which case the plain schema is bound and a warning is logged.
 
     Args:
         llm_model: The chat model to bind against.
-        tool: The OpenAI-style tool definition of the schema.
+        schema: The extraction schema.
         tool_name: The tool's function name, used for a forced ``tool_choice``.
         config: Which flags to send, and with what values.
+        model_label: Model name used in the fallback warning.
 
     Returns:
         The bound chat model.
     """
+    strict_schema = config.strict is True
+    if strict_schema:
+        reason = _strict_incompatibility(schema)
+        if reason is not None:
+            logger.warning(
+                "%s: %s cannot be sent as a strict tool schema (%s) — binding it non-strict. "
+                "Use ToolCallConfig.COMPATIBLE or ExtractionMode.JSON to silence this.",
+                model_label,
+                schema.__name__,
+                reason,
+            )
+            strict_schema = False
+    tool = _schema_tool(schema, strict=strict_schema)
     kwargs: dict[str, Any] = {}
     if config.tool_choice == "forced":
         kwargs["tool_choice"] = tool_name
     elif config.tool_choice == "auto":
         kwargs["tool_choice"] = "auto"
     if config.strict is not None:
-        kwargs["strict"] = config.strict
+        kwargs["strict"] = config.strict and strict_schema
     if config.parallel_tool_calls is not None:
         kwargs["parallel_tool_calls"] = config.parallel_tool_calls
     return llm_model.bind_tools([tool], **kwargs)
@@ -2281,7 +2390,7 @@ def _is_tool_flag_rejection(exc: BaseException) -> bool:
     keyword argument in the first place.
     """
     text = str(exc).lower()
-    if not any(flag in text for flag in _TOOL_FLAG_NAMES):
+    if not any(flag in text for flag in (*_TOOL_FLAG_NAMES, "invalid schema")):
         return False
     status = getattr(exc, "status_code", None)
     if status is None:
@@ -2368,14 +2477,13 @@ async def _try_with_model(
     relax_rebind: Callable[[], Any] | None = None
 
     if mode is ExtractionMode.TOOL_CALLING:
-        tool = convert_to_openai_tool(schema)
-        schema_label: str = tool["function"]["name"]
+        schema_label: str = convert_to_openai_tool(schema)["function"]["name"]
         if flags.auto_relax:
             relax_rebind = partial(
-                _bind_schema_tool, llm_model, tool, schema_label, ToolCallConfig.COMPATIBLE
+                _bind_schema_tool, llm_model, schema, schema_label, ToolCallConfig.COMPATIBLE
             )
         try:
-            llm = _bind_schema_tool(llm_model, tool, schema_label, flags)
+            llm = _bind_schema_tool(llm_model, schema, schema_label, flags, model_label)
         except TypeError as exc:
             if relax_rebind is None or not _is_tool_flag_rejection(exc):
                 logger.error(

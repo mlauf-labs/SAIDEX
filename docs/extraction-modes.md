@@ -80,11 +80,35 @@ tool_config=ToolCallConfig(strict=False)
 tool_config=ToolCallConfig(strict=None)
 ```
 
+### Strict tool schemas
+
+With `strict=True` (the default `ToolCallConfig.OPENAI`) the schema tool is
+really sent as an OpenAI strict structured-output tool: `"strict": true` on the
+function, `additionalProperties: false` at every object level, **every property
+listed in `required`**, and the unsupported `default` keyword removed.
+
+The visible effect: optional fields are expressed as nullable unions, so the
+model sends `null` for a value it does not have instead of omitting the key.
+That validates against `Optional[...] = None` fields as before.
+
+Some shapes cannot be expressed in strict mode.  For those, SAIDEX binds the
+plain (non-strict) schema instead and logs **one warning** naming the reason:
+
+- `dict[...]` / `Mapping` fields, at any depth (free-form keys would collapse to
+  an empty object);
+- fields whose default is pydantic's `MISSING` sentinel (strict makes every
+  field required, so it could never be omitted).
+
+If a provider rejects the strict schema anyway (an HTTP 400 "Invalid schema for
+function ..."), [automatic recovery](#automatic-recovery) re-binds once without
+`strict`.  To avoid the strict schema (and the warning) for such schemas, use
+`tool_config=ToolCallConfig.COMPATIBLE` or `ExtractionMode.JSON`.
+
 ### Automatic recovery
 
 You usually do not have to configure anything.  When a provider rejects the
 bound flags — an HTTP 400 naming `strict` / `tool_choice` /
-`parallel_tool_calls`, or a `TypeError` from a `bind_tools` implementation that
+`parallel_tool_calls`, a 400 saying the tool schema is invalid, or a `TypeError` from a `bind_tools` implementation that
 never accepted them — SAIDEX re-binds the schema tool **once** with
 `ToolCallConfig.COMPATIBLE`, logs a warning, and carries on **without consuming a
 validation retry**.  A second failure ends the attempt as `llm_error` as before.

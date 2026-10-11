@@ -202,7 +202,9 @@ forced `tool_choice`, `strict=True`, and `parallel_tool_calls=False`. Some
 OpenAI-*compatible* gateways (Kimi/Moonshot, some Qwen or DeepSeek deployments)
 reject those flags with an HTTP 400. SAIDEX notices such a rejection and
 re-binds the tool **once** with relaxed flags — no configuration needed, and no
-validation retry consumed. You can also state the flags up front:
+validation retry consumed. With `strict=True` the schema is sent as a real strict
+tool (optional fields arrive as `null`); `dict[...]` and `MISSING`-default fields
+fall back to a non-strict tool with a warning. You can also state the flags up front:
 
 ```python
 from saidex import ToolCallConfig, extract_data_from_text
