@@ -10,8 +10,10 @@
 pip install saidex
 ```
 
-If you use OpenAI models, add the optional extra for automatic rate-limit
-handling:
+With langchain-core ≥ 1.6, rate limits, timeouts and 5xx errors of any provider
+integration that raises the standard model exceptions are handled automatically. For
+older langchain-core versions, or to catch raw OpenAI SDK errors, add the optional
+extra:
 
 ```bash
 pip install "saidex[openai]"
@@ -24,7 +26,7 @@ pip install "saidex[openai]"
 | `pydantic` | `>= 2.7.4` | Schema validation |
 | `langchain-core` | `>= 0.3.69` | Message types + tool calling |
 | `json-repair` | `>= 0.60.1` | Repairs malformed JSON from the model |
-| `openai` *(optional)* | `>= 1.0` | Rate-limit retry handling |
+| `openai` *(optional)* | `>= 1.0` | Rate-limit retry handling (older langchain-core / raw SDK errors) |
 | `langgraph` *(optional)* | `>= 1.1.5` | `SaidexToolNode` for LangGraph agents |
 
 Any LangChain-compatible chat model that supports tool calling works:

@@ -41,8 +41,8 @@ When `failure_reason` is `llm_error`, `stats.llm_error_kind` is a
 | Kind | Typical cause | Retried by default? |
 | --- | --- | --- |
 | `rate_limit` | HTTP 429 | yes (rate-limit backoff) |
-| `timeout` | request timed out | yes |
-| `connection` | provider unreachable | yes |
+| `timeout` | request timed out | yes (provider/SDK exception types; see Retry & Fallback) |
+| `connection` | provider unreachable | yes (provider/SDK exception types; see Retry & Fallback) |
 | `server_error` | HTTP 5xx | yes |
 | `authentication` | HTTP 401, bad API key | no |
 | `permission_denied` | HTTP 403 | no |

@@ -154,7 +154,10 @@ and `ModelAPIError` (HTTP 5xx), plus `openai.APIConnectionError`,
 
 !!! note "Server errors are retried by default"
     Server errors (HTTP 5xx) are retried by default; versions up to 0.7.x did not
-    retry them.
+    retry them. These retries stack with the SDK's own retries (for example
+    `ChatOpenAI(max_retries=2)`): a persistent 500 can take about 12 HTTP calls before
+    the fallback model runs. A custom `RetryConfig` (without server errors, or with
+    fewer retries) gives faster failover.
 
 A custom `RetryConfig(retryable_exceptions=...)` keeps full control over what is
 retried. To react to a failed run in your own handlers, use

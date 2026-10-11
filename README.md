@@ -52,7 +52,9 @@ Extract validated [Pydantic](https://docs.pydantic.dev/) models from LLM respons
 pip install saidex
 ```
 
-If you use OpenAI models and want automatic rate-limit handling:
+With langchain-core ≥ 1.6, rate limits, timeouts and 5xx errors of any provider
+integration that raises the standard model exceptions are handled automatically. For
+older langchain-core versions, or to catch raw OpenAI SDK errors, add the OpenAI extra:
 
 ```bash
 pip install "saidex[openai]"
@@ -1001,8 +1003,8 @@ Presets: `ToolCallConfig.OPENAI` (the defaults above) and
 | --- | --- | --- | --- |
 | `max_retries` | `int` | `3` | Max transient-error retries |
 | `retry_delays` | `list[float]` | `[1.0, 2.0, 4.0]` | Per-attempt delays in seconds |
-| `retryable_exceptions` | `tuple[type[Exception], ...]` | httpx + openai errors | Exceptions that trigger a transient retry |
-| `rate_limit_exceptions` | `tuple[type[Exception], ...]` | `openai.RateLimitError` | Exceptions that trigger rate-limit retry |
+| `retryable_exceptions` | `tuple[type[Exception], ...]` | langchain-core standard model errors (incl. 5xx), openai and httpx/httpx2 errors | Exceptions that trigger a transient retry |
+| `rate_limit_exceptions` | `tuple[type[Exception], ...]` | `ModelRateLimitError`, `openai.RateLimitError` | Exceptions that trigger rate-limit retry |
 | `rate_limit_retry_interval` | `float` | `10.0` | Seconds between rate-limit retries |
 | `rate_limit_max_duration_seconds` | `float` | `900.0` | Maximum total wait for rate-limit retries |
 
