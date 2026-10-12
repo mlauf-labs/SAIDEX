@@ -44,7 +44,12 @@ from ._reasoning import (
     _resolve_reasoning_levels,
     _with_reasoning_effort,
 )
-from .grounding import _collect_field_checks
+from .grounding import (
+    _collect_field_checks,
+    _GroundingSources,
+    _resolve_grounding_sources,
+    _validate_source_names,
+)
 from .models import (
     EXTERNAL_VALIDATOR_PATH,
     ON_EXHAUSTED_PATH,
@@ -509,7 +514,7 @@ async def _check_candidate(
     *,
     attempt: int,
     context: ValidatorContext,
-    source_text: str | None,
+    grounding: _GroundingSources,
     validator: Validator[MODEL_T] | None,
     schema_name: str,
 ) -> _CandidateCheck:
@@ -524,7 +529,7 @@ async def _check_candidate(
         instance: The instance that already passed Pydantic validation.
         attempt: Attempt index stamped onto every issue.
         context: Attempt context, handed to :class:`WithContext` validators.
-        source_text: Text to ground against; falsy disables grounding.
+        grounding: The run's resolved grounding sources (default and named).
         validator: The caller's external validator, or ``None``.
         schema_name: Stamped onto each issue.
 
@@ -532,7 +537,7 @@ async def _check_candidate(
         A :class:`_CandidateCheck`; ``feedback is None`` means accepted.
     """
     grounding_issues, grounding_rejecting, grounding_feedback = _collect_field_checks(
-        instance, source_text, schema_name
+        instance, grounding.default, schema_name, sources=grounding.named
     )
     issues = [replace(i, attempt=attempt) for i in grounding_issues]
     if grounding_feedback is not None:
@@ -649,6 +654,7 @@ async def extract_data(
     on_exhausted: OnExhausted[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
     # Private: suppresses observer dispatch for the internal container
     # sub-extraction inside extract_data_list. Not part of the public API.
     _notify_observers: bool = True,
@@ -752,6 +758,16 @@ async def extract_data(
             ``reasoning_effort`` (e.g. OpenAI-compatible chat models).
         fallback_reasoning_escalation: Same as *reasoning_escalation*, for the
             fallback model.  The fallback never inherits the primary's levels.
+        grounding_source: What ``Grounded()`` fields are checked against.
+            ``None`` (default) uses the human-turn text of *messages*.  A string
+            replaces it — e.g. only the document inside a prompt that also
+            carries reference data, so a value found only in that data is
+            rejected.  A mapping supplies named sources for
+            ``Grounded(source="name")``; its ``"default"`` key (else the
+            human-turn text) serves checks without a name.  An explicit source
+            is used even when empty, so no value can be grounded in it.  Raises
+            ``TypeError`` for a wrong type and ``ValueError`` when the schema
+            names a source the mapping lacks, both before any model call.
 
     Returns:
         A tuple of ``(model_instance, stats)``:
@@ -787,9 +803,11 @@ async def extract_data(
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
 
     original_messages = list(messages)
-    # Source text for field grounding — derived transiently from the human turn,
-    # independent of ``capture_source_text`` (which controls retention in stats).
-    grounding_source = _source_text_from_messages(original_messages)
+    # Grounding evidence is derived transiently, independent of
+    # ``capture_source_text`` (which controls retention in stats).
+    human_text = _source_text_from_messages(original_messages)
+    grounding = _resolve_grounding_sources(grounding_source, human_text)
+    _validate_source_names(schema, grounding)
 
     logger.debug(
         "Starting structured output extraction for %s (mode=%s)",
@@ -803,9 +821,7 @@ async def extract_data(
         else await _ChainRun.start(
             callbacks,
             name="saidex.extract_data",
-            inputs=_trace_inputs(
-                schema.__name__, mode.value, grounding_source, capture_source_text
-            ),
+            inputs=_trace_inputs(schema.__name__, mode.value, human_text, capture_source_text),
         )
     )
     owns_trace = _trace is None
@@ -863,7 +879,7 @@ async def extract_data(
             mode=mode,
             tool_config=tool_config,
             validator=validator,
-            source_text=grounding_source,
+            grounding=grounding,
             is_last_model=fallback_llm_model is None or max_fallback_retries <= 0,
             reasoning_levels=primary_levels,
         )
@@ -910,7 +926,7 @@ async def extract_data(
                 mode=mode,
                 tool_config=tool_config,
                 validator=validator,
-                source_text=grounding_source,
+                grounding=grounding,
                 is_last_model=True,
                 reasoning_levels=fallback_levels,
             )
@@ -1565,6 +1581,7 @@ async def run_extractor_agent(
     on_exhausted: OnExhausted[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Low-level agent loop that accepts a full message list.
 
@@ -1593,6 +1610,8 @@ async def run_extractor_agent(
             model.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`extract_data`.
+        grounding_source: What ``Grounded()`` fields of the final answer are
+            checked against — see :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -1610,7 +1629,9 @@ async def run_extractor_agent(
     )
     effective_retry_config = retry_config or DEFAULT_RETRY_CONFIG
     original_messages = list(messages)
-    grounding_source = _source_text_from_messages(original_messages)
+    human_text = _source_text_from_messages(original_messages)
+    grounding = _resolve_grounding_sources(grounding_source, human_text)
+    _validate_source_names(schema, grounding)
 
     trace = await _ChainRun.start(
         callbacks,
@@ -1618,7 +1639,7 @@ async def run_extractor_agent(
         inputs=_trace_inputs(
             schema.__name__,
             final_answer_mode.value,
-            grounding_source,
+            human_text,
             capture_source_text,
             tools=[t.name for t in tools],
         ),
@@ -1679,7 +1700,7 @@ async def run_extractor_agent(
             model_label="primary",
             retry_config=effective_retry_config,
             validator=validator,
-            source_text=grounding_source,
+            grounding=grounding,
             reasoning_levels=primary_levels,
             is_last_model=fallback_llm_model is None,
         )
@@ -1714,7 +1735,7 @@ async def run_extractor_agent(
                 model_label="fallback",
                 retry_config=effective_retry_config,
                 validator=validator,
-                source_text=grounding_source,
+                grounding=grounding,
                 reasoning_levels=fallback_levels,
                 is_last_model=True,
             )
@@ -1780,7 +1801,7 @@ async def run_extractor_agent(
 def _trace_inputs(
     schema_name: str,
     mode_value: str,
-    grounding_source: str,
+    source_text: str,
     capture_source_text: bool,
     **extra: Any,
 ) -> dict[str, Any]:
@@ -1792,7 +1813,7 @@ def _trace_inputs(
     """
     inputs: dict[str, Any] = {"schema": schema_name, "mode": mode_value, **extra}
     if capture_source_text:
-        inputs["text"] = grounding_source
+        inputs["text"] = source_text
     return inputs
 
 
@@ -1845,8 +1866,8 @@ async def _run_extractor_agent_with_model(
     model_label: str,
     retry_config: RetryConfig,
     is_last_model: bool,
+    grounding: _GroundingSources,
     validator: Validator[MODEL_T] | None = None,
-    source_text: str | None = None,
     reasoning_levels: tuple[str, ...] = (),
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Execute the agent loop with one model; return (instance, stats)."""
@@ -1986,7 +2007,7 @@ async def _run_extractor_agent_with_model(
                         is_last_model=is_last_model,
                         reasoning_effort=current_level,
                     ),
-                    source_text=source_text,
+                    grounding=grounding,
                     validator=validator,
                     schema_name=schema.__name__,
                 )
@@ -2133,7 +2154,7 @@ async def _run_extractor_agent_with_model(
                             is_last_model=is_last_model,
                             reasoning_effort=current_level,
                         ),
-                        source_text=source_text,
+                        grounding=grounding,
                         validator=validator,
                         schema_name=schema.__name__,
                     )
@@ -2543,9 +2564,9 @@ async def _try_with_model(
     retry_config: RetryConfig,
     mode: ExtractionMode,
     is_last_model: bool,
+    grounding: _GroundingSources,
     tool_config: ToolCallConfig | None = None,
     validator: Validator[MODEL_T] | None = None,
-    source_text: str | None = None,
     reasoning_levels: tuple[str, ...] = (),
 ) -> _ModelAttempt[MODEL_T]:
     """Attempt structured extraction with one model, with validation retries.
@@ -2820,7 +2841,7 @@ async def _try_with_model(
                 is_last_model=is_last_model,
                 reasoning_effort=level,
             ),
-            source_text=source_text,
+            grounding=grounding,
             validator=validator,
             schema_name=schema.__name__,
         )
