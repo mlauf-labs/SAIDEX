@@ -1544,7 +1544,8 @@ side.</p>
 metrics (<code>success</code>, <code>salvaged</code>, retries, <code>problem_fields</code>, <code>has_last_candidate</code>, <code>llm_error_kind</code>, <code>reasoning_effort</code>, …) — the same values a
 tracer already sees inside the LLM generations. The span's <strong>input</strong>
 contains only the schema name and mode by default; the raw source text is
-included <strong>only</strong> when you opt in with <code>capture_source_text=True</code>. Enable
+included <strong>only</strong> when you opt in with <code>capture_source_text=True</code> (an explicit
+<code>grounding_source</code> is added under the same flag). Enable
 that flag deliberately when a tracing handler is attached — it exports the
 full input text to the tracing backend.</p>
 </div>

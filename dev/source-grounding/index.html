@@ -1176,6 +1176,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#grounding-against-part-of-the-prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grounding against part of the prompt
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grounding against part of the prompt">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#named-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Named sources
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#build-your-own-check-the-fieldcheck-pattern" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1410,6 +1438,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#grounding-against-part-of-the-prompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grounding against part of the prompt
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grounding against part of the prompt">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#named-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Named sources
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#build-your-own-check-the-fieldcheck-pattern" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1471,16 +1527,18 @@
 <p>→ <a href="../">Documentation index</a></p>
 <blockquote>
 <p><strong>Runnable example:</strong> <a href="../examples/13_source_grounding.py"><code>examples/13_source_grounding.py</code></a>
-<strong>Tests:</strong> <a href="../tests/test_grounding.py"><code>tests/test_grounding.py</code></a>, <a href="../tests/test_grounding_integration.py"><code>tests/test_grounding_integration.py</code></a></p>
+<strong>Tests:</strong> <a href="../tests/test_grounding.py"><code>tests/test_grounding.py</code></a>, <a href="../tests/test_grounding_integration.py"><code>tests/test_grounding_integration.py</code></a>, <a href="../tests/test_grounding_source.py"><code>tests/test_grounding_source.py</code></a></p>
 </blockquote>
 <p>LLMs sometimes invent plausible-looking values — a vendor name, an ID, a total —
 that are <strong>not present</strong> in the document. Mark a field as <strong>grounded</strong> and SAIDEX
 verifies, after Pydantic validation, that the extracted value actually appears in
 the source text. A value it cannot find is rejected and the <strong>existing retry
 loop</strong> asks the model to correct it, exactly like a Pydantic failure.</p>
-<p>Grounding needs no new function arguments: it is driven entirely by markers in
-your schema. The source text is taken transiently from the human-turn message(s)
-of the run (it is <strong>not</strong> retained — that is what <code>capture_source_text</code> controls).</p>
+<p>Grounding is driven by markers in your schema. By default the source text is
+taken transiently from the human-turn message(s) of the run (it is <strong>not</strong>
+retained — that is what <code>capture_source_text</code> controls). When the user message
+carries more than the document, pass <code>grounding_source=</code> to choose what counts
+as evidence — see <a href="#grounding-against-part-of-the-prompt">Grounding against part of the prompt</a>.</p>
 <hr />
 <h2 id="two-ways-to-mark-a-field">Two ways to mark a field<a class="headerlink" href="#two-ways-to-mark-a-field" title="Permanent link">&para;</a></h2>
 <p>Both surfaces are equivalent — they attach the same <code>Grounded</code> check to the
@@ -1644,35 +1702,143 @@ field, but prefer <code>on_mismatch="flag"</code> (advisory) over <code>"retry"<
 grounding very short boolean or number-word fields.</p>
 </div>
 <hr />
+<h2 id="grounding-against-part-of-the-prompt">Grounding against part of the prompt<a class="headerlink" href="#grounding-against-part-of-the-prompt" title="Permanent link">&para;</a></h2>
+<p>A common prompt layout puts <strong>reference data and the source document into the
+same user message</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Customer data (JSON): {&quot;orders&quot;: [{&quot;order_number&quot;: 32008}, {&quot;order_number&quot;: 28870}]}
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>&lt;mail&gt;
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>Subject: Monitor broken
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>My monitor from order 32008 has dead pixels.
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>&lt;/mail&gt;
+</code></pre></div>
+<p>With the default source (the whole human message), a hallucinated
+<code>order_number="28870"</code> <strong>passes</strong>: it appears in the customer data, just not in
+the mail. Pass <code>grounding_source</code> to check against the mail only:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">class</span> <span class="nc">Concern</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>    <span class="n">order_number</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">Grounded</span><span class="p">()]</span>  <span class="c1"># must be stated in the mail</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="n">result</span><span class="p">,</span> <span class="n">stats</span> <span class="o">=</span> <span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">Concern</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">grounding_source</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">mail</span><span class="o">.</span><span class="n">subject</span><span class="si">}</span><span class="se">\n</span><span class="si">{</span><span class="n">mail</span><span class="o">.</span><span class="n">body</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>  <span class="c1"># only the mail counts as evidence</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="p">)</span>
+</code></pre></div>
+<p>Now <code>28870</code> is rejected and fed back to the model, while <code>32008</code> passes. Every
+entry point accepts <code>grounding_source</code> — <code>extract_data*</code>, <code>extract_data_list*</code>,
+<code>extract_data_with_tools</code>, <code>run_extractor_agent</code> and all <code>*_sync</code> wrappers.</p>
+<h3 id="named-sources">Named sources<a class="headerlink" href="#named-sources" title="Permanent link">&para;</a></h3>
+<p>When different fields need different evidence, pass a mapping and name the
+source on the field:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="k">class</span> <span class="nc">Concern</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    <span class="n">order_number</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">Grounded</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="s2">&quot;mail&quot;</span><span class="p">)]</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    <span class="n">product_name</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">Grounded</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="s2">&quot;catalog&quot;</span><span class="p">)]</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="n">note</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">Grounded</span><span class="p">()]</span>          <span class="c1"># default source</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="k">await</span> <span class="n">extract_data_from_text</span><span class="p">(</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="n">llm</span><span class="p">,</span> <span class="n">Concern</span><span class="p">,</span> <span class="n">prompt</span><span class="p">,</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="n">grounding_source</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;mail&quot;</span><span class="p">:</span> <span class="n">mail_text</span><span class="p">,</span> <span class="s2">&quot;catalog&quot;</span><span class="p">:</span> <span class="n">catalog_text</span><span class="p">},</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="p">)</span>
+</code></pre></div>
+<p><code>GroundedField(source="mail")</code> works the same way. The default source — used by
+<code>Grounded()</code> without a name and exposed as <code>ctx.source_text</code> — is resolved like
+this:</p>
+<table>
+<thead>
+<tr>
+<th><code>grounding_source</code></th>
+<th>Default source</th>
+<th>Named sources</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>None</code> (default)</td>
+<td>human-turn text</td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>"…"</code></td>
+<td>that string</td>
+<td>none</td>
+</tr>
+<tr>
+<td><code>{"mail": …, …}</code></td>
+<td>the <code>"default"</code> key if present, else the human-turn text</td>
+<td>every key</td>
+</tr>
+</tbody>
+</table>
+<p>A rejection names the source, e.g. <em>"… which does not appear in the source text
+'mail'"</em>, so the model understands why a value it can see in the prompt is not
+accepted.</p>
+<div class="admonition warning">
+<p class="admonition-title">Configuration errors fail fast</p>
+<p>A field that names a source the mapping does not provide raises a
+<code>ValueError</code> <strong>before any model call</strong> — also when <code>grounding_source</code> is a
+plain string or omitted, because named sources only resolve against a
+mapping. A schema with <code>Grounded(source="mail")</code> never silently falls back
+to the whole prompt. A <code>grounding_source</code> that is not a <code>str</code>, a mapping of
+<code>str</code> to <code>str</code>, or <code>None</code> raises a <code>TypeError</code>.</p>
+</div>
+<div class="admonition note">
+<p class="admonition-title">Empty sources</p>
+<p>An explicit source is used as given, <strong>even when empty</strong>: with
+<code>grounding_source=""</code> or <code>{"mail": ""}</code> (an empty mail body) no value can be
+grounded, so every non-<code>None</code> grounded value is rejected and the model is
+pushed towards <code>None</code>. Without <code>grounding_source</code>, an empty human turn (e.g.
+image-only input) still skips grounding as before.</p>
+</div>
+<p><strong>Privacy:</strong> like the human-turn text, <code>grounding_source</code> is added to the
+chain-run trace inputs (key <code>"grounding_source"</code>) only when
+<code>capture_source_text=True</code>. <code>stats.source_text</code> and <code>event.source_text</code> keep
+holding the human-turn text.</p>
+<hr />
 <h2 id="build-your-own-check-the-fieldcheck-pattern">Build your own check — the <code>FieldCheck</code> pattern<a class="headerlink" href="#build-your-own-check-the-fieldcheck-pattern" title="Permanent link">&para;</a></h2>
 <p>Grounding is the first built-in check on a reusable mechanism. Any
 <code>FieldCheck</code> subclass can be attached the same two ways — as an Annotated marker,
 or via the <code>field_check</code> helper — and SAIDEX runs it over the validated instance
 with an <code>ExtractionContext</code> (source text, the containing instance, the field
 path).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">FieldCheck</span><span class="p">,</span> <span class="n">ExtractionContext</span><span class="p">,</span> <span class="n">field_check</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="k">class</span> <span class="nc">InCatalogue</span><span class="p">(</span><span class="n">FieldCheck</span><span class="p">):</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="k">def</span> <span class="nf">check</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">ExtractionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>        <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">KNOWN_SKUS</span><span class="p">:</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not a known SKU.&quot;</span>
-<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>        <span class="k">return</span> <span class="kc">None</span>
-<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="k">class</span> <span class="nc">Order</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
-<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>    <span class="n">sku</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">InCatalogue</span><span class="p">()]</span>            <span class="c1"># marker form</span>
-<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    <span class="n">alt_sku</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">field_check</span><span class="p">(</span><span class="n">InCatalogue</span><span class="p">())</span>     <span class="c1"># helper form</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">Annotated</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="kn">from</span> <span class="nn">pydantic</span> <span class="kn">import</span> <span class="n">BaseModel</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="kn">from</span> <span class="nn">saidex</span> <span class="kn">import</span> <span class="n">FieldCheck</span><span class="p">,</span> <span class="n">ExtractionContext</span><span class="p">,</span> <span class="n">field_check</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">class</span> <span class="nc">InCatalogue</span><span class="p">(</span><span class="n">FieldCheck</span><span class="p">):</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    <span class="k">def</span> <span class="nf">check</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">ExtractionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>        <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">KNOWN_SKUS</span><span class="p">:</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not a known SKU.&quot;</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>        <span class="k">return</span> <span class="kc">None</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="k">class</span> <span class="nc">Order</span><span class="p">(</span><span class="n">BaseModel</span><span class="p">):</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    <span class="n">sku</span><span class="p">:</span> <span class="n">Annotated</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">InCatalogue</span><span class="p">()]</span>            <span class="c1"># marker form</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="n">alt_sku</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">field_check</span><span class="p">(</span><span class="n">InCatalogue</span><span class="p">())</span>     <span class="c1"># helper form</span>
 </code></pre></div>
 <p>A check returns <code>None</code> to accept or an LLM-friendly message to reject; rejections
 re-enter the same retry loop as grounding. Return <code>None</code> when <code>ctx.source_text</code>
-is missing so the check is skipped during plain model construction.</p>
+is <code>None</code> so the check is skipped during plain model construction.</p>
+<p>Named sources passed via <code>grounding_source={...}</code> are available as
+<code>ctx.sources</code> (a read-only mapping). Give your check a <code>source: str</code> attribute to
+pick one — the engine then also validates the name before the first model call,
+exactly as for <code>Grounded(source=...)</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span> <span class="nn">dataclasses</span> <span class="kn">import</span> <span class="n">dataclass</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="k">class</span> <span class="nc">MentionedIn</span><span class="p">(</span><span class="n">FieldCheck</span><span class="p">):</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="n">source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;mail&quot;</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>    <span class="k">def</span> <span class="nf">check</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">,</span> <span class="n">ctx</span><span class="p">:</span> <span class="n">ExtractionContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>        <span class="n">text</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">.</span><span class="n">sources</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">source</span><span class="p">)</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a>        <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">text</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a>            <span class="k">return</span> <span class="kc">None</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>        <span class="k">return</span> <span class="kc">None</span> <span class="k">if</span> <span class="nb">str</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="ow">in</span> <span class="n">text</span> <span class="k">else</span> <span class="sa">f</span><span class="s2">&quot;&#39;</span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s2">&#39; is not in the </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">source</span><span class="si">}</span><span class="s2">.&quot;</span>
+</code></pre></div>
 <hr />
 <h2 id="availability">Availability<a class="headerlink" href="#availability" title="Permanent link">&para;</a></h2>
 <p>Grounding works across every extraction entry point and both extraction modes
 (<code>TOOL_CALLING</code> and <code>JSON</code>), including the batch variants (checked <strong>per item</strong>)
 and the agent loop (checked on the <strong>final answer</strong>), plus all the <code>*_sync</code>
-wrappers. There are no new parameters to pass — just mark the fields.</p>
+wrappers. Marking the fields is enough; <code>grounding_source=</code> is only needed to
+ground against part of the prompt or against named sources.</p>
 <hr />
 <h2 id="out-of-scope-tracked-separately">Out of scope (tracked separately)<a class="headerlink" href="#out-of-scope-tracked-separately" title="Permanent link">&para;</a></h2>
 <p>Phone-number surface forms are tracked as a follow-up issue on the project

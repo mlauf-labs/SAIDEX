@@ -1770,7 +1770,7 @@ their own spans:</p>
 result and run metrics (<code>success</code>, <code>failure_reason</code>, <code>llm_error_kind</code>, <code>salvaged</code>, <code>reasoning_effort</code>, …) as its outputs — the same data the handler already sees
 inside the LLM generations, packaged once per extraction. The raw source text
 is <strong>not</strong> part of the trace unless you opt in with <code>capture_source_text=True</code>,
-which then also includes it in the span's inputs. If your handler exports to an
+which then also includes it — and an explicit <code>grounding_source</code> — in the span's inputs. If your handler exports to an
 external backend, enable that flag deliberately. (The <code>collect_stats</code> sink
 below stays PII-light regardless — it never stores messages, results, or
 source text.)</p>
