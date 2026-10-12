@@ -31,7 +31,7 @@ result, stats = await extract_data(
 result and run metrics (`success`, `failure_reason`, `llm_error_kind`, `salvaged`, `reasoning_effort`, …) as its outputs — the same data the handler already sees
 inside the LLM generations, packaged once per extraction. The raw source text
 is **not** part of the trace unless you opt in with `capture_source_text=True`,
-which then also includes it in the span's inputs. If your handler exports to an
+which then also includes it — and an explicit `grounding_source` — in the span's inputs. If your handler exports to an
 external backend, enable that flag deliberately. (The `collect_stats` sink
 below stays PII-light regardless — it never stores messages, results, or
 source text.)

@@ -170,6 +170,7 @@ search = Tool(
 | `max_iterations` | `int` | `12` | Max LLM invocations per model attempt |
 | `max_validation_retries` | `int` | `3` | Max final answers that may fail validation |
 | `retry_config` | `RetryConfig \| None` | `DEFAULT_RETRY_CONFIG` | Network retry settings |
+| `grounding_source` | `str \| Mapping[str, str] \| None` | `None` | What `Grounded()` fields of the final answer are checked against — see [Source Grounding](source-grounding.md#grounding-against-part-of-the-prompt) |
 
 **Returns:** `tuple[ModelT | None, ExtractorRunStats]`
 
