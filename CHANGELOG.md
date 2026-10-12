@@ -24,6 +24,99 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.2.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.2.0
 [0.1.0]: https://github.com/mlauf-labs/saidex/releases/tag/v0.1.0
 
+## v0.8.0 (2026-10-12)
+
+### BREAKING CHANGE
+
+- SaidexToolNode.invoke() now executes tools on the stock
+ToolNode sync path instead of bridging the whole node to ainvoke(). Tools
+that only implement a coroutine (e.g. many MCP adapter tools) raise
+NotImplementedError under graph.invoke(), exactly as with langgraph's
+ToolNode; run such graphs with ainvoke().
+- Python 3.10 is no longer supported; the minimum version is now 3.11.
+
+### Feat
+
+- **grounding**: include grounding_source in trace inputs when capture_source_text is on
+- **grounding**: forward grounding_source from the text, batch, tool-loop and sync entry points
+- **grounding**: add grounding_source to choose what Grounded() checks against
+- **grounding**: resolve grounding sources and reject unknown source names
+- **grounding**: add Grounded(source=...) and ExtractionContext.sources
+- **langgraph**: let interrupt() in tool validators reach LangGraph
+- **langgraph**: sanitize tool-call content blocks and raw OpenAI tool calls
+- **langgraph**: execute tools on the stock sync path in SaidexToolNode.invoke
+- **langgraph**: give the correction model the tool description and conversation context
+- **langgraph**: send calls missing required fields to the agent instead of the correction model
+- **langgraph**: add per-tool validators with ToolCallValidatorContext
+- **langgraph**: add an on_unresolved hook to salvage or answer invalid tool calls
+- **langgraph**: enable tool-call correction via correction_model and add on_unresolved
+- **agent-loop**: escalate reasoning effort across final-answer attempts
+- **extractor**: escalate reasoning effort across retries
+- **reasoning**: add reasoning-effort level resolution helpers
+- **extractor**: record the provider-independent kind of llm_error in stats
+- **retry**: follow langchain-core's retryable model errors in the default retries
+- **retry**: add ModelErrorKind and classify_model_error
+- declare Python 3.14 support
+- **analytics**: count salvaged runs separately from clean successes
+- **agent-loop**: support on_exhausted in the agent loop and all sync wrappers
+- **batch**: on_exhausted for list extraction and issue_item_index helper
+- **extractor**: add on_exhausted hook to salvage a result after all retries
+- **observability**: surface last_candidate on events, flag it in traces, keep it out of stats sinks
+- **agent-loop**: expose the last schema-valid candidate on failed agent runs
+- **extractor**: expose the last schema-valid candidate on failed extractions
+- **agent-loop**: provide ValidatorContext to context-aware validators
+- **extractor**: pass an attempt context to validators wrapped with with_context
+- **models**: add FailureReason StrEnum for stats.failure_reason
+- **extractor**: accept lists of error strings from external validators
+- **batch**: report external-validator findings per list item
+- **extractor**: accept structured ValidationIssue results from external validators
+- **models**: add ValidationIssue for structured external-validator findings
+
+### Fix
+
+- **grounding**: find named sources behind type aliases and TypedDicts
+- **grounding**: validate grounding_source in batch extraction before tracing
+- **langgraph**: store corrected tool-call args in JSON form
+- **langgraph**: run SaidexToolNode.invoke inside a running event loop
+- **extractor**: keep URLs and container-wrapped arrays intact when repairing JSON replies
+- **extractor**: resolve top-level JSON arrays against the target schema
+- **extractor**: scan only the JSON region for comments and try the plain parse first
+- **extractor**: ask for a single object when a JSON reply contains several
+- **extractor**: strip JSON comments before repairing malformed model output
+- **extractor**: do not mistake a rejected reasoning_effort for a strict-schema rejection
+- **extractor**: enforce strict object rules on nested models for older langchain-core
+- **extractor**: relax rejected strict schemas and widen strict fallback
+- **extractor**: actually apply strict tool schemas
+- **extractor**: report a rejected reasoning_effort kwarg as invalid_request
+- **deps**: raise dependency floors to tested minimums
+- **extractor**: hand on_exhausted a copy and re-validate from field values
+- **models**: carry salvaged through ExtractorRunStats.__add__
+- **extractor**: strip computed fields at every depth and type-check list salvage items
+- **models**: keep extraction stats hashable and out of repr with last_candidate
+- **extractor**: make WithContext contravariant so shared context validators type-check
+- **agent-loop**: stop once a final answer is rejected with no retries left
+- **observability**: emit failure_reason as a plain string in chain-run outputs
+- **extractor**: apply one primary/fallback failure-reason rule everywhere
+
+### Refactor
+
+- **langgraph**: tidy v2 docstrings, field order and edge guards
+- **langgraph**: simplify sibling cancellation in concurrent corrections
+- **langgraph**: move the tool-call pipeline into a framework-agnostic core
+- **extractor**: label the relaxed-rebind llm_error_kind argument
+- **agent-loop**: merge the duplicate fallback success branches
+- **observability**: narrow StatsSink candidate drop with isinstance instead of getattr
+- **extractor**: track which candidate-check issues reject the instance
+- **extractor**: share one candidate-check pipeline across all final-answer paths
+- apply ruff py311 modernisation
+
+### Perf
+
+- **langgraph**: correct invalid tool calls concurrently
+
+
+- require Python 3.11 or newer
+
 ## v0.7.0 (2026-07-14)
 
 ### BREAKING CHANGE
