@@ -233,8 +233,14 @@ uv run pytest --cov --cov-report=term-missing
 Keep it current whenever:
 
 - A new doc page is added or removed from `docs/` → check `excludeFiles` if it should be hidden from AI tools.
-- A new release is published → add the version that was just *replaced as latest* to `previousVersions`. The new current is indexed automatically from `main`. Example: when releasing `v0.3.0`, add `{"tag": "v0.2.0", "title": "version 0.2.0"}` if not already listed.
+- A new release is about to be cut → add the version that is about to be *replaced as latest* to `previousVersions` **on `develop`, before creating the `release/X.Y.Z` branch** (through a normal `chore/…` PR). Example: before releasing `v0.3.0`, add `{"tag": "v0.2.0", "title": "version 0.2.0"}` if not already listed.
 - A new usage rule or important constraint for library users is identified → add it to `rules`.
+
+Context7 indexes the repository's **default branch, `develop`** — not `main`:
+
+- The "latest" docs on Context7 follow `develop`, so they can run ahead of the version on PyPI.
+- Changes to `context7.json` (rules, `previousVersions`, exclusions) take effect only once they are on `develop`. A change made on a `release/*` branch reaches Context7 only after the back-merge of `main` into `develop`.
+- After a release and its back-merge, refresh the library on <https://context7.com/mlauf-labs/saidex> and check that the previous version appears in its version list.
 
 ---
 
@@ -260,10 +266,11 @@ Before opening or marking a PR as ready:
 ## Release process (maintainers only)
 
 > **Cutting a release? Read [RELEASING.md](RELEASING.md) first.** It is the
-> authoritative, step-by-step checklist. The short version: sync `develop` →
-> create a `release/X.Y.Z` branch → `uv run cz bump` → PR into `main` and **merge
-> with a merge commit (never squash)** → publish the GitHub Release (this fires
-> the PyPI + docs workflows) → back-merge `main` into `develop`.
+> authoritative, step-by-step checklist. The short version: list the outgoing
+> version in `context7.json` on `develop` → sync `develop` → create a
+> `release/X.Y.Z` branch → `uv run cz bump` → PR into `main` and **merge with a
+> merge commit (never squash)** → publish the GitHub Release (this fires the
+> PyPI and docs workflows) → back-merge `main` into `develop` → refresh Context7.
 
 Releases are handled by the `release/*` branch flow and automated with Commitizen. See [RELEASING.md](RELEASING.md) and [docs/repo-setup.md](docs/repo-setup.md) for the full checklist.
 
