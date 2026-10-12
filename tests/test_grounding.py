@@ -292,3 +292,117 @@ def test_collect_field_checks_separates_rejecting_issues() -> None:
     assert (issues, feedback) == collect_field_check_issues(
         Mixed(strict_vendor="Globex", soft_vendor="Initech"), "We bought from ACME", "Mixed"
     )
+
+
+# ---------------------------------------------------------------------------
+# Named sources and explicit (possibly empty) sources — issue #91
+# ---------------------------------------------------------------------------
+
+
+def _named_ctx(sources: dict[str, str], default: str | None = None) -> ExtractionContext:
+    return ExtractionContext(
+        source_text=default, model=None, field_name="f", field_path="f", sources=sources
+    )
+
+
+class TestNamedSources:
+    def test_context_sources_default_to_empty(self) -> None:
+        assert dict(_ctx("text").sources) == {}
+
+    def test_named_check_uses_its_source(self) -> None:
+        ctx = _named_ctx({"mail": "order 32008"}, default="orders 32008 and 28870")
+        assert Grounded(source="mail").check("32008", ctx) is None
+        assert Grounded(source="mail").check("28870", ctx) is not None
+
+    def test_unnamed_check_uses_default_source(self) -> None:
+        ctx = _named_ctx({"mail": "order 32008"}, default="orders 32008 and 28870")
+        assert Grounded().check("28870", ctx) is None
+
+    def test_named_source_missing_from_context_skips(self) -> None:
+        assert Grounded(source="mail").check("28870", _named_ctx({}, default="x")) is None
+
+    def test_error_names_the_source(self) -> None:
+        msg = Grounded(source="mail").check("28870", _named_ctx({"mail": "order 32008"}))
+        assert msg is not None
+        assert "the source text 'mail'" in msg
+
+    def test_unnamed_error_message_unchanged(self) -> None:
+        msg = Grounded().check("Globex", _ctx("ACME"))
+        assert msg == (
+            "Field 'f' has value 'Globex', which does not appear in the source text. "
+            "Only use values that are present in the text."
+        )
+
+    def test_positional_mode_still_works(self) -> None:
+        check = Grounded("exact")
+        assert check.mode == "exact"
+        assert check.source is None
+
+    def test_field_helper_forwards_source(self) -> None:
+        class Doc(BaseModel):
+            v: str = GroundedField(source="mail")
+
+        check = _checks(Doc, "v")[0]
+        assert isinstance(check, Grounded)
+        assert check.source == "mail"
+
+
+class TestEmptySource:
+    @pytest.mark.parametrize("mode", ["normalized", "exact", "fuzzy"])
+    def test_empty_default_source_rejects_value_in_every_mode(self, mode: str) -> None:
+        assert Grounded(mode=mode).check("32008", _ctx("")) is not None
+
+    def test_empty_named_source_rejects_value(self) -> None:
+        assert Grounded(source="mail").check("32008", _named_ctx({"mail": ""})) is not None
+
+    def test_empty_source_still_accepts_none(self) -> None:
+        assert Grounded().check(None, _ctx("")) is None
+
+    def test_public_helper_still_skips_empty_source_text(self) -> None:
+        class Doc(BaseModel):
+            vendor: Annotated[str, Grounded()]
+
+        assert collect_field_check_issues(Doc(vendor="Globex"), "", "Doc") == ([], None)
+
+
+class TestEngineWalkWithSources:
+    def test_named_sources_reach_nested_checks(self) -> None:
+        class Line(BaseModel):
+            order: Annotated[str, Grounded(source="mail")]
+
+        class Doc(BaseModel):
+            lines: list[Line]
+
+        issues, feedback = collect_field_check_issues(
+            Doc(lines=[Line(order="32008"), Line(order="28870")]),
+            None,
+            "Doc",
+            sources={"mail": "order 32008"},
+        )
+        assert [i.field_path for i in issues] == ["lines -> 1 -> order"]
+        assert feedback is not None
+
+    def test_named_sources_run_without_a_default_source(self) -> None:
+        class Doc(BaseModel):
+            order: Annotated[str, Grounded(source="mail")]
+            vendor: Annotated[str, Grounded()]
+
+        issues, _ = collect_field_check_issues(
+            Doc(order="28870", vendor="anything"), None, "Doc", sources={"mail": "order 32008"}
+        )
+        # The named check runs; the un-named one has no default source and skips.
+        assert [i.field_path for i in issues] == ["order"]
+
+    def test_custom_check_sees_sources(self) -> None:
+        seen: list[dict[str, str]] = []
+
+        class Spy(FieldCheck):
+            def check(self, value: object, ctx: ExtractionContext) -> str | None:
+                seen.append(dict(ctx.sources))
+                return None
+
+        class Doc(BaseModel):
+            v: Annotated[str, Spy()]
+
+        collect_field_check_issues(Doc(v="x"), "text", "Doc", sources={"mail": "m"})
+        assert seen == [{"mail": "m"}]

@@ -25,9 +25,11 @@ first built-in check on a reusable pattern.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
+from types import MappingProxyType
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
@@ -52,26 +54,32 @@ _MAX_RECEIVED_LEN = 120
 # into rather than checked directly.
 _SCALAR_TYPES = (str, int, float, Decimal, bool, date, datetime)
 
+# Shared read-only "no named sources" value.
+_EMPTY_SOURCES: Mapping[str, str] = MappingProxyType({})
+
 
 @dataclass(frozen=True)
 class ExtractionContext:
     """Run context handed to every :class:`FieldCheck`.
 
     Attributes:
-        source_text: The source text the run was performed on, or ``None`` when
+        source_text: The default source text of the run, or ``None`` when
             unavailable (e.g. manual model construction). Checks must treat a
-            ``None`` source as "skip".
+            ``None`` source as "skip"; an empty string is real (empty) evidence.
         model: The fully validated instance that *directly* contains the field,
             so a check can read sibling fields (e.g. a country code). ``None``
             when a check is run outside the engine walk.
         field_name: Name of the field being checked.
         field_path: Arrow path to the field, e.g. ``"items -> 0 -> vendor"``.
+        sources: Named source texts passed via ``grounding_source={...}``, for
+            checks that ground a field in one named source. Empty by default.
     """
 
     source_text: str | None
     model: BaseModel | None
     field_name: str
     field_path: str
+    sources: Mapping[str, str] = field(default_factory=lambda: _EMPTY_SOURCES)
 
 
 @dataclass(frozen=True)
@@ -119,6 +127,9 @@ class Grounded(FieldCheck):
         threshold: Minimum similarity in ``[0, 1]`` required in ``"fuzzy"`` mode
             (``1.0`` == exact). Ignored in the other modes. The ratio is
             length-sensitive, so short values need a lower threshold.
+        source: Name of the source to check against, as passed via
+            ``grounding_source={"name": text}``. ``None`` (default) checks
+            against the run's default source text.
     """
 
     mode: str = "normalized"
@@ -126,13 +137,15 @@ class Grounded(FieldCheck):
     locale_field: str | None = None
     on_mismatch: str = "retry"
     threshold: float = 0.85
+    source: str | None = None
 
     def check(self, value: Any, ctx: ExtractionContext) -> str | None:
-        if value is None or not ctx.source_text:
+        text = ctx.source_text if self.source is None else ctx.sources.get(self.source)
+        if value is None or text is None:
             return None
         if self.mode == "exact":
-            return None if str(value) in ctx.source_text else self._error(value, ctx)
-        normalized_text = normalize_for_match(ctx.source_text)
+            return None if str(value) in text else self._error(value, ctx)
+        normalized_text = normalize_for_match(text)
         candidates = (
             normalize_for_match(c) for c in render_candidates(value, self._resolve_hint(ctx))
         )
@@ -150,9 +163,10 @@ class Grounded(FieldCheck):
         return self.locale
 
     def _error(self, value: Any, ctx: ExtractionContext) -> str:
+        where = "the source text" if self.source is None else f"the source text {self.source!r}"
         return (
             f"Field '{ctx.field_path}' has value {str(value)!r}, which does not appear "
-            f"in the source text. Only use values that are present in the text."
+            f"in {where}. Only use values that are present in the text."
         )
 
 
@@ -187,6 +201,7 @@ def GroundedField(  # noqa: N802 — mirrors pydantic.Field's CapWords spelling
     locale_field: str | None = None,
     on_mismatch: str = "retry",
     threshold: float = 0.85,
+    source: str | None = None,
     **field_kwargs: Any,
 ) -> Any:
     """Field helper that marks a field as source-grounded.
@@ -207,6 +222,7 @@ def GroundedField(  # noqa: N802 — mirrors pydantic.Field's CapWords spelling
             locale_field=locale_field,
             on_mismatch=on_mismatch,
             threshold=threshold,
+            source=source,
         ),
         **field_kwargs,
     )
@@ -216,6 +232,8 @@ def collect_field_check_issues(
     instance: BaseModel,
     source_text: str | None,
     schema_name: str,
+    *,
+    sources: Mapping[str, str] | None = None,
 ) -> tuple[list[FieldIssue], str | None]:
     """Run every attached :class:`FieldCheck` over a validated *instance*.
 
@@ -226,9 +244,12 @@ def collect_field_check_issues(
 
     Args:
         instance: The instance that already passed Pydantic validation.
-        source_text: The source text to ground against; when falsy, no checks
-            run (returns ``([], None)``).
+        source_text: The default source text to ground against; when falsy,
+            un-named checks are skipped.
         schema_name: Schema name stamped onto each issue.
+        sources: Named source texts for checks such as
+            ``Grounded(source="mail")``. With neither *source_text* nor
+            *sources*, no checks run (returns ``([], None)``).
 
     Returns:
         ``([], None)`` when everything passes (or there is no source text);
@@ -238,7 +259,9 @@ def collect_field_check_issues(
         and is ``None`` when all failures are advisory (``"flag"``), so the
         caller records the issues without consuming a retry.
     """
-    issues, _, feedback = _collect_field_checks(instance, source_text, schema_name)
+    issues, _, feedback = _collect_field_checks(
+        instance, source_text or None, schema_name, sources=sources
+    )
     return issues, feedback
 
 
@@ -246,23 +269,28 @@ def _collect_field_checks(
     instance: BaseModel,
     source_text: str | None,
     schema_name: str,
+    *,
+    sources: Mapping[str, str] | None = None,
 ) -> tuple[list[FieldIssue], list[FieldIssue], str | None]:
     """Like :func:`collect_field_check_issues`, plus the rejecting subset.
 
     Args:
         instance: The instance that already passed Pydantic validation.
-        source_text: The source text to ground against; when falsy, no checks run.
+        source_text: The default source text; ``None`` skips un-named checks,
+            while ``""`` is empty evidence that nothing can be grounded in.
         schema_name: Schema name stamped onto each issue.
+        sources: Named source texts for checks that name their source.
 
     Returns:
         ``(issues, rejecting, feedback)`` where ``rejecting`` holds the issues of
         ``"retry"`` checks, i.e. the ones that reject the instance.
     """
-    if not source_text:
+    named = sources if sources is not None else _EMPTY_SOURCES
+    if source_text is None and not named:
         return [], [], None
 
     failures: list[_Failure] = []
-    _walk(instance, source_text, "", failures)
+    _walk(instance, source_text, named, "", failures)
     if not failures:
         return [], [], None
 
@@ -308,7 +336,8 @@ class _Failure:
 
 def _walk(
     obj: Any,
-    source_text: str,
+    source_text: str | None,
+    sources: Mapping[str, str],
     path: str,
     failures: list[_Failure],
 ) -> None:
@@ -324,6 +353,7 @@ def _walk(
                     model=obj,
                     field_name=name,
                     field_path=child_path,
+                    sources=sources,
                 )
                 for check in checks:
                     message = check.check(value, ctx)
@@ -336,13 +366,13 @@ def _walk(
                                 on_mismatch=getattr(check, "on_mismatch", "retry"),
                             )
                         )
-            _walk(value, source_text, child_path, failures)
+            _walk(value, source_text, sources, child_path, failures)
     elif isinstance(obj, (list, tuple)):
         for index, item in enumerate(obj):
-            _walk(item, source_text, f"{path} -> {index}", failures)
+            _walk(item, source_text, sources, f"{path} -> {index}", failures)
     elif isinstance(obj, dict):
         for key, item in obj.items():
-            _walk(item, source_text, f"{path} -> {key}", failures)
+            _walk(item, source_text, sources, f"{path} -> {key}", failures)
 
 
 def _truncate(value: Any) -> str | None:
