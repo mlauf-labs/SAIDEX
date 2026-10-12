@@ -1234,6 +1234,9 @@ async def extract_data_list(
         if lines is not None:
             print(f"Extracted {stats.item_count} line items")
     """
+    # Checked on the item schema before the trace starts, so a configuration
+    # error names the caller's schema rather than the internal ``…List`` container.
+    _validate_source_names(schema, _resolve_grounding_sources(grounding_source, ""))
     container = _build_list_container(schema)
 
     container_validator: Validator[BaseModel] | None = None

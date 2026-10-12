@@ -482,7 +482,8 @@ async def test_named_sources_in_batch_extraction() -> None:
 async def test_unknown_source_name_raises_in_batch_extraction() -> None:
     llm = make_llm([])
 
-    with pytest.raises(ValueError, match=r"'items -> order_number'.*'mail'"):
+    # The error names the caller's item schema, not the internal ``…List`` container.
+    with pytest.raises(ValueError, match=r"'order_number' of RoutedConcern is .*'mail'"):
         await extract_data_list(
             llm,
             RoutedConcern,
@@ -490,6 +491,32 @@ async def test_unknown_source_name_raises_in_batch_extraction() -> None:
             grounding_source={"catalog": CATALOG},
             retry_config=NO_RETRY,
         )
+
+    llm.bind_tools.assert_not_called()
+
+
+BATCH_CALLS = [
+    pytest.param(
+        lambda llm, **kw: extract_data_list(llm, Concern, _messages(), **kw),
+        id="extract_data_list",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_list_from_text(llm, Concern, PROMPT, **kw),
+        id="extract_data_list_from_text",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("call", BATCH_CALLS)
+@pytest.mark.parametrize("bad", [["mail"], 123])
+async def test_wrong_grounding_source_type_in_batch_with_captured_text(
+    call: Callable[..., Any], bad: Any
+) -> None:
+    llm = make_llm([])
+
+    with pytest.raises(TypeError, match="grounding_source must be a str"):
+        await call(llm, grounding_source=bad, capture_source_text=True, retry_config=NO_RETRY)
 
     llm.bind_tools.assert_not_called()
 
