@@ -12,6 +12,7 @@ checklist for cutting a release.
 | **Commitizen** (`cz bump`) | Reads the commits since the last tag, decides the next version, updates the version everywhere, rewrites the changelog, commits, and tags. |
 | **Version source of truth** | `src/saidex/__init__.py` (`__version__`). Hatch reads it for the build; Commitizen keeps it in sync via `version_files`. |
 | **`release.yml`** | Runs on a **published GitHub Release**. Builds the sdist + wheel and uploads to PyPI via Trusted Publishing (OIDC — no token). |
+| **Context7** (`context7.json`) | Indexes the docs for AI coding tools from the repository's **default branch, `develop`** (not `main`). `previousVersions` lists the older releases it keeps indexed. |
 
 The version bump is **always local and reviewed** before anything is pushed —
 nothing reaches PyPI until you publish a GitHub Release.
@@ -46,6 +47,19 @@ The hook runs `uv run cz check` on every commit. Bypass only in emergencies with
 > **Git Flow:** `main` and `develop` are protected — you never bump or push on
 > them directly. The version bump happens on a short-lived `release/X.Y.Z`
 > branch and reaches `main` through a reviewed PR.
+
+### 0. Before you start: list the outgoing version for Context7
+
+Context7 reads `context7.json` from `develop`, so add the version that is about to
+be replaced as latest to `previousVersions` **on `develop`**, through a normal
+`chore/…` PR — e.g. before releasing `v0.9.0`:
+
+```json
+{ "tag": "v0.8.0", "title": "version 0.8.0" }
+```
+
+Skip this if the entry is already there. A change made on the `release/*` branch
+instead reaches Context7 only after the back-merge in step 11.
 
 ### 1. Make sure `develop` is green and up to date
 
@@ -172,6 +186,10 @@ gh pr create --base develop --head chore/sync-main-to-develop \
 # after the release PR is merged, GitHub usually deletes the branch automatically:
 git push origin --delete release/X.Y.Z   # only if it still exists
 ```
+
+Once the back-merge PR is merged, refresh the library on
+<https://context7.com/mlauf-labs/saidex> and check that the version you added in
+step 0 appears in its version list.
 
 ## One-time PyPI Trusted Publishing setup
 
