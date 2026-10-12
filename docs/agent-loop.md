@@ -97,8 +97,8 @@ asyncio.run(main())
 3. When the LLM submits the final answer, it is validated with Pydantic. On
    failure, the field-level error report is sent back and the loop continues.
 4. The loop ends with a validated instance — or `None` once `max_iterations`
-   or `max_validation_retries` is exhausted (after optionally retrying on a
-   fallback model).
+   is reached or a final answer is rejected with no validation retries left
+   (`max_validation_retries`), after optionally retrying on a fallback model.
 
 Two failure-safety properties worth knowing:
 
@@ -170,6 +170,7 @@ search = Tool(
 | `max_iterations` | `int` | `12` | Max LLM invocations per model attempt |
 | `max_validation_retries` | `int` | `3` | Max final answers that may fail validation |
 | `retry_config` | `RetryConfig \| None` | `DEFAULT_RETRY_CONFIG` | Network retry settings |
+| `grounding_source` | `str \| Mapping[str, str] \| None` | `None` | What `Grounded()` fields of the final answer are checked against — see [Source Grounding](source-grounding.md#grounding-against-part-of-the-prompt) |
 
 **Returns:** `tuple[ModelT | None, ExtractorRunStats]`
 
@@ -231,6 +232,11 @@ resolution, stats = await extract_data_with_tools(
 )
 ```
 
+The loop also accepts `reasoning_escalation` and `fallback_reasoning_escalation`.
+Reasoning levels advance with final-answer attempts only; helper-tool calls keep
+the current level. See
+[Reasoning-effort escalation](retry-and-fallback.md#reasoning-effort-escalation).
+
 ---
 
 ## `ExtractorRunStats`
@@ -241,9 +247,18 @@ resolution, stats = await extract_data_with_tools(
 | `tool_calls` | `int` | Helper-tool executions (final-answer calls not counted) |
 | `validation_retries` | `int` | Final answers that failed schema validation |
 | `fallback_used` | `bool` | Whether the fallback model was invoked |
+| `salvaged` | `bool` | `True` when an `on_exhausted` hook produced the result |
+
+`last_candidate` / `last_rejection` work as in `extract_data` — see
+[External Validators](external-validators.md#when-every-attempt-fails-last_candidate).
 
 `ExtractorRunStats` instances support `+` to merge (used internally to combine
 primary and fallback attempts).
+
+`failure_reason` uses the same [`FailureReason`](failure-reasons.md) values as
+`extract_data`, plus `no_tool_call`, which only the agent loop produces. In the agent loop
+`validation_exhausted` is also reported when `max_iterations` ran out before a
+valid final answer; then raise `max_iterations`.
 
 ---
 
@@ -275,6 +290,35 @@ When you pass `callbacks=[...]`, the agent loop is wrapped in a single
 `on_tool_start` / `on_tool_end` span (or `on_tool_error` if the handler raises),
 nested under the loop alongside the LLM generations. See
 [Langfuse Tracing](langfuse-tracing.md#3-the-agent-loop) for a full walkthrough.
+
+---
+
+## Context-aware validators
+
+`validator=with_context(fn)` works in the agent loop as well. There,
+`ValidatorContext.max_attempts` is `max_validation_retries + 1`, and the attempt
+counter moves only with final-answer attempts (including malformed ones), not
+with helper-tool calls. If the model sends several final answers in one
+response, each of them may be checked with `is_final=True`.
+
+```python
+def fn(inv: Invoice, ctx: ValidatorContext) -> ValidatorResult:
+    if inv.total == sum(line.amount for line in inv.lines):
+        return None
+    return ValidationIssue(
+        message="total does not match the line items",
+        field_path="total",
+        on_mismatch="flag" if ctx.is_final else "retry",
+    )
+
+
+result, stats = await extract_data_with_tools(
+    llm, Invoice, text, tools=[lookup_tool], validator=with_context(fn)
+)
+```
+
+See
+[External Validators → Attempt context](external-validators.md#attempt-context-strict-early-lenient-at-the-end).
 
 ---
 

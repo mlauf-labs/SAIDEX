@@ -1,0 +1,5 @@
+{
+  /* the name */
+  "name": "Ada",
+  "age": /* years */ 36
+}

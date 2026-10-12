@@ -1,0 +1,4 @@
+<think>
+The user wants {"x": 1} maybe, let me think, {oops
+</think>
+{"name": "Ada", "age": 36}

@@ -14,15 +14,20 @@ deadlocking — in that situation the caller is already async and should simply
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
+import contextvars
+import threading
+from collections.abc import Coroutine, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from langchain_core.callbacks.base import Callbacks
 from langchain_core.messages.base import BaseMessage
 from pydantic import BaseModel
 
+from ._reasoning import ReasoningEscalation
 from .extractor import (
     OnComplete,
+    OnExhausted,
+    OnExhaustedList,
     Validator,
     extract_data,
     extract_data_from_text,
@@ -73,6 +78,49 @@ def _run_sync(coro: Coroutine[Any, Any, _T], *, sync_name: str, async_name: str)
     )
 
 
+def _run_blocking(coro: Coroutine[Any, Any, _T]) -> _T:
+    """Drive *coro* to completion from synchronous code, even inside a running loop.
+
+    Without a running event loop in the current thread this is plain
+    :func:`asyncio.run`.  With one — a Jupyter cell, or an async handler that
+    calls sync code — ``asyncio.run`` would refuse, so the coroutine runs on a
+    short-lived worker thread with its own loop while the caller blocks.  The
+    worker runs in a copy of the caller's :mod:`contextvars` context so
+    ``collect_stats`` sinks and LangChain's implicit run config stay visible.
+
+    Unlike :func:`_run_sync`, which guards the public ``*_sync`` wrappers, this
+    never raises for a running loop: a LangGraph node's ``invoke`` must work
+    wherever the stock ``ToolNode`` works.
+
+    Args:
+        coro: The coroutine to run.
+
+    Returns:
+        Whatever *coro* resolves to.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    context = contextvars.copy_context()
+    outcome: list[_T] = []
+    failure: list[BaseException] = []
+
+    def _worker() -> None:
+        try:
+            outcome.append(context.run(asyncio.run, coro))
+        except BaseException as exc:  # noqa: BLE001 — re-raised in the caller's thread
+            failure.append(exc)
+
+    worker = threading.Thread(target=_worker, name="saidex-sync-bridge", daemon=True)
+    worker.start()
+    worker.join()
+    if failure:
+        raise failure[0]
+    return outcome[0]
+
+
 def extract_data_sync(
     llm_model: Any,
     schema: type[MODEL_T],
@@ -88,6 +136,10 @@ def extract_data_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data`.
 
@@ -107,6 +159,13 @@ def extract_data_sync(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`~saidex.extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
+            :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, stats)`` — see :func:`~saidex.extract_data`.
@@ -129,6 +188,10 @@ def extract_data_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_sync",
         async_name="extract_data",
@@ -151,6 +214,10 @@ def extract_data_from_text_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_from_text`.
 
@@ -171,6 +238,13 @@ def extract_data_from_text_sync(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`~saidex.extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
+            :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, stats)`` — see :func:`~saidex.extract_data_from_text`.
@@ -194,6 +268,10 @@ def extract_data_from_text_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_from_text_sync",
         async_name="extract_data_from_text",
@@ -215,6 +293,10 @@ def extract_data_list_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhaustedList[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list`.
 
@@ -234,6 +316,13 @@ def extract_data_list_sync(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`~saidex.extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
+            :func:`~saidex.extract_data`.
 
     Returns:
         ``(items, stats)`` — see :func:`~saidex.extract_data_list`.
@@ -256,6 +345,10 @@ def extract_data_list_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_list_sync",
         async_name="extract_data_list",
@@ -278,6 +371,10 @@ def extract_data_list_from_text_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhaustedList[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list_from_text`.
 
@@ -298,6 +395,13 @@ def extract_data_list_from_text_sync(
         max_primary_retries: Validation retries for the primary model.
         max_fallback_retries: Validation retries for the fallback model.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`~saidex.extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
+            :func:`~saidex.extract_data`.
 
     Returns:
         ``(items, stats)`` — see :func:`~saidex.extract_data_list_from_text`.
@@ -321,6 +425,10 @@ def extract_data_list_from_text_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_list_from_text_sync",
         async_name="extract_data_list_from_text",
@@ -343,6 +451,10 @@ def extract_data_with_tools_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_with_tools`.
 
@@ -362,6 +474,13 @@ def extract_data_with_tools_sync(
         max_iterations: Maximum LLM invocations per model attempt.
         max_validation_retries: Max final-answer validation failures tolerated.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`~saidex.extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
+            :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — see :func:`~saidex.extract_data_with_tools`.
@@ -385,6 +504,10 @@ def extract_data_with_tools_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_with_tools_sync",
         async_name="extract_data_with_tools",
@@ -406,6 +529,10 @@ def run_extractor_agent_sync(
     on_complete: OnComplete | None = None,
     capture_source_text: bool = False,
     validator: Validator[MODEL_T] | None = None,
+    on_exhausted: OnExhausted[MODEL_T] | None = None,
+    reasoning_escalation: ReasoningEscalation | None = None,
+    fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.run_extractor_agent`.
 
@@ -424,6 +551,13 @@ def run_extractor_agent_sync(
         max_iterations: Maximum LLM invocations per model attempt.
         max_validation_retries: Max final-answer validation failures tolerated.
         retry_config: Network-level retry configuration.
+        on_exhausted: Optional salvage hook — see :func:`~saidex.extract_data`.
+        reasoning_escalation: Opt-in reasoning-effort escalation for the primary
+            model — see :func:`~saidex.extract_data`.
+        fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
+            :func:`~saidex.extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — see :func:`~saidex.run_extractor_agent`.
@@ -446,6 +580,10 @@ def run_extractor_agent_sync(
             on_complete=on_complete,
             capture_source_text=capture_source_text,
             validator=validator,
+            on_exhausted=on_exhausted,
+            reasoning_escalation=reasoning_escalation,
+            fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="run_extractor_agent_sync",
         async_name="run_extractor_agent",

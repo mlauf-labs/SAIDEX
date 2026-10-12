@@ -110,6 +110,57 @@ HumanMessage(
 
 ---
 
+## Reasoning-effort escalation
+
+Reasoning models can think harder at a higher cost. Start cheap and only spend
+more effort when an attempt is rejected:
+
+```python
+result, stats = await extract_data(
+    llm,                                   # e.g. ChatOpenAI(model="gpt-5-mini")
+    Invoice,
+    messages,
+    reasoning_escalation=["low", "medium", "high"],
+)
+print(stats.reasoning_effort)              # level of the attempt that decided the run
+```
+
+- Attempt *n* of a model binds `reasoning_effort=levels[min(n-1, len-1)]`; the
+  last level repeats. Parse errors use up an attempt too.
+- `reasoning_escalation=True` uses the levels from the model's profile
+  (`llm.profile["reasoning_effort_levels"]`); without them nothing is escalated.
+  `True` starts at the profile's first (cheapest) level and only climbs as far
+  as the attempt budget allows: with the defaults, `gpt-5-mini` gets
+  minimal, low, medium and never high. Pass an explicit list to start higher.
+  It does nothing on langchain-core versions without model profiles (< 1.x).
+  If the profile data is stale, override `llm.profile` to bypass the check.
+- The accepted type is exported as `saidex.ReasoningEscalation`.
+- The fallback model only escalates with its own `fallback_reasoning_escalation`.
+- With a profile, unknown level names raise `ValueError` before any call; a
+  plain string (`"high"`) or an empty list is rejected too.
+- In the agent loop, only final-answer attempts move to the next level;
+  helper-tool calls keep the current one.
+- The level is bound as `reasoning_effort`, so the integration must accept it:
+  - `ChatOpenAI` works (Chat Completions maps it to `reasoning_effort`, the
+    Responses API to `reasoning.effort`).
+  - Recent `ChatAnthropic` works: langchain-anthropic maps `reasoning_effort`
+    to `output_config.effort`. On adaptive-thinking models this enables
+    thinking, which Anthropic rejects together with a forced `tool_choice`.
+    SAIDEX then relaxes the tool binding automatically at the cost of one
+    extra call, so pass `tool_config=ToolCallConfig.COMPATIBLE`. The agent
+    loop is unaffected.
+  - Integrations that do not accept the kwarg (e.g. `ChatOllama`), or a
+    `ChatOpenAI(reasoning=...)` set on the model (conflict), fail on the
+    first attempt with `failure_reason="llm_error"` and
+    `llm_error_kind="invalid_request"`.
+- Validators wrapped with `with_context` see the level as
+  `ctx.reasoning_effort`.
+
+Higher levels cost more tokens and latency — escalation keeps the common case
+cheap and pays more only for hard documents.
+
+---
+
 ## Network retries (`RetryConfig`)
 
 > **Runnable example:** [`examples/04_custom_retry_config.py`](../examples/04_custom_retry_config.py)
@@ -127,16 +178,42 @@ RetryConfig(
     max_retries=3,
     retry_delays=[1.0, 2.0, 4.0],       # exponential back-off
     retryable_exceptions=(               # auto-detected from installed packages:
-        httpx.ConnectError,              #   httpx (if installed)
-        httpx.TimeoutException,
+        ModelConnectionError,            #   langchain-core (if recent enough)
+        ModelTimeoutError,
+        ModelAPIError,                   #   HTTP 5xx
         openai.APIConnectionError,       #   openai (if installed)
         openai.APITimeoutError,
+        openai.InternalServerError,
+        httpx.ConnectError,              #   httpx / httpx2 (if installed)
+        httpx.TimeoutException,
+        httpx.RemoteProtocolError,
     ),
-    rate_limit_exceptions=(openai.RateLimitError,),  # if openai installed
+    rate_limit_exceptions=(              # if available
+        ModelRateLimitError,
+        openai.RateLimitError,
+    ),
     rate_limit_retry_interval=10.0,      # seconds between rate-limit retries
     rate_limit_max_duration_seconds=900.0,   # give up after 15 minutes
 )
 ```
+
+Transient errors are langchain-core's `ModelConnectionError`, `ModelTimeoutError`
+and `ModelAPIError` (HTTP 5xx), plus `openai.APIConnectionError`,
+`openai.APITimeoutError`, `openai.InternalServerError` and the `httpx` / `httpx2`
+`ConnectError`, `TimeoutException` and `RemoteProtocolError`. Rate limits are
+`ModelRateLimitError` and `openai.RateLimitError`.
+
+!!! note "Server errors are retried by default"
+    Server errors (HTTP 5xx) are retried by default; versions up to 0.7.x did not
+    retry them. These retries stack with the SDK's own retries (for example
+    `ChatOpenAI(max_retries=2)`): a persistent 500 can take about 12 HTTP calls before
+    the fallback model runs. A custom `RetryConfig` (without server errors, or with
+    fewer retries) gives faster failover.
+
+A custom `RetryConfig(retryable_exceptions=...)` keeps full control over what is
+retried. To react to a failed run in your own handlers, use
+`saidex.classify_model_error(exc)` or `stats.llm_error_kind` (see
+[Failure Reasons](failure-reasons.md#why-did-the-model-call-fail-llm_error_kind)).
 
 ### Custom configuration
 
@@ -197,8 +274,8 @@ config = RetryConfig(
 | --- | --- | --- | --- |
 | `max_retries` | `int` | `3` | Max transient-error retries per LLM call |
 | `retry_delays` | `list[float]` | `[1.0, 2.0, 4.0]` | Seconds to wait before each retry |
-| `retryable_exceptions` | `tuple[type[Exception], ...]` | httpx + openai network errors | Exceptions that trigger a transient retry |
-| `rate_limit_exceptions` | `tuple[type[Exception], ...]` | `openai.RateLimitError` | Exceptions that trigger rate-limit wait |
+| `retryable_exceptions` | `tuple[type[Exception], ...]` | langchain-core, openai and httpx network and 5xx errors | Exceptions that trigger a transient retry |
+| `rate_limit_exceptions` | `tuple[type[Exception], ...]` | `ModelRateLimitError`, `openai.RateLimitError` | Exceptions that trigger rate-limit wait |
 | `rate_limit_retry_interval` | `float` | `10.0` | Seconds between rate-limit retries |
 | `rate_limit_max_duration_seconds` | `float` | `900.0` | Total seconds before giving up on rate-limit retries |
 
@@ -257,6 +334,9 @@ if result is None:
 # result is guaranteed valid here
 process(result)
 ```
+
+`stats.failure_reason` tells you *why* the run failed and whether retrying later
+is worthwhile — see [Failure reasons](failure-reasons.md).
 
 ### Tracking retry costs
 

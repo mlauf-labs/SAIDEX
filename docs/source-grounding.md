@@ -3,7 +3,7 @@
 → [Documentation index](index.md)
 
 > **Runnable example:** [`examples/13_source_grounding.py`](../examples/13_source_grounding.py)
-> **Tests:** [`tests/test_grounding.py`](../tests/test_grounding.py), [`tests/test_grounding_integration.py`](../tests/test_grounding_integration.py)
+> **Tests:** [`tests/test_grounding.py`](../tests/test_grounding.py), [`tests/test_grounding_integration.py`](../tests/test_grounding_integration.py), [`tests/test_grounding_source.py`](../tests/test_grounding_source.py)
 
 LLMs sometimes invent plausible-looking values — a vendor name, an ID, a total —
 that are **not present** in the document. Mark a field as **grounded** and SAIDEX
@@ -11,9 +11,11 @@ verifies, after Pydantic validation, that the extracted value actually appears i
 the source text. A value it cannot find is rejected and the **existing retry
 loop** asks the model to correct it, exactly like a Pydantic failure.
 
-Grounding needs no new function arguments: it is driven entirely by markers in
-your schema. The source text is taken transiently from the human-turn message(s)
-of the run (it is **not** retained — that is what `capture_source_text` controls).
+Grounding is driven by markers in your schema. By default the source text is
+taken transiently from the human-turn message(s) of the run (it is **not**
+retained — that is what `capture_source_text` controls). When the user message
+carries more than the document, pass `grounding_source=` to choose what counts
+as evidence — see [Grounding against part of the prompt](#grounding-against-part-of-the-prompt).
 
 ---
 
@@ -36,6 +38,13 @@ class Invoice(BaseModel):
 ```
 
 ---
+
+!!! warning "Optional fields"
+    Put the check on the field itself for optional values: `GroundedStr | None` or
+    `GroundedStr | MISSING` is **not** grounded because Annotated metadata inside a union
+    is not picked up. Use `Annotated[str | None, Grounded()]` or
+    `field_check(Grounded(), default=MISSING)`; see
+    [Fields that may be missing](schema-design.md#fields-that-may-be-missing-missing).
 
 ## How it fits the retry loop
 
@@ -71,6 +80,7 @@ A grounding failure:
   `category="grounding"` and the field path (e.g. `items -> 2 -> vendor`),
 - triggers the **fallback model** when the primary exhausts its retries,
 - sets `stats.failure_reason = "validation_exhausted"` if all attempts fail.
+- keeps the rejected instance on `stats.last_candidate` — see [External Validators → last_candidate](external-validators.md#when-every-attempt-fails-last_candidate).
 
 Grounding runs **before** an [external validator](external-validators.md) and only
 on structurally valid instances.
@@ -180,6 +190,91 @@ values fall back to numeric forms only.
 
 ---
 
+## Grounding against part of the prompt
+
+A common prompt layout puts **reference data and the source document into the
+same user message**:
+
+```text
+Customer data (JSON): {"orders": [{"order_number": 32008}, {"order_number": 28870}]}
+
+<mail>
+Subject: Monitor broken
+My monitor from order 32008 has dead pixels.
+</mail>
+```
+
+With the default source (the whole human message), a hallucinated
+`order_number="28870"` **passes**: it appears in the customer data, just not in
+the mail. Pass `grounding_source` to check against the mail only:
+
+```python
+class Concern(BaseModel):
+    order_number: Annotated[str | None, Grounded()]  # must be stated in the mail
+
+result, stats = await extract_data_from_text(
+    llm, Concern, prompt,
+    grounding_source=f"{mail.subject}\n{mail.body}",  # only the mail counts as evidence
+)
+```
+
+Now `28870` is rejected and fed back to the model, while `32008` passes. Every
+entry point accepts `grounding_source` — `extract_data*`, `extract_data_list*`,
+`extract_data_with_tools`, `run_extractor_agent` and all `*_sync` wrappers.
+
+### Named sources
+
+When different fields need different evidence, pass a mapping and name the
+source on the field:
+
+```python
+class Concern(BaseModel):
+    order_number: Annotated[str | None, Grounded(source="mail")]
+    product_name: Annotated[str | None, Grounded(source="catalog")]
+    note: Annotated[str | None, Grounded()]          # default source
+
+await extract_data_from_text(
+    llm, Concern, prompt,
+    grounding_source={"mail": mail_text, "catalog": catalog_text},
+)
+```
+
+`GroundedField(source="mail")` works the same way. The default source — used by
+`Grounded()` without a name and exposed as `ctx.source_text` — is resolved like
+this:
+
+| `grounding_source` | Default source | Named sources |
+| --- | --- | --- |
+| `None` (default) | human-turn text | none |
+| `"…"` | that string | none |
+| `{"mail": …, …}` | the `"default"` key if present, else the human-turn text | every key |
+
+A rejection names the source, e.g. *"… which does not appear in the source text
+'mail'"*, so the model understands why a value it can see in the prompt is not
+accepted.
+
+!!! warning "Configuration errors fail fast"
+    A field that names a source the mapping does not provide raises a
+    `ValueError` **before any model call** — also when `grounding_source` is a
+    plain string or omitted, because named sources only resolve against a
+    mapping. A schema with `Grounded(source="mail")` never silently falls back
+    to the whole prompt. A `grounding_source` that is not a `str`, a mapping of
+    `str` to `str`, or `None` raises a `TypeError`.
+
+!!! note "Empty sources"
+    An explicit source is used as given, **even when empty**: with
+    `grounding_source=""` or `{"mail": ""}` (an empty mail body) no value can be
+    grounded, so every non-`None` grounded value is rejected and the model is
+    pushed towards `None`. Without `grounding_source`, an empty human turn (e.g.
+    image-only input) still skips grounding as before.
+
+**Privacy:** like the human-turn text, `grounding_source` is added to the
+chain-run trace inputs (key `"grounding_source"`) only when
+`capture_source_text=True`. `stats.source_text` and `event.source_text` keep
+holding the human-turn text.
+
+---
+
 ## Build your own check — the `FieldCheck` pattern
 
 Grounding is the first built-in check on a reusable mechanism. Any
@@ -206,7 +301,26 @@ class Order(BaseModel):
 
 A check returns `None` to accept or an LLM-friendly message to reject; rejections
 re-enter the same retry loop as grounding. Return `None` when `ctx.source_text`
-is missing so the check is skipped during plain model construction.
+is `None` so the check is skipped during plain model construction.
+
+Named sources passed via `grounding_source={...}` are available as
+`ctx.sources` (a read-only mapping). Give your check a `source: str` attribute to
+pick one — the engine then also validates the name before the first model call,
+exactly as for `Grounded(source=...)`:
+
+```python
+from dataclasses import dataclass
+
+@dataclass(frozen=True)
+class MentionedIn(FieldCheck):
+    source: str = "mail"
+
+    def check(self, value, ctx: ExtractionContext) -> str | None:
+        text = ctx.sources.get(self.source)
+        if value is None or text is None:
+            return None
+        return None if str(value) in text else f"'{value}' is not in the {self.source}."
+```
 
 ---
 
@@ -215,7 +329,8 @@ is missing so the check is skipped during plain model construction.
 Grounding works across every extraction entry point and both extraction modes
 (`TOOL_CALLING` and `JSON`), including the batch variants (checked **per item**)
 and the agent loop (checked on the **final answer**), plus all the `*_sync`
-wrappers. There are no new parameters to pass — just mark the fields.
+wrappers. Marking the fields is enough; `grounding_source=` is only needed to
+ground against part of the prompt or against named sources.
 
 ---
 

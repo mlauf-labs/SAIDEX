@@ -10,8 +10,10 @@
 pip install saidex
 ```
 
-If you use OpenAI models, add the optional extra for automatic rate-limit
-handling:
+With langchain-core ≥ 1.6, rate limits, timeouts and 5xx errors of any provider
+integration that raises the standard model exceptions are handled automatically. For
+older langchain-core versions, or to catch raw OpenAI SDK errors, add the optional
+extra:
 
 ```bash
 pip install "saidex[openai]"
@@ -21,9 +23,11 @@ pip install "saidex[openai]"
 
 | Package | Required version | Purpose |
 | --- | --- | --- |
-| `pydantic` | `>= 2.0` | Schema validation |
-| `langchain-core` | `>= 0.2` | Message types + tool calling |
-| `openai` *(optional)* | `>= 1.0` | Rate-limit retry handling |
+| `pydantic` | `>= 2.7.4` | Schema validation |
+| `langchain-core` | `>= 0.3.69` | Message types + tool calling |
+| `json-repair` | `>= 0.60.1` | Repairs malformed JSON from the model |
+| `openai` *(optional)* | `>= 1.0` | Rate-limit retry handling (older langchain-core / raw SDK errors) |
+| `langgraph` *(optional)* | `>= 1.1.5` | `SaidexToolNode` for LangGraph agents |
 
 Any LangChain-compatible chat model that supports tool calling works:
 OpenAI, Anthropic, Google Gemini, Mistral, Azure OpenAI, and others.
@@ -67,14 +71,20 @@ without tool-calling support.  See [Extraction Modes](extraction-modes.md).
 result, stats = await extract_data_from_text(...)
 
 stats.success           # bool — did the run produce a validated instance?
-stats.failure_reason    # str | None — why it failed (None on success)
+stats.failure_reason    # FailureReason | None — why it failed (None on success)
+stats.llm_error_kind    # ModelErrorKind | None — why the model call failed (llm_error only)
 stats.primary_retries   # int — retries on the primary model
 stats.fallback_retries  # int — retries on the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — did the fallback model run?
+stats.salvaged          # bool — result produced by an on_exhausted hook
+stats.reasoning_effort  # str | None — reasoning level of the deciding attempt (escalation only)
 stats.format_errors     # int — pure parse / tool-call failures
 stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
 stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
+stats.last_candidate    # last schema-valid but rejected instance
+                        # (None on a clean success; kept when salvaged)
+stats.last_rejection    # tuple[FieldIssue, ...] — the issues that rejected it
 ```
 
 Prefer `stats.success` over `result is not None` to branch on the outcome.

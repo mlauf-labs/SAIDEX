@@ -13,7 +13,9 @@ business rule, a reference-data check, a running total that must reconcile.
 Every extraction entry point accepts an optional **`validator`** callable.  It
 receives the model instance *after* it has already passed Pydantic validation and
 either **accepts** it (returns `None`/empty string) or **rejects** it (raises any
-exception, or returns a non-empty error message).  A rejection re-enters the
+exception, or returns a non-empty error message).  To report several findings at
+once, it can also return a list of [`ValidationIssue`](#structured-issues)
+objects, each with its own field path and retry-or-flag behaviour.  A rejection re-enters the
 **existing field-level retry loop** with the message surfaced to the model — exactly
 like a Pydantic `ValidationError` — so the model gets a chance to self-correct.
 
@@ -75,12 +77,100 @@ A validator rejection:
 
 - consumes one validation retry (`stats.primary_retries` / `validation_retries`),
 - records a structured [`FieldIssue`](quality-analytics.md) with
-  `error_type="external_validator"` and `field_path="<external validator>"`,
+  `error_type="external_validator"` and `field_path="<external validator>"`
+  (or one `FieldIssue` per [`ValidationIssue`](#structured-issues)
+  with your own path and rule id),
 - triggers the **fallback model** when the primary model exhausts its retries,
 - sets `stats.failure_reason = "validation_exhausted"` if all attempts fail.
 
 The validator only runs on **structurally valid** instances — a Pydantic failure
 short-circuits before the validator is ever called.
+
+## When every attempt fails — `last_candidate`
+
+If the retries run out, the call still returns `(None, stats)`. The last
+instance that passed schema validation but was rejected by your validator (or
+by source grounding) is not lost, though:
+
+```python
+result, stats = await extract_data(llm, Findings, messages, validator=check_quotes)
+if result is None and stats.last_candidate is not None:
+    findings = cast(Findings, stats.last_candidate)
+    for issue in stats.last_rejection:          # the "retry" issues that rejected it
+        print(issue.field_path, issue.message)
+```
+
+- `last_candidate` is the **most recent** schema-valid candidate. A later
+  attempt that fails differently (malformed JSON, provider error) does not
+  clear it, so it can be set whatever `failure_reason` says.
+- With a fallback model, the fallback's candidate wins if it produced one.
+- `last_rejection` holds only the issues that rejected it; `"flag"` issues stay
+  in `field_issues`.
+- On a clean success both are empty (`None` / `()`). A run salvaged by
+  [`on_exhausted`](#salvaging-a-partial-result-on_exhausted) keeps them, as
+  the record of what the hook received.
+- Batch variants expose a `list` of items, with paths like `items -> 3 -> quote`.
+
+!!! warning "PII"
+    The candidate is extracted source data. It stays on the stats object and is
+    visible to `on_complete` hooks and listeners. The enclosing chain-run
+    span's output only gets `has_last_candidate` (nested LLM spans still contain
+    the raw model output), and `collect_stats()` sinks drop it.
+
+---
+
+## Salvaging a partial result — `on_exhausted`
+
+> **Runnable example:** [`examples/17_salvage_partial_results.py`](../examples/17_salvage_partial_results.py)
+
+For schemas made of independent items (findings, line items, contacts), "one
+item is wrong" should not mean "the whole run failed". Pass `on_exhausted`: it
+runs **once**, after every attempt (and the fallback) failed, whenever a
+schema-valid candidate exists. Return what you can keep:
+
+```python
+from saidex import FieldIssue, extract_data, issue_item_index
+
+def drop_rejected(doc: Findings, issues: tuple[FieldIssue, ...]) -> Findings | None:
+    bad = {issue_item_index(i, "findings") for i in issues}
+    kept = [f for i, f in enumerate(doc.findings) if i not in bad]
+    return Findings(findings=kept) if kept else None
+
+result, stats = await extract_data(
+    llm, Findings, messages, validator=check_quotes, on_exhausted=drop_rejected
+)
+if stats.salvaged:
+    log.info("kept %d findings after dropping rejected ones", len(result.findings))
+```
+
+- A returned instance ends the run with `success=True`, `failure_reason=None`
+  and **`salvaged=True`**. `field_issues`, `last_candidate` and
+  `last_rejection` keep the original rejection for auditing.
+- The hook receives a **copy** of the candidate: editing it in place
+  (`doc.findings = kept; return doc`) is fine and never changes
+  `stats.last_candidate`.
+- The returned instance is re-validated against the schema, but **not** by
+  source grounding or your validator. The hook owns that decision.
+  Re-validation reads the stored field values (computed fields are left
+  out at every depth), not the serialized output, so aliases
+  (`validation_alias`, `AliasChoices`), field serializers and
+  `exclude=True` fields do not get in the way. Returning the candidate
+  unchanged, or a `model_copy(update=...)` with a subset of its items,
+  works as long as the schema's own validators accept already-validated
+  values (a `mode="before"` validator that only handles raw strings may
+  not); a value that bypassed validation
+  (`model_copy(update={"total": -5})`, `model_construct`) is caught. An
+  invalid result keeps the run failed and adds an `on_exhausted_invalid`
+  issue (path `<on_exhausted>`) to `field_issues`.
+- Return `None` to let the run fail as before. Exceptions raised by the hook
+  propagate.
+- The hook runs even when the last attempt ended with `parse_error` or
+  `llm_error`, as long as an earlier attempt produced a candidate.
+- Batch variants pass the `list` of items and accept the list to keep (`[]`
+  included); `issue_item_index(issue)` maps `items -> 3 -> quote` to `3`.
+  Every element must be an instance of the item schema: anything else,
+  including a plain `dict`, raises `TypeError`.
+- The agent loop and every `*_sync` wrapper accept `on_exhausted` too.
 
 ---
 
@@ -105,6 +195,137 @@ Write **specific, actionable** messages — the model reads them to know what to
 
 ---
 
+## Structured issues
+
+Return a list of `ValidationIssue` objects when one attempt can break several
+independent rules.  Each issue becomes its own entry in `stats.field_issues`
+(with your `field_path`, `category` and `error_type`), and the model gets
+per-field feedback — the same treatment as Pydantic and `Grounded()` failures.
+
+```python
+from saidex import ValidationIssue, extract_data_from_text
+
+
+def check_reply(reply: Reply) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    if INTERNAL_NOTE_MARKER in reply.body:
+        issues.append(ValidationIssue(
+            "Do not quote the internal note.",
+            field_path="body", error_type="leaks_internal_note",
+        ))
+    if "refund" in reply.body and refund_pending:
+        issues.append(ValidationIssue(
+            "Do not promise a refund while approval is pending.",
+            field_path="body", error_type="premature_refund",
+        ))
+    if reply.language != customer_language:
+        issues.append(ValidationIssue(
+            f"Reply in the customer's language ({customer_language}).",
+            field_path="language", error_type="wrong_language",
+            received=reply.language,
+        ))
+    if len(reply.body) > 1500:
+        issues.append(ValidationIssue(
+            "Reply is unusually long.",
+            field_path="body", error_type="long_reply", on_mismatch="flag",
+        ))
+    return issues
+
+
+reply, stats = await extract_data_from_text(llm, Reply, ticket, validator=check_reply)
+```
+
+The model receives the `"retry"` issues grouped by field path:
+
+```text
+The extracted data is structurally valid but failed an additional validation check:
+
+  - 'body': Do not quote the internal note.
+  - 'body': Do not promise a refund while approval is pending.
+  - 'language': Reply in the customer's language (en).
+    Received: 'de'
+```
+
+| Validator returns | Instance | Retry consumed | Recorded in `stats.field_issues` |
+| --- | --- | --- | --- |
+| `None` / `""` / `[]` | accepted | no | — |
+| non-empty `str`, or raises | rejected | yes | one issue, `field_path="<external validator>"` |
+| list of non-empty `str` | rejected | yes | one issue per string, `field_path="<external validator>"` |
+| issues, at least one `on_mismatch="retry"` | rejected | yes | every issue, `flag` ones included |
+| issues, all `on_mismatch="flag"` | accepted | no | every issue |
+
+`ValidationIssue` fields:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `message` | — (required) | What is wrong; shown to the model |
+| `field_path` | `"<external validator>"` | Offending field, e.g. `"body"` or `"lines -> 0 -> price"` — relative to the validated model; batch extraction adds the `items -> {i}` prefix |
+| `category` | `"value"` | Coarse bucket, same vocabulary as `FieldIssue.category` |
+| `error_type` | `"external_validator"` | Free-form rule id — count violations per rule across runs |
+| `on_mismatch` | `"retry"` | `"retry"` rejects and consumes a retry; `"flag"` only records |
+| `received` | `None` | Optional offending value, shown to the model |
+
+A single `ValidationIssue` (without a list) works too, and a list may mix plain
+strings with issues.  Returning anything else — a dict, `True`, bytes — raises
+`TypeError`: it is treated as a bug in the validator, not as a rejection, and
+never consumes a retry.
+
+`flag` issues mirror [`FieldCheck(on_mismatch="flag")`](source-grounding.md): use them
+for soft findings you want to count in evals without burning a retry.
+
+---
+
+## Attempt context — strict early, lenient at the end
+
+A validator only sees the instance. To change its behaviour per round, wrap it
+with `with_context`; it then receives a `ValidatorContext` as second argument:
+
+| Field | Meaning |
+| --- | --- |
+| `attempt` | 1-based position in the current model's budget (parse errors use up a slot too) |
+| `max_attempts` | Size of that budget (`max_primary_retries` / `max_fallback_retries`; `max_validation_retries + 1` in the agent loop) |
+| `is_final` | `True` only on the last allowed attempt of the **whole run** — not on the primary's last attempt when a fallback model will still run |
+| `model_label` | `"primary"` or `"fallback"` |
+| `is_fallback` | Whether the fallback model produced the candidate |
+| `reasoning_effort` | Reasoning-effort level of this attempt, or `None` without escalation |
+
+```python
+from saidex import ValidationIssue, ValidatorContext, extract_data, with_context
+
+def strict_then_lenient(inv: Invoice, ctx: ValidatorContext) -> ValidationIssue | None:
+    if abs(sum(line.amount for line in inv.lines) - inv.total) < 0.01:
+        return None
+    return ValidationIssue(
+        message="Line items do not add up to the total.",
+        field_path="total",
+        # Retry while there are attempts left; on the last one, accept and flag.
+        on_mismatch="flag" if ctx.is_final else "retry",
+    )
+
+result, stats = await extract_data(
+    llm, Invoice, messages, validator=with_context(strict_then_lenient)
+)
+```
+
+Plain one-argument validators keep working unchanged. The wrapper is explicit
+on purpose: SAIDEX never inspects a validator's signature. Batch extraction
+passes the same context to every item of an attempt.
+
+`ValidatorContext.attempt` is 1-based, while `FieldIssue.attempt` in the stats is
+0-based: for the same round, `ctx.attempt == issue.attempt + 1`.
+
+A variable annotated `Validator[...]` may now hold a `WithContext`, which is not
+directly callable. Pass it to the API rather than calling it yourself.
+
+!!! note "Agent loop"
+    In `extract_data_with_tools` / `run_extractor_agent`, helper-tool calls
+    consume `max_iterations` too. If `max_iterations` runs out first, the run
+    ends without any validator call having seen `is_final=True`. If the model
+    sends several final answers in one response, each of them may be checked
+    with `is_final=True`.
+
+---
+
 ## Sync or async
 
 The callable may be synchronous or a coroutine function; SAIDEX awaits it when
@@ -125,15 +346,19 @@ order, stats = await extract_data_from_text(llm, Order, text, validator=validate
 ## Batch extraction — validated per item
 
 For `extract_data_list` / `extract_data_list_from_text` the validator is applied to
-**each extracted item** individually.  Failures are reported per item so the model
-can pinpoint the offending record:
+**each extracted item** individually.  Every failing item becomes its own field
+issue, located by its index, so the model can pinpoint the offending record:
 
 ```python
 items, stats = await extract_data_list_from_text(
     llm, InvoiceLine, document, validator=validate_line
 )
-# A rejected item surfaces as e.g. "items -> 2: amount must be positive"
+# A rejected item surfaces with field_path "items -> 2" — or "items -> 2 -> amount"
+# when the validator returns ValidationIssue(..., field_path="amount").
 ```
+
+One `"retry"` issue on any item rejects the whole batch attempt; `"flag"` issues
+are recorded per item without a retry.
 
 ---
 

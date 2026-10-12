@@ -7,6 +7,12 @@ any extraction entry point: it receives the already-validated model and rejects 
 by raising (or returning an error string).  A rejection is fed back into the same
 field-level retry loop, exactly like a Pydantic failure, so the model self-corrects.
 
+Return a list of ``ValidationIssue`` objects to report several findings at once,
+each with its own field path and ``retry``/``flag`` behaviour.
+
+Wrap a validator with ``with_context`` to receive a ``ValidatorContext`` (attempt number,
+budget, ``is_final``) and be strict early but lenient on the last attempt.
+
 The validator may be **sync or async**, and is available on every entry point —
 ``extract_data``, ``extract_data_from_text``, the batch variants, the agent loop,
 and all the ``*_sync`` wrappers.
@@ -22,7 +28,7 @@ import asyncio
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from saidex import extract_data_from_text
+from saidex import ValidationIssue, ValidatorContext, extract_data_from_text, with_context
 
 # ---------------------------------------------------------------------------
 # Schema — note there is NO cross-field check inside the model itself.
@@ -65,6 +71,56 @@ def validate_invoice_total(inv: Invoice) -> None:
         )
 
 
+def check_invoice_rules(inv: Invoice) -> list[ValidationIssue]:
+    """Report several independent findings at once; ``flag`` ones never cost a retry.
+
+    Each issue lands in ``stats.field_issues`` with its own ``field_path`` and
+    ``error_type`` (a rule id you can count across runs), and the ``retry`` ones
+    are fed back to the model grouped by field.
+    """
+    issues: list[ValidationIssue] = []
+    line_sum = round(sum(line.amount for line in inv.lines), 2)
+    if line_sum != round(inv.total, 2):
+        issues.append(
+            ValidationIssue(
+                f"The line items sum to {line_sum:.2f} EUR; make the total match.",
+                field_path="total",
+                error_type="total_mismatch",
+                received=f"{inv.total:.2f}",
+            )
+        )
+    for index, line in enumerate(inv.lines):
+        if not line.description.strip():
+            issues.append(
+                ValidationIssue(
+                    "Describe what was billed.",
+                    field_path=f"lines -> {index} -> description",
+                    error_type="empty_description",
+                )
+            )
+    if len(inv.lines) > 50:
+        issues.append(
+            ValidationIssue(
+                "Unusually many line items.",
+                error_type="many_lines",
+                on_mismatch="flag",
+            )
+        )
+    return issues
+
+
+def lenient_on_final_attempt(inv: Invoice, ctx: ValidatorContext) -> ValidationIssue | None:
+    """Ask for a correction while retries remain; on the last attempt, accept and flag."""
+    if abs(sum(line.amount for line in inv.lines) - inv.total) < 0.01:
+        return None
+    return ValidationIssue(
+        message=f"Line items do not add up to the stated total (attempt {ctx.attempt}).",
+        field_path="total",
+        error_type="total_mismatch",
+        on_mismatch="flag" if ctx.is_final else "retry",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Run extraction
 # ---------------------------------------------------------------------------
@@ -89,6 +145,10 @@ async def main() -> None:
 
     if invoice is None:
         print(f"Extraction failed ({stats.failure_reason}) after {stats.total_retries} retries.")
+        if stats.last_candidate is not None:
+            print("   Last rejected candidate:", stats.last_candidate)
+            for issue in stats.last_rejection:
+                print(f"   - {issue.field_path}: {issue.message}")
         return
 
     print("Extracted invoice:")
@@ -101,6 +161,28 @@ async def main() -> None:
         print("Issues seen along the way:")
         for issue in stats.field_issues:
             print(f"  [{issue.error_type}] {issue.message}")
+
+    # Same document, but with structured issues: one FieldIssue per finding.
+    invoice, stats = await extract_data_from_text(
+        llm,
+        Invoice,
+        document,
+        validator=check_invoice_rules,
+    )
+    print(f"\nStructured validator — success: {stats.success}, retries: {stats.total_retries}")
+    for issue in stats.field_issues:
+        print(f"  attempt {issue.attempt}: {issue.field_path} [{issue.error_type}] {issue.message}")
+
+    # Attempt-aware validator: strict while retries remain, lenient on the last one.
+    invoice, stats = await extract_data_from_text(
+        llm,
+        Invoice,
+        document,
+        validator=with_context(lenient_on_final_attempt),
+    )
+    print(f"\nContext-aware validator — success: {stats.success}, retries: {stats.total_retries}")
+    for issue in stats.field_issues:
+        print(f"  attempt {issue.attempt}: {issue.field_path} [{issue.error_type}] {issue.message}")
 
 
 if __name__ == "__main__":

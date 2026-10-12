@@ -82,10 +82,11 @@ side.
 
 !!! note "What the spans contain"
     The enclosing span's **output** carries the validated result plus run
-    metrics (`success`, retries, `problem_fields`, …) — the same values a
+    metrics (`success`, `salvaged`, retries, `problem_fields`, `has_last_candidate`, `llm_error_kind`, `reasoning_effort`, …) — the same values a
     tracer already sees inside the LLM generations. The span's **input**
     contains only the schema name and mode by default; the raw source text is
-    included **only** when you opt in with `capture_source_text=True`. Enable
+    included **only** when you opt in with `capture_source_text=True` (an explicit
+    `grounding_source` is added under the same flag). Enable
     that flag deliberately when a tracing handler is attached — it exports the
     full input text to the tracing backend.
 
@@ -338,6 +339,8 @@ async def main() -> None:
                 metadata={
                     "success": event.stats.success,
                     "failure_reason": event.stats.failure_reason,
+                    "llm_error_kind": event.stats.llm_error_kind,
+                    "salvaged": event.stats.salvaged,
                     "problem_fields": list(event.stats.problem_fields),
                     "total_retries": event.stats.total_retries,
                 },

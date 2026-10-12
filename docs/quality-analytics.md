@@ -29,6 +29,8 @@ for text in dataset:                      # many varied inputs
 summary = summarize_field_issues(runs)
 ```
 
+Runs salvaged by an [`on_exhausted`](external-validators.md#salvaging-a-partial-result-on_exhausted) hook count as successes in `success_rate`, but are tracked separately: `salvaged_runs` counts them and `clean_success_rate` is the share of runs that succeeded without salvage.
+
 `summarize_field_issues` accepts a heterogeneous iterable: stats objects
 ([`ExtractDataStats`][saidex.ExtractDataStats] or
 [`ExtractorRunStats`][saidex.ExtractorRunStats]) **and/or** bare
@@ -57,11 +59,12 @@ for schema in summary.schemas:            # most problematic schema first
 | `runs_with_problem` | Runs in which the field failed at least once. |
 | `failed_runs_with_problem` | Of those, how many runs ultimately failed. |
 | `occurrences_on_successful_runs` | Issues that were self-corrected. |
-| `recovery_rate` | Share of `runs_with_problem` that still succeeded. |
+| `salvaged_runs_with_problem` | Runs that only succeeded through an `on_exhausted` hook. |
+| `recovery_rate` | Share of `runs_with_problem` that succeeded cleanly (salvaged runs do not count). |
 | `by_category` / `by_error_type` | Issue counts per category and raw Pydantic error type. |
 | `first_error_attempt_avg` | Mean earliest attempt the field failed — low means up-front. |
 | `sample_received` | Up to five distinct offending values. |
-| `severity` | Sort score: dominated by `failed_runs_with_problem`, tie-broken by `total_occurrences`. |
+| `severity` | Sort score: dominated by failed plus salvaged runs, tie-broken by `total_occurrences`. |
 
 A field with a **low `recovery_rate`** and a high `failed_runs_with_problem` is
 where to spend your prompt-tuning effort first — it causes hard failures. A

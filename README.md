@@ -4,7 +4,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/mlauf-labs/saidex/tests.yml?label=CI&logo=github)](https://github.com/mlauf-labs/saidex/actions)
 [![PyPI](https://img.shields.io/pypi/v/saidex.svg)](https://pypi.org/project/saidex/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-brightgreen.svg)](https://mlauf-labs.github.io/SAIDEX/)
 
@@ -52,7 +52,9 @@ Extract validated [Pydantic](https://docs.pydantic.dev/) models from LLM respons
 pip install saidex
 ```
 
-If you use OpenAI models and want automatic rate-limit handling:
+With langchain-core ≥ 1.6, rate limits, timeouts and 5xx errors of any provider
+integration that raises the standard model exceptions are handled automatically. For
+older langchain-core versions, or to catch raw OpenAI SDK errors, add the OpenAI extra:
 
 ```bash
 pip install "saidex[openai]"
@@ -200,7 +202,11 @@ forced `tool_choice`, `strict=True`, and `parallel_tool_calls=False`. Some
 OpenAI-*compatible* gateways (Kimi/Moonshot, some Qwen or DeepSeek deployments)
 reject those flags with an HTTP 400. SAIDEX notices such a rejection and
 re-binds the tool **once** with relaxed flags — no configuration needed, and no
-validation retry consumed. You can also state the flags up front:
+validation retry consumed. With `strict=True` the schema is sent as a real strict
+tool: optional fields arrive as `null` (an `Optional[int] = 5` becomes `None`),
+defaulted fields must be sent explicitly. `dict[...]`, `Any`, `TypedDict`,
+recursive and `MISSING`-default schemas fall back to a non-strict tool with a
+warning; use `COMPATIBLE` when omission semantics matter. You can also state the flags up front:
 
 ```python
 from saidex import ToolCallConfig, extract_data_from_text
@@ -240,15 +246,21 @@ When a validation attempt fails, the library appends a **detailed error message*
 result, stats = await extract_data(...)
 
 stats.success           # bool — did the run produce a validated instance?
-stats.failure_reason    # str | None — why it failed (None on success)
+stats.failure_reason    # FailureReason | None — why it failed (None on success)
+stats.llm_error_kind    # ModelErrorKind | None — why the model call failed (llm_error only)
 stats.primary_retries   # int — retries against the primary model
 stats.fallback_retries  # int — retries against the fallback model
 stats.total_retries     # int — sum of both
 stats.fallback_used     # bool — was the fallback model invoked?
+stats.salvaged          # bool — result produced by an on_exhausted hook
+stats.reasoning_effort  # str | None — reasoning level of the deciding attempt (escalation only)
 stats.item_count        # int — items returned by extract_data_list (else 0)
 stats.format_errors     # int — pure parse / tool-call failures
 stats.problem_fields    # tuple[str, ...] — fields that ever failed validation
 stats.field_issues      # tuple[FieldIssue, ...] — structured per-field problems
+stats.last_candidate    # last schema-valid but rejected instance
+                        # (None on a clean success; kept when salvaged)
+stats.last_rejection    # tuple[FieldIssue, ...] — the issues that rejected it
 
 if not stats.success:
     print(stats.failure_reason, stats.problem_fields)
@@ -345,9 +357,12 @@ from saidex.langgraph import SaidexToolNode
 graph.add_node("tools", SaidexToolNode(tools))   # instead of ToolNode(tools)
 ```
 
-It repairs malformed JSON, validates arguments against each tool's Pydantic
-schema before execution, and — by policy — answers bad calls with structured
-field-level feedback, runs a bounded LLM correction cycle, or fails fast.
+It repairs malformed JSON and validates arguments against each tool's Pydantic
+schema (plus optional per-tool validators) before execution. Invalid calls are
+either answered with structured field-level feedback so the agent fixes them,
+or — with a `correction_model` — corrected inside the node without adding the
+correction to the message history. Calls that stay invalid follow
+`on_unresolved`: feedback, fail fast, or your own hook.
 
 > Full guide: [`docs/langgraph-toolnode.md`](docs/langgraph-toolnode.md) —
 > runnable example: [`examples/16_langgraph_toolnode.py`](examples/16_langgraph_toolnode.py)
@@ -848,6 +863,20 @@ def validate_invoice(inv: Invoice) -> None:
 invoice, stats = await extract_data_from_text(llm, Invoice, text, validator=validate_invoice)
 ```
 
+To report several findings at once, return a list of `ValidationIssue`s — each gets
+its own `field_path` and rule id in `stats.field_issues`, and `on_mismatch="flag"`
+records a soft finding without consuming a retry.
+
+To vary a validator by retry round — strict early, lenient on the last attempt —
+wrap it with `with_context`, which passes a `ValidatorContext` as second argument
+([details](docs/external-validators.md#attempt-context-strict-early-lenient-at-the-end)).
+
+When every retry fails, an `on_exhausted` hook can still keep the part that
+passed — e.g. drop the rejected items — and the run succeeds with
+`stats.salvaged=True`
+([details](docs/external-validators.md#salvaging-a-partial-result-on_exhausted),
+[`examples/17_salvage_partial_results.py`](examples/17_salvage_partial_results.py)).
+
 > Cross-field example and full guide:
 > [`examples/12_external_validator.py`](examples/12_external_validator.py)
 > — [detailed docs](docs/external-validators.md)
@@ -877,6 +906,16 @@ Matching is case/whitespace/diacritics-insensitive and **locale-aware**: a
 the locale taken from a sibling field (`locale_field`) or a fixed `locale`.
 It is built on a reusable `FieldCheck` pattern, so you can add your own
 source-aware checks the same way.
+
+When the user message carries more than the document — customer records,
+reference data — pass `grounding_source=` so only the document counts as
+evidence, or a dict of named sources for `Grounded(source="mail")` fields:
+
+```python
+result, stats = await extract_data_from_text(
+    llm, Concern, prompt, grounding_source=mail_text  # values must appear in the mail
+)
+```
 
 > Full guide and the custom-check pattern:
 > [`examples/13_source_grounding.py`](examples/13_source_grounding.py)
@@ -931,7 +970,7 @@ means the keyword argument is **omitted from the request** — not sent as `fals
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `tool_choice` | `"forced" \| "auto" \| None` | `"forced"` | Force the schema tool by name, let the model choose, or send no `tool_choice` |
-| `strict` | `bool \| None` | `True` | Value for `strict` (OpenAI structured outputs), or `None` to omit |
+| `strict` | `bool \| None` | `True` | Request provider-side strict schema adherence (applied to the tool schema; falls back to non-strict for unsupported shapes), or `None` to omit |
 | `parallel_tool_calls` | `bool \| None` | `False` | Value for `parallel_tool_calls`, or `None` to omit |
 | `auto_relax` | `bool` | `True` | On a flag rejection (HTTP 400 or `TypeError`), re-bind once with `COMPATIBLE` instead of failing |
 
@@ -982,8 +1021,8 @@ Presets: `ToolCallConfig.OPENAI` (the defaults above) and
 | --- | --- | --- | --- |
 | `max_retries` | `int` | `3` | Max transient-error retries |
 | `retry_delays` | `list[float]` | `[1.0, 2.0, 4.0]` | Per-attempt delays in seconds |
-| `retryable_exceptions` | `tuple[type[Exception], ...]` | httpx + openai errors | Exceptions that trigger a transient retry |
-| `rate_limit_exceptions` | `tuple[type[Exception], ...]` | `openai.RateLimitError` | Exceptions that trigger rate-limit retry |
+| `retryable_exceptions` | `tuple[type[Exception], ...]` | langchain-core standard model errors (incl. 5xx), openai and httpx/httpx2 errors | Exceptions that trigger a transient retry |
+| `rate_limit_exceptions` | `tuple[type[Exception], ...]` | `ModelRateLimitError`, `openai.RateLimitError` | Exceptions that trigger rate-limit retry |
 | `rate_limit_retry_interval` | `float` | `10.0` | Seconds between rate-limit retries |
 | `rate_limit_max_duration_seconds` | `float` | `900.0` | Maximum total wait for rate-limit retries |
 
@@ -991,7 +1030,7 @@ Presets: `ToolCallConfig.OPENAI` (the defaults above) and
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.11+
 - `pydantic >= 2.0`
 - `langchain-core >= 0.2`
 - Any LangChain chat model. Tool-calling mode (default) needs a tool/function-calling-capable model (OpenAI, Anthropic, Gemini, Mistral, …); `ExtractionMode.JSON` works with any chat model, including local models without tool-calling support.

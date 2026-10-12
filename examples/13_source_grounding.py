@@ -18,6 +18,10 @@ pass a fixed ``locale``.
 By default a mismatch re-enters the retry loop; pass ``on_mismatch="flag"`` for
 advisory grounding that keeps the value and only records a ``FieldIssue``.
 
+When the prompt carries more than the document (here: customer data next to a
+mail), pass ``grounding_source=`` so only the mail counts as evidence, or a dict
+of named sources for ``Grounded(source="mail")`` fields.
+
 Run:
     python examples/13_source_grounding.py
 """
@@ -56,6 +60,34 @@ class Invoice(BaseModel):
     note: str = Field(description="One-line summary")
 
 
+class Concern(BaseModel):
+    """A customer concern whose order number must be stated in the mail itself."""
+
+    order_number: Annotated[str | None, Grounded(source="mail")] = Field(
+        description="Order number the customer refers to"
+    )
+    product: Annotated[str | None, Grounded(source="catalog")] = Field(
+        description="Product name as listed in the catalog"
+    )
+
+
+async def grounding_against_the_mail(llm: ChatOpenAI) -> None:
+    """Ground fields in parts of one prompt that also carries customer data."""
+    customer_data = '{"orders": [{"order_number": 32008}, {"order_number": 28870}]}'
+    catalog = "UltraView 27 monitor, ProDesk keyboard"
+    mail = "Subject: Monitor broken\nMy UltraView 27 monitor from order 32008 has dead pixels."
+    prompt = f"Customer data (JSON): {customer_data}\nCatalog: {catalog}\n\n<mail>\n{mail}\n</mail>"
+
+    concern, stats = await extract_data_from_text(
+        llm,
+        Concern,
+        prompt,
+        grounding_source={"mail": mail, "catalog": catalog},
+    )
+    print("\nConcern (order number grounded in the mail, product in the catalog):")
+    print(f"  {concern}  — retries: {stats.total_retries}")
+
+
 async def main() -> None:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
@@ -83,6 +115,8 @@ async def main() -> None:
         print("Issues seen along the way:")
         for issue in stats.field_issues:
             print(f"  [{issue.category}] {issue.field_path}: {issue.message}")
+
+    await grounding_against_the_mail(llm)
 
 
 if __name__ == "__main__":

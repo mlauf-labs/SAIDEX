@@ -61,6 +61,12 @@ def test_tool_node_stats_aggregates() -> None:
     assert stats.field_issues == (_issue(),)
 
 
+def test_tool_call_stats_keeps_its_v0_7_positional_fields() -> None:
+    stats = ToolCallStats("add", "c1", "feedback", False, True, 2, (_issue(),))
+    assert (stats.correction_retries, stats.field_issues) == (2, (_issue(),))
+    assert stats.correction_attempted is False
+
+
 def test_tool_node_event_carries_stats() -> None:
     stats = ToolNodeStats()
     event = ToolNodeEvent(node_name="tools", stats=stats)

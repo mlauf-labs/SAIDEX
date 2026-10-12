@@ -31,13 +31,29 @@ Public API
         ExtractionMode,
         ToolCallConfig,
         ExtractDataStats,
+        FailureReason,
+        ModelErrorKind,
+        ReasoningEscalation,
         FieldIssue,
         ExtractionEvent,
         ToolCallStats,
         ToolNodeStats,
         ToolNodeEvent,
+        UnresolvedToolCall,
+        ToolCallValidatorContext,
+        ToolValidator,
+        OnUnresolved,
         OnComplete,
+        OnExhausted,
+        OnExhaustedList,
+        issue_item_index,
         Validator,
+        ValidationIssue,
+        ValidatorResult,
+        ValidatorContext,
+        ContextValidator,
+        WithContext,
+        with_context,
         collect_stats,
         StatsSink,
         on_extraction,
@@ -46,6 +62,7 @@ Public API
         ExtractionListener,
         ToolNodeListener,
         RetryConfig,
+        classify_model_error,
         create_instance_safe,
         # Source grounding (schema-declared, source-aware field checks)
         Grounded,
@@ -73,6 +90,8 @@ Public API
     )
 """
 
+from ._reasoning import ReasoningEscalation
+from ._tool_calls import OnUnresolved, ToolValidator
 from .analytics import (
     FieldIssueSummary,
     FieldProblemStat,
@@ -81,14 +100,21 @@ from .analytics import (
     summarize_field_issues,
 )
 from .extractor import (
+    ContextValidator,
     OnComplete,
+    OnExhausted,
+    OnExhaustedList,
     Validator,
+    ValidatorResult,
+    WithContext,
     extract_data,
     extract_data_from_text,
     extract_data_list,
     extract_data_list_from_text,
     extract_data_with_tools,
+    issue_item_index,
     run_extractor_agent,
+    with_context,
 )
 from .grounding import (
     ExtractionContext,
@@ -103,11 +129,17 @@ from .models import (
     ExtractionEvent,
     ExtractionMode,
     ExtractorRunStats,
+    FailureReason,
     FieldIssue,
+    ModelErrorKind,
     ToolCallConfig,
     ToolCallStats,
+    ToolCallValidatorContext,
     ToolNodeEvent,
     ToolNodeStats,
+    UnresolvedToolCall,
+    ValidationIssue,
+    ValidatorContext,
 )
 from .observability import (
     ExtractionListener,
@@ -118,7 +150,13 @@ from .observability import (
     on_extraction,
     on_tool_node,
 )
-from .retry import DEFAULT_RETRY_CONFIG, RetryConfig, RetryResult, with_retry
+from .retry import (
+    DEFAULT_RETRY_CONFIG,
+    RetryConfig,
+    RetryResult,
+    classify_model_error,
+    with_retry,
+)
 from .sync import (
     extract_data_from_text_sync,
     extract_data_list_from_text_sync,
@@ -174,13 +212,29 @@ __all__ = [
     "ExtractionMode",
     "ToolCallConfig",
     "ExtractDataStats",
+    "FailureReason",
+    "ModelErrorKind",
+    "ReasoningEscalation",
     "FieldIssue",
     "ExtractionEvent",
     "ToolCallStats",
     "ToolNodeStats",
     "ToolNodeEvent",
+    "UnresolvedToolCall",
+    "ToolCallValidatorContext",
+    "ToolValidator",
+    "OnUnresolved",
     "OnComplete",
+    "OnExhausted",
+    "OnExhaustedList",
+    "issue_item_index",
     "Validator",
+    "ValidationIssue",
+    "ValidatorResult",
+    "ContextValidator",
+    "ValidatorContext",
+    "WithContext",
+    "with_context",
     "collect_stats",
     "StatsSink",
     "on_extraction",
@@ -198,6 +252,7 @@ __all__ = [
     "RetryResult",
     "DEFAULT_RETRY_CONFIG",
     "with_retry",
+    "classify_model_error",
     "create_instance_safe",
     # source grounding / schema-declared field checks
     "Grounded",
@@ -227,4 +282,4 @@ __all__ = [
     "validate_rrule",
 ]
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"

@@ -124,6 +124,11 @@ if lines is None:
 print(f"{stats.item_count} items, {stats.total_retries} retries")
 ```
 
+Pass `on_exhausted` to keep the valid items when some are rejected — see [External Validators → on_exhausted](external-validators.md#salvaging-a-partial-result-on_exhausted).
+
+On failure, `stats.last_candidate` is the last rejected `list` of items:
+`items = cast(list[Item], stats.last_candidate)`.
+
 `ExtractDataStats.item_count` reports how many items were returned (it is `0` for
 single-item extraction). All other fields — `total_retries`, `fallback_used` —
 behave exactly as in [Retry & Fallback](retry-and-fallback.md).

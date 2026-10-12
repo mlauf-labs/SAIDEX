@@ -28,10 +28,10 @@ result, stats = await extract_data(
 ```
 
 **What reaches the handlers:** the chain-run span closes with the validated
-result and run metrics as its outputs — the same data the handler already sees
+result and run metrics (`success`, `failure_reason`, `llm_error_kind`, `salvaged`, `reasoning_effort`, …) as its outputs — the same data the handler already sees
 inside the LLM generations, packaged once per extraction. The raw source text
 is **not** part of the trace unless you opt in with `capture_source_text=True`,
-which then also includes it in the span's inputs. If your handler exports to an
+which then also includes it — and an explicit `grounding_source` — in the span's inputs. If your handler exports to an
 external backend, enable that flag deliberately. (The `collect_stats` sink
 below stays PII-light regardless — it never stores messages, results, or
 source text.)
@@ -57,8 +57,8 @@ for s in sink.all():                         # list[ExtractDataStats | Extractor
 ```
 
 `sink.all()` returns the stats in chronological order. The sink stores only the
-stats object of each run — never the messages, result, or source text — so it
-stays PII-light by default.
+stats object of each run, with `last_candidate` removed — never the messages,
+result, or source text — so it stays PII-light by default.
 
 It works as a plain `with` too, so the synchronous wrappers are covered:
 
@@ -90,7 +90,14 @@ There is no overhead and no global state when no `collect_stats` block is active
 For process-wide observability (logging, tracing, metrics) register a listener
 with `on_extraction`. It fires once per top-level extraction — on success and
 failure — with the full `ExtractionEvent` (stats, result, messages, source
-text). The callback may be sync or async:
+text). The callback may be sync or async.
+
+!!! warning "PII"
+    On a failed run `event.last_candidate` / `stats.last_candidate` holds the
+    rejected instance, i.e. extracted source data. Handle it like the source
+    text; see
+    [External Validators](external-validators.md#when-every-attempt-fails-last_candidate).
+    Chain-run span outputs carry only `has_last_candidate`.
 
 ```python
 import logging
@@ -118,7 +125,10 @@ When you use [`SaidexToolNode`](langgraph-toolnode.md), each node invocation
 emits a `ToolNodeEvent`. Active `collect_stats()` sinks record its
 `ToolNodeStats` alongside extraction stats, and `on_tool_node()` registers a
 process-wide listener — the tool-node counterpart to `on_extraction()`
-(extraction listeners do not receive tool-node events).
+(extraction listeners do not receive tool-node events). Per call,
+`ToolCallStats` reports the `outcome` (`executed`, `corrected`, `salvaged`,
+`feedback`, `dropped`), whether the correction cycle ran
+(`correction_attempted`) and the field issues found by validation.
 
 ---
 
