@@ -821,7 +821,13 @@ async def extract_data(
         else await _ChainRun.start(
             callbacks,
             name="saidex.extract_data",
-            inputs=_trace_inputs(schema.__name__, mode.value, human_text, capture_source_text),
+            inputs=_trace_inputs(
+                schema.__name__,
+                mode.value,
+                human_text,
+                capture_source_text,
+                grounding_source=grounding_source,
+            ),
         )
     )
     owns_trace = _trace is None
@@ -1283,7 +1289,13 @@ async def extract_data_list(
     trace = await _ChainRun.start(
         callbacks,
         name="saidex.extract_data_list",
-        inputs=_trace_inputs(schema.__name__, mode.value, human_text, capture_source_text),
+        inputs=_trace_inputs(
+            schema.__name__,
+            mode.value,
+            human_text,
+            capture_source_text,
+            grounding_source=grounding_source,
+        ),
     )
     try:
         # The inner call must not fire the hook or notify observers: it would
@@ -1657,6 +1669,7 @@ async def run_extractor_agent(
             final_answer_mode.value,
             human_text,
             capture_source_text,
+            grounding_source=grounding_source,
             tools=[t.name for t in tools],
         ),
     )
@@ -1819,17 +1832,24 @@ def _trace_inputs(
     mode_value: str,
     source_text: str,
     capture_source_text: bool,
+    *,
+    grounding_source: str | Mapping[str, str] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     """Chain-run inputs shared by every extraction entry point.
 
-    The raw source text is included only when the caller opted in via
-    ``capture_source_text`` — the same privacy gate that governs
-    ``stats.source_text``.
+    The human-turn text and an explicit ``grounding_source`` are included only
+    when the caller opted in via ``capture_source_text`` — the same privacy gate
+    that governs ``stats.source_text``.  A mapping source is copied into a plain
+    ``dict`` so tracers can serialise it.
     """
     inputs: dict[str, Any] = {"schema": schema_name, "mode": mode_value, **extra}
     if capture_source_text:
         inputs["text"] = source_text
+        if grounding_source is not None:
+            inputs["grounding_source"] = (
+                grounding_source if isinstance(grounding_source, str) else dict(grounding_source)
+            )
     return inputs
 
 

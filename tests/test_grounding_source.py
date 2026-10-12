@@ -8,10 +8,12 @@ that only appears in the reference data is rejected. Mock LLMs only — no netwo
 from __future__ import annotations
 
 from collections.abc import Callable
+from types import MappingProxyType
 from typing import Annotated, Any
 from unittest.mock import MagicMock
 
 import pytest
+from langchain_core.callbacks.base import AsyncCallbackHandler
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
@@ -490,3 +492,112 @@ async def test_unknown_source_name_raises_in_batch_extraction() -> None:
         )
 
     llm.bind_tools.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Trace inputs — grounding_source only behind capture_source_text
+# ---------------------------------------------------------------------------
+
+
+class _InputsRecorder(AsyncCallbackHandler):
+    """Records the inputs of every chain-run start."""
+
+    def __init__(self) -> None:
+        self.inputs: list[dict[str, Any]] = []
+
+    async def on_chain_start(self, serialized: Any, inputs: Any, **kw: Any) -> None:
+        self.inputs.append(dict(inputs))
+
+
+TRACED_CALLS = [
+    pytest.param(
+        lambda llm, **kw: extract_data(llm, Concern, _messages(), **kw),
+        _single,
+        id="extract_data",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_list(llm, Concern, _messages(), **kw),
+        _batch,
+        id="extract_data_list",
+    ),
+    pytest.param(
+        lambda llm, **kw: run_extractor_agent(llm, Concern, _messages(), tools=[], **kw),
+        _single,
+        id="run_extractor_agent",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("call", "answer"), TRACED_CALLS)
+async def test_trace_inputs_carry_grounding_source_when_captured(
+    call: Callable[..., Any], answer: Answer
+) -> None:
+    recorder = _InputsRecorder()
+    llm = make_llm([answer("32008", "c1")])
+
+    _, stats = await call(
+        llm,
+        callbacks=[recorder],
+        grounding_source=MAIL,
+        capture_source_text=True,
+        retry_config=NO_RETRY,
+    )
+
+    assert recorder.inputs[0]["grounding_source"] == MAIL
+    assert recorder.inputs[0]["text"] == PROMPT
+    assert stats.source_text == PROMPT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("call", "answer"), TRACED_CALLS)
+async def test_trace_inputs_omit_grounding_source_by_default(
+    call: Callable[..., Any], answer: Answer
+) -> None:
+    recorder = _InputsRecorder()
+    llm = make_llm([answer("32008", "c1")])
+
+    _, stats = await call(llm, callbacks=[recorder], grounding_source=MAIL, retry_config=NO_RETRY)
+
+    assert "grounding_source" not in recorder.inputs[0]
+    assert "text" not in recorder.inputs[0]
+    assert stats.source_text is None
+
+
+@pytest.mark.asyncio
+async def test_trace_inputs_have_no_grounding_key_without_a_source() -> None:
+    recorder = _InputsRecorder()
+    llm = make_llm([_single("28870", "c1")])
+
+    await extract_data(
+        llm,
+        Concern,
+        _messages(),
+        callbacks=[recorder],
+        capture_source_text=True,
+        retry_config=NO_RETRY,
+    )
+
+    assert "grounding_source" not in recorder.inputs[0]
+    assert recorder.inputs[0]["text"] == PROMPT
+
+
+@pytest.mark.asyncio
+async def test_trace_inputs_copy_a_mapping_source() -> None:
+    recorder = _InputsRecorder()
+    sources = {"mail": MAIL, "catalog": CATALOG}
+    llm = make_llm([_answer("RoutedConcern", {"order_number": "32008", "product": "UltraView 27"})])
+
+    await extract_data(
+        llm,
+        RoutedConcern,
+        _messages(),
+        callbacks=[recorder],
+        grounding_source=MappingProxyType(sources),
+        capture_source_text=True,
+        retry_config=NO_RETRY,
+    )
+
+    traced = recorder.inputs[0]["grounding_source"]
+    assert traced == sources
+    assert type(traced) is dict
