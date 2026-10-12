@@ -8,12 +8,14 @@ extraction entry points lives in ``test_grounding_integration.py``.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Annotated, Any
 
 import pytest
 from pydantic import BaseModel
+from typing_extensions import TypeAliasType, TypedDict
 
 from saidex import ExtractionContext, FieldCheck, Grounded, GroundedField, GroundedStr
 from saidex.grounding import (
@@ -31,6 +33,17 @@ class _TreeNode(BaseModel):
 
 
 _TreeNode.model_rebuild()
+
+
+class _CatalogLine(BaseModel):
+    sku: Annotated[str, Grounded(source="catalog")]
+
+
+class _LineHolder(TypedDict):
+    line: _CatalogLine
+
+
+_CatalogLines = TypeAliasType("_CatalogLines", list[_CatalogLine])
 
 # ---------------------------------------------------------------------------
 # Configuration surfaces — both land the marker in FieldInfo.metadata
@@ -558,3 +571,28 @@ class TestValidateSourceNames:
 
         with pytest.raises(ValueError, match="'catalog'"):
             _validate_source_names(Doc, _resolve_grounding_sources({}, ""))
+
+    def test_finds_names_inside_typed_dicts(self) -> None:
+        class Doc(BaseModel):
+            holder: _LineHolder
+
+        with pytest.raises(ValueError, match=r"'holder -> line -> sku'"):
+            _validate_source_names(Doc, _resolve_grounding_sources({"mail": "m"}, ""))
+
+    def test_finds_names_behind_type_aliases(self) -> None:
+        class Doc(BaseModel):
+            lines: _CatalogLines
+
+        with pytest.raises(ValueError, match=r"'lines -> sku'"):
+            _validate_source_names(Doc, _resolve_grounding_sources({"mail": "m"}, ""))
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="needs the PEP 695 'type' statement")
+    def test_recursive_type_alias_terminates(self) -> None:
+        namespace: dict[str, Any] = {"BaseModel": BaseModel, "_CatalogLine": _CatalogLine}
+        source = "type Tree = list[Tree] | _CatalogLine\nclass Doc(BaseModel):\n    tree: Tree\n"
+        # dont_inherit: keep this module's ``from __future__ import annotations``
+        # out, so the field annotation is the alias itself, not a ForwardRef.
+        exec(compile(source, "<recursive-alias>", "exec", dont_inherit=True), namespace)
+
+        with pytest.raises(ValueError, match=r"'tree -> sku'"):
+            _validate_source_names(namespace["Doc"], _resolve_grounding_sources({}, ""))

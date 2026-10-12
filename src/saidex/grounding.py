@@ -25,14 +25,17 @@ first built-in check on a reusable pattern.
 
 from __future__ import annotations
 
+import typing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Annotated, Any, get_args, get_origin
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
+import typing_extensions
 from pydantic import BaseModel, Field
+from typing_extensions import is_typeddict
 
 from ._localization import fuzzy_contains, normalize_for_match, render_candidates
 from .models import FieldIssue
@@ -56,6 +59,15 @@ _SCALAR_TYPES = (str, int, float, Decimal, bool, date, datetime)
 
 # Shared read-only "no named sources" value.
 _EMPTY_SOURCES: Mapping[str, str] = MappingProxyType({})
+
+# ``type X = ...`` (3.12+) and ``typing_extensions.TypeAliasType(...)`` create
+# instances of two different classes on 3.12/3.13, so both are checked.
+_TYPE_ALIAS_TYPES: tuple[type[Any], ...] = tuple(
+    {
+        typing_extensions.TypeAliasType,
+        getattr(typing, "TypeAliasType", typing_extensions.TypeAliasType),
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -291,12 +303,14 @@ def _resolve_grounding_sources(
 def _required_source_names(schema: type[BaseModel]) -> list[tuple[str, str]]:
     """List ``(field_path, source_name)`` for every field check that names a source.
 
-    Walks *schema* statically — nested models and the type arguments of
-    ``list``/``dict``/``tuple``/unions — reaching the same fields as the runtime
-    walk. A check names a source through a ``str`` attribute ``source``.
+    Walks *schema* statically — nested models, the type arguments of
+    ``list``/``dict``/``tuple``/unions, ``type`` aliases and ``TypedDict`` fields —
+    so every model the runtime walk can reach is covered. A check names a source
+    through a ``str`` attribute ``source``.
     """
     found: list[tuple[str, str]] = []
     seen: set[type[BaseModel]] = set()
+    seen_other: set[int] = set()
 
     def visit_model(model: type[BaseModel], prefix: str) -> None:
         if model in seen:
@@ -311,13 +325,28 @@ def _required_source_names(schema: type[BaseModel]) -> list[tuple[str, str]]:
             visit_type(info.annotation, path)
 
     def visit_type(annotation: Any, path: str) -> None:
-        if (
-            get_origin(annotation) is None
-            and isinstance(annotation, type)
-            and issubclass(annotation, BaseModel)
-        ):
+        if isinstance(annotation, _TYPE_ALIAS_TYPES) or is_typeddict(annotation):
+            # Aliases may be recursive (``type Tree = list[Tree] | Leaf``).
+            if id(annotation) in seen_other:
+                return
+            seen_other.add(id(annotation))
+            if not is_typeddict(annotation):
+                visit_type(annotation.__value__, path)
+                return
+            try:
+                hints = get_type_hints(annotation, include_extras=True)
+            except (NameError, TypeError):
+                # Unresolvable forward references: keep the raw annotations.
+                hints = dict(getattr(annotation, "__annotations__", {}))
+            for key, hint in hints.items():
+                visit_type(hint, f"{path} -> {key}")
+            return
+        origin = get_origin(annotation)
+        if origin is None and isinstance(annotation, type) and issubclass(annotation, BaseModel):
             visit_model(annotation, path)
             return
+        if isinstance(origin, _TYPE_ALIAS_TYPES):
+            visit_type(origin, path)
         for arg in get_args(annotation):
             visit_type(arg, path)
 
