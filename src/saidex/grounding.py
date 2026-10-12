@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from types import MappingProxyType
-from typing import Annotated, Any
+from typing import Annotated, Any, get_args, get_origin
 
 from pydantic import BaseModel, Field
 
@@ -226,6 +226,124 @@ def GroundedField(  # noqa: N802 — mirrors pydantic.Field's CapWords spelling
         ),
         **field_kwargs,
     )
+
+
+@dataclass(frozen=True)
+class _GroundingSources:
+    """The evidence one extraction run grounds its fields in.
+
+    Attributes:
+        default: Text for checks without a source name, or ``None`` to skip them.
+        named: Read-only named sources for checks such as ``Grounded(source="mail")``.
+    """
+
+    default: str | None
+    named: Mapping[str, str] = field(default_factory=lambda: _EMPTY_SOURCES)
+
+    @property
+    def is_empty(self) -> bool:
+        """Whether no field check has anything to ground against."""
+        return self.default is None and not self.named
+
+
+_NO_GROUNDING = _GroundingSources(default=None)
+
+
+def _resolve_grounding_sources(
+    grounding_source: str | Mapping[str, str] | None, human_text: str
+) -> _GroundingSources:
+    """Resolve the caller's ``grounding_source`` into the run's grounding evidence.
+
+    Args:
+        grounding_source: ``None`` (use *human_text*), a string (the default
+            source), or a mapping of named sources whose ``"default"`` key, if
+            present, replaces *human_text* as the default source.
+        human_text: The human-turn text of the messages; empty means "none".
+
+    Returns:
+        The resolved sources. An explicit source is kept even when empty.
+
+    Raises:
+        TypeError: If *grounding_source* is not ``None``, a ``str`` or a mapping
+            of ``str`` names to ``str`` texts.
+    """
+    fallback = human_text or None
+    if grounding_source is None:
+        return _GroundingSources(default=fallback)
+    if isinstance(grounding_source, str):
+        return _GroundingSources(default=grounding_source)
+    if not isinstance(grounding_source, Mapping):
+        raise TypeError(
+            "grounding_source must be a str, a Mapping[str, str] or None; "
+            f"got {type(grounding_source).__name__}"
+        )
+    named: dict[str, str] = {}
+    for name, text in grounding_source.items():
+        if not isinstance(name, str) or not isinstance(text, str):
+            raise TypeError(
+                "grounding_source must map str names to str texts; "
+                f"got {name!r}: {type(text).__name__}"
+            )
+        named[name] = text
+    return _GroundingSources(default=named.get("default", fallback), named=MappingProxyType(named))
+
+
+def _required_source_names(schema: type[BaseModel]) -> list[tuple[str, str]]:
+    """List ``(field_path, source_name)`` for every field check that names a source.
+
+    Walks *schema* statically — nested models and the type arguments of
+    ``list``/``dict``/``tuple``/unions — reaching the same fields as the runtime
+    walk. A check names a source through a ``str`` attribute ``source``.
+    """
+    found: list[tuple[str, str]] = []
+    seen: set[type[BaseModel]] = set()
+
+    def visit_model(model: type[BaseModel], prefix: str) -> None:
+        if model in seen:
+            return
+        seen.add(model)
+        for name, info in model.model_fields.items():
+            path = f"{prefix} -> {name}" if prefix else name
+            for check in info.metadata:
+                source = getattr(check, "source", None)
+                if isinstance(check, FieldCheck) and isinstance(source, str):
+                    found.append((path, source))
+            visit_type(info.annotation, path)
+
+    def visit_type(annotation: Any, path: str) -> None:
+        if (
+            get_origin(annotation) is None
+            and isinstance(annotation, type)
+            and issubclass(annotation, BaseModel)
+        ):
+            visit_model(annotation, path)
+            return
+        for arg in get_args(annotation):
+            visit_type(arg, path)
+
+    visit_model(schema, "")
+    return found
+
+
+def _validate_source_names(schema: type[BaseModel], sources: _GroundingSources) -> None:
+    """Reject a schema whose field checks name a source *sources* does not provide.
+
+    Args:
+        schema: The schema about to be extracted.
+        sources: The resolved grounding sources of the run.
+
+    Raises:
+        ValueError: Naming the first field whose source is missing, so a named
+            check never silently falls back to the whole prompt.
+    """
+    for path, name in _required_source_names(schema):
+        if name not in sources.named:
+            available = ", ".join(repr(n) for n in sources.named) or "none"
+            raise ValueError(
+                f"Field '{path}' of {schema.__name__} is grounded in source {name!r}, but "
+                f"grounding_source provides no source with that name (available: {available}). "
+                f"Pass grounding_source={{{name!r}: ...}}."
+            )
 
 
 def collect_field_check_issues(

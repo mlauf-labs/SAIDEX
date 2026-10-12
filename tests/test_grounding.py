@@ -8,13 +8,29 @@ extraction entry points lives in ``test_grounding_integration.py``.
 
 from __future__ import annotations
 
-from typing import Annotated
+from dataclasses import dataclass
+from types import MappingProxyType
+from typing import Annotated, Any
 
 import pytest
 from pydantic import BaseModel
 
 from saidex import ExtractionContext, FieldCheck, Grounded, GroundedField, GroundedStr
-from saidex.grounding import _collect_field_checks, collect_field_check_issues, field_check
+from saidex.grounding import (
+    _collect_field_checks,
+    _resolve_grounding_sources,
+    _validate_source_names,
+    collect_field_check_issues,
+    field_check,
+)
+
+
+class _TreeNode(BaseModel):
+    name: Annotated[str, Grounded(source="tree")]
+    children: list[_TreeNode] = []
+
+
+_TreeNode.model_rebuild()
 
 # ---------------------------------------------------------------------------
 # Configuration surfaces — both land the marker in FieldInfo.metadata
@@ -406,3 +422,139 @@ class TestEngineWalkWithSources:
 
         collect_field_check_issues(Doc(v="x"), "text", "Doc", sources={"mail": "m"})
         assert seen == [{"mail": "m"}]
+
+
+class TestResolveGroundingSources:
+    def test_none_uses_human_text(self) -> None:
+        sources = _resolve_grounding_sources(None, "human")
+        assert sources.default == "human"
+        assert dict(sources.named) == {}
+
+    def test_empty_human_text_resolves_to_none(self) -> None:
+        sources = _resolve_grounding_sources(None, "")
+        assert sources.default is None
+        assert sources.is_empty
+
+    def test_string_replaces_human_text(self) -> None:
+        assert _resolve_grounding_sources("mail", "human").default == "mail"
+
+    def test_explicit_empty_string_is_kept(self) -> None:
+        sources = _resolve_grounding_sources("", "human")
+        assert sources.default == ""
+        assert not sources.is_empty
+
+    def test_mapping_default_key_wins(self) -> None:
+        sources = _resolve_grounding_sources({"default": "d", "mail": "m"}, "human")
+        assert sources.default == "d"
+        assert dict(sources.named) == {"default": "d", "mail": "m"}
+
+    def test_mapping_without_default_falls_back_to_human_text(self) -> None:
+        sources = _resolve_grounding_sources({"mail": "m"}, "human")
+        assert sources.default == "human"
+        assert dict(sources.named) == {"mail": "m"}
+
+    def test_accepts_any_mapping(self) -> None:
+        sources = _resolve_grounding_sources(MappingProxyType({"mail": "m"}), "")
+        assert dict(sources.named) == {"mail": "m"}
+
+    def test_named_sources_are_a_read_only_copy(self) -> None:
+        given = {"mail": "m"}
+        sources = _resolve_grounding_sources(given, "")
+        given["mail"] = "changed"
+        assert sources.named["mail"] == "m"
+        with pytest.raises(TypeError):
+            sources.named["mail"] = "x"  # type: ignore[index]
+
+    @pytest.mark.parametrize("given", [123, ["mail"], b"mail"])
+    def test_rejects_wrong_type(self, given: Any) -> None:
+        with pytest.raises(TypeError, match="grounding_source"):
+            _resolve_grounding_sources(given, "")
+
+    @pytest.mark.parametrize("given", [{"mail": 1}, {1: "m"}, {"mail": None}])
+    def test_rejects_non_str_names_or_texts(self, given: Any) -> None:
+        with pytest.raises(TypeError, match="grounding_source"):
+            _resolve_grounding_sources(given, "")
+
+
+class TestValidateSourceNames:
+    def test_known_names_pass(self) -> None:
+        class Doc(BaseModel):
+            order: Annotated[str, Grounded(source="mail")]
+
+        _validate_source_names(Doc, _resolve_grounding_sources({"mail": "m"}, ""))
+
+    def test_unknown_name_raises_with_path_and_available(self) -> None:
+        class Doc(BaseModel):
+            order: Annotated[str, Grounded(source="mail")]
+
+        with pytest.raises(ValueError, match=r"'order' of Doc .*'mail'.*available: 'catalog'"):
+            _validate_source_names(Doc, _resolve_grounding_sources({"catalog": "c"}, ""))
+
+    @pytest.mark.parametrize("given", [None, "plain string"])
+    def test_named_check_needs_a_mapping(self, given: str | None) -> None:
+        class Doc(BaseModel):
+            order: Annotated[str, Grounded(source="mail")]
+
+        with pytest.raises(ValueError, match="available: none"):
+            _validate_source_names(Doc, _resolve_grounding_sources(given, "human"))
+
+    def test_unnamed_checks_need_nothing(self) -> None:
+        class Doc(BaseModel):
+            vendor: Annotated[str, Grounded()]
+
+        _validate_source_names(Doc, _resolve_grounding_sources(None, ""))
+
+    def test_unused_names_are_allowed(self) -> None:
+        class Doc(BaseModel):
+            vendor: str
+
+        _validate_source_names(Doc, _resolve_grounding_sources({"x": "y"}, ""))
+
+    def test_finds_names_inside_list_items(self) -> None:
+        class Line(BaseModel):
+            sku: Annotated[str, Grounded(source="catalog")]
+
+        class Doc(BaseModel):
+            lines: list[Line]
+
+        with pytest.raises(ValueError, match=r"'lines -> sku'"):
+            _validate_source_names(Doc, _resolve_grounding_sources({"mail": "m"}, ""))
+
+    def test_finds_names_inside_dict_values(self) -> None:
+        class Line(BaseModel):
+            sku: Annotated[str, Grounded(source="catalog")]
+
+        class Doc(BaseModel):
+            by_key: dict[str, Line]
+
+        with pytest.raises(ValueError, match=r"'by_key -> sku'"):
+            _validate_source_names(Doc, _resolve_grounding_sources({}, ""))
+
+    def test_finds_names_inside_optional_models(self) -> None:
+        class Line(BaseModel):
+            sku: Annotated[str, Grounded(source="catalog")]
+
+        class Doc(BaseModel):
+            maybe: Line | None = None
+
+        with pytest.raises(ValueError, match=r"'maybe -> sku'"):
+            _validate_source_names(Doc, _resolve_grounding_sources({}, ""))
+
+    def test_recursive_model_terminates(self) -> None:
+        _validate_source_names(_TreeNode, _resolve_grounding_sources({"tree": "t"}, ""))
+        with pytest.raises(ValueError, match="'tree'"):
+            _validate_source_names(_TreeNode, _resolve_grounding_sources({}, ""))
+
+    def test_custom_check_with_source_attribute_is_validated(self) -> None:
+        @dataclass(frozen=True)
+        class InSource(FieldCheck):
+            source: str = "catalog"
+
+            def check(self, value: Any, ctx: ExtractionContext) -> str | None:
+                return None
+
+        class Doc(BaseModel):
+            sku: Annotated[str, InSource()]
+
+        with pytest.raises(ValueError, match="'catalog'"):
+            _validate_source_names(Doc, _resolve_grounding_sources({}, ""))
