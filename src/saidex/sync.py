@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import threading
-from collections.abc import Coroutine
+from collections.abc import Coroutine, Mapping
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from langchain_core.callbacks.base import Callbacks
@@ -139,6 +139,7 @@ def extract_data_sync(
     on_exhausted: OnExhausted[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data`.
 
@@ -162,6 +163,8 @@ def extract_data_sync(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
             :func:`~saidex.extract_data`.
 
     Returns:
@@ -188,6 +191,7 @@ def extract_data_sync(
             on_exhausted=on_exhausted,
             reasoning_escalation=reasoning_escalation,
             fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_sync",
         async_name="extract_data",
@@ -213,6 +217,7 @@ def extract_data_from_text_sync(
     on_exhausted: OnExhausted[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_from_text`.
 
@@ -237,6 +242,8 @@ def extract_data_from_text_sync(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
             :func:`~saidex.extract_data`.
 
     Returns:
@@ -264,6 +271,7 @@ def extract_data_from_text_sync(
             on_exhausted=on_exhausted,
             reasoning_escalation=reasoning_escalation,
             fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_from_text_sync",
         async_name="extract_data_from_text",
@@ -288,6 +296,7 @@ def extract_data_list_sync(
     on_exhausted: OnExhaustedList[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list`.
 
@@ -311,6 +320,8 @@ def extract_data_list_sync(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
             :func:`~saidex.extract_data`.
 
     Returns:
@@ -337,6 +348,7 @@ def extract_data_list_sync(
             on_exhausted=on_exhausted,
             reasoning_escalation=reasoning_escalation,
             fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_list_sync",
         async_name="extract_data_list",
@@ -362,6 +374,7 @@ def extract_data_list_from_text_sync(
     on_exhausted: OnExhaustedList[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_list_from_text`.
 
@@ -386,6 +399,8 @@ def extract_data_list_from_text_sync(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
             :func:`~saidex.extract_data`.
 
     Returns:
@@ -413,6 +428,7 @@ def extract_data_list_from_text_sync(
             on_exhausted=on_exhausted,
             reasoning_escalation=reasoning_escalation,
             fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_list_from_text_sync",
         async_name="extract_data_list_from_text",
@@ -438,6 +454,7 @@ def extract_data_with_tools_sync(
     on_exhausted: OnExhausted[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.extract_data_with_tools`.
 
@@ -461,6 +478,8 @@ def extract_data_with_tools_sync(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
             :func:`~saidex.extract_data`.
 
     Returns:
@@ -488,6 +507,7 @@ def extract_data_with_tools_sync(
             on_exhausted=on_exhausted,
             reasoning_escalation=reasoning_escalation,
             fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="extract_data_with_tools_sync",
         async_name="extract_data_with_tools",
@@ -512,6 +532,7 @@ def run_extractor_agent_sync(
     on_exhausted: OnExhausted[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Synchronous wrapper around :func:`~saidex.run_extractor_agent`.
 
@@ -534,6 +555,8 @@ def run_extractor_agent_sync(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`~saidex.extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`~saidex.extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
             :func:`~saidex.extract_data`.
 
     Returns:
@@ -560,6 +583,7 @@ def run_extractor_agent_sync(
             on_exhausted=on_exhausted,
             reasoning_escalation=reasoning_escalation,
             fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
         ),
         sync_name="run_extractor_agent_sync",
         async_name="run_extractor_agent",

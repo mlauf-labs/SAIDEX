@@ -907,6 +907,16 @@ the locale taken from a sibling field (`locale_field`) or a fixed `locale`.
 It is built on a reusable `FieldCheck` pattern, so you can add your own
 source-aware checks the same way.
 
+When the user message carries more than the document — customer records,
+reference data — pass `grounding_source=` so only the document counts as
+evidence, or a dict of named sources for `Grounded(source="mail")` fields:
+
+```python
+result, stats = await extract_data_from_text(
+    llm, Concern, prompt, grounding_source=mail_text  # values must appear in the mail
+)
+```
+
 > Full guide and the custom-check pattern:
 > [`examples/13_source_grounding.py`](examples/13_source_grounding.py)
 > — [detailed docs](docs/source-grounding.md)
