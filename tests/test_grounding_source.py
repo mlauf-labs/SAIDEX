@@ -7,6 +7,7 @@ that only appears in the reference data is rejected. Mock LLMs only — no netwo
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated, Any
 from unittest.mock import MagicMock
 
@@ -19,7 +20,17 @@ from saidex import (
     Grounded,
     GroundedField,
     extract_data,
+    extract_data_from_text,
+    extract_data_from_text_sync,
+    extract_data_list,
+    extract_data_list_from_text,
+    extract_data_list_from_text_sync,
+    extract_data_list_sync,
+    extract_data_sync,
+    extract_data_with_tools,
+    extract_data_with_tools_sync,
     run_extractor_agent,
+    run_extractor_agent_sync,
 )
 from saidex.retry import RetryConfig
 from tests._mock_llm import make_llm, make_response
@@ -337,6 +348,145 @@ async def test_unknown_source_name_raises_in_agent_loop() -> None:
     with pytest.raises(ValueError, match="'mail'"):
         await run_extractor_agent(
             llm, RoutedConcern, _messages(), tools=[], grounding_source=MAIL, retry_config=NO_RETRY
+        )
+
+    llm.bind_tools.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Every other entry point forwards grounding_source
+# ---------------------------------------------------------------------------
+
+Answer = Callable[[str, str], MagicMock]
+
+ASYNC_ENTRY_POINTS = [
+    pytest.param(
+        lambda llm, **kw: extract_data_from_text(llm, Concern, PROMPT, **kw),
+        _single,
+        id="extract_data_from_text",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_list(llm, Concern, _messages(), **kw),
+        _batch,
+        id="extract_data_list",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_list_from_text(llm, Concern, PROMPT, **kw),
+        _batch,
+        id="extract_data_list_from_text",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_with_tools(llm, Concern, PROMPT, tools=[], **kw),
+        _single,
+        id="extract_data_with_tools",
+    ),
+]
+
+SYNC_ENTRY_POINTS = [
+    pytest.param(
+        lambda llm, **kw: extract_data_sync(llm, Concern, _messages(), **kw),
+        _single,
+        id="extract_data_sync",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_from_text_sync(llm, Concern, PROMPT, **kw),
+        _single,
+        id="extract_data_from_text_sync",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_list_sync(llm, Concern, _messages(), **kw),
+        _batch,
+        id="extract_data_list_sync",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_list_from_text_sync(llm, Concern, PROMPT, **kw),
+        _batch,
+        id="extract_data_list_from_text_sync",
+    ),
+    pytest.param(
+        lambda llm, **kw: extract_data_with_tools_sync(llm, Concern, PROMPT, tools=[], **kw),
+        _single,
+        id="extract_data_with_tools_sync",
+    ),
+    pytest.param(
+        lambda llm, **kw: run_extractor_agent_sync(llm, Concern, _messages(), tools=[], **kw),
+        _single,
+        id="run_extractor_agent_sync",
+    ),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("call", "answer"), ASYNC_ENTRY_POINTS)
+async def test_async_entry_points_forward_grounding_source(
+    call: Callable[..., Any], answer: Answer
+) -> None:
+    llm = make_llm([answer("28870", "c1"), answer("32008", "c2")])
+
+    _, stats = await call(llm, grounding_source=MAIL, retry_config=NO_RETRY)
+
+    assert stats.success
+    assert _grounding_received(stats) == ["28870"]
+
+
+@pytest.mark.parametrize(("call", "answer"), SYNC_ENTRY_POINTS)
+def test_sync_wrappers_forward_grounding_source(call: Callable[..., Any], answer: Answer) -> None:
+    llm = make_llm([answer("28870", "c1"), answer("32008", "c2")])
+
+    _, stats = call(llm, grounding_source=MAIL, retry_config=NO_RETRY)
+
+    assert stats.success
+    assert _grounding_received(stats) == ["28870"]
+
+
+@pytest.mark.asyncio
+async def test_named_sources_in_batch_extraction() -> None:
+    llm = make_llm(
+        [
+            _answer(
+                "RoutedConcernList",
+                {
+                    "items": [
+                        {"order_number": "32008", "product": "UltraView 27"},
+                        {"order_number": "28870", "product": "ProDesk keyboard"},
+                    ]
+                },
+                "c1",
+            ),
+            _answer(
+                "RoutedConcernList",
+                {"items": [{"order_number": "32008", "product": "UltraView 27"}]},
+                "c2",
+            ),
+        ]
+    )
+
+    items, stats = await extract_data_list(
+        llm,
+        RoutedConcern,
+        _messages(),
+        grounding_source={"mail": MAIL, "catalog": CATALOG},
+        retry_config=NO_RETRY,
+    )
+
+    assert items is not None
+    assert [i.order_number for i in items] == ["32008"]
+    assert [i.field_path for i in stats.field_issues if i.category == "grounding"] == [
+        "items -> 1 -> order_number"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unknown_source_name_raises_in_batch_extraction() -> None:
+    llm = make_llm([])
+
+    with pytest.raises(ValueError, match=r"'items -> order_number'.*'mail'"):
+        await extract_data_list(
+            llm,
+            RoutedConcern,
+            _messages(),
+            grounding_source={"catalog": CATALOG},
+            retry_config=NO_RETRY,
         )
 
     llm.bind_tools.assert_not_called()

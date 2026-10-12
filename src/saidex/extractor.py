@@ -1030,6 +1030,7 @@ async def extract_data_from_text(
     on_exhausted: OnExhausted[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractDataStats]:
     """Extract a validated Pydantic model from a plain text string.
 
@@ -1061,6 +1062,8 @@ async def extract_data_from_text(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`extract_data`.
+        grounding_source: What ``Grounded()`` fields are checked against — see
             :func:`extract_data`.
 
     Returns:
@@ -1103,6 +1106,7 @@ async def extract_data_from_text(
         on_exhausted=on_exhausted,
         reasoning_escalation=reasoning_escalation,
         fallback_reasoning_escalation=fallback_reasoning_escalation,
+        grounding_source=grounding_source,
     )
 
 
@@ -1152,6 +1156,7 @@ async def extract_data_list(
     on_exhausted: OnExhaustedList[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a message list.
 
@@ -1204,6 +1209,8 @@ async def extract_data_list(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`extract_data`.
+        grounding_source: What ``Grounded()`` fields of each item are checked against — see
             :func:`extract_data`.
 
     Returns:
@@ -1272,11 +1279,11 @@ async def extract_data_list(
 
     # Computed lazily: the list-level source text only feeds the trace inputs
     # (the inner extract_data derives its own copy for grounding).
-    grounding_source = _source_text_from_messages(messages) if capture_source_text else ""
+    human_text = _source_text_from_messages(messages) if capture_source_text else ""
     trace = await _ChainRun.start(
         callbacks,
         name="saidex.extract_data_list",
-        inputs=_trace_inputs(schema.__name__, mode.value, grounding_source, capture_source_text),
+        inputs=_trace_inputs(schema.__name__, mode.value, human_text, capture_source_text),
     )
     try:
         # The inner call must not fire the hook or notify observers: it would
@@ -1299,6 +1306,7 @@ async def extract_data_list(
             on_exhausted=container_hook,
             reasoning_escalation=reasoning_escalation,
             fallback_reasoning_escalation=fallback_reasoning_escalation,
+            grounding_source=grounding_source,
             _notify_observers=False,
             _trace=trace,
         )
@@ -1368,6 +1376,7 @@ async def extract_data_list_from_text(
     on_exhausted: OnExhaustedList[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[list[MODEL_T] | None, ExtractDataStats]:
     """Extract a list of validated Pydantic models from a plain text string.
 
@@ -1403,6 +1412,8 @@ async def extract_data_list_from_text(
         reasoning_escalation: Opt-in reasoning-effort escalation for the primary
             model — see :func:`extract_data`.
         fallback_reasoning_escalation: Same, for the fallback model — see
+            :func:`extract_data`.
+        grounding_source: What ``Grounded()`` fields of each item are checked against — see
             :func:`extract_data`.
 
     Returns:
@@ -1446,6 +1457,7 @@ async def extract_data_list_from_text(
         on_exhausted=on_exhausted,
         reasoning_escalation=reasoning_escalation,
         fallback_reasoning_escalation=fallback_reasoning_escalation,
+        grounding_source=grounding_source,
     )
 
 
@@ -1468,6 +1480,7 @@ async def extract_data_with_tools(
     on_exhausted: OnExhausted[MODEL_T] | None = None,
     reasoning_escalation: ReasoningEscalation | None = None,
     fallback_reasoning_escalation: ReasoningEscalation | None = None,
+    grounding_source: str | Mapping[str, str] | None = None,
 ) -> tuple[MODEL_T | None, ExtractorRunStats]:
     """Run an agentic tool-loop to produce a validated Pydantic model.
 
@@ -1518,6 +1531,8 @@ async def extract_data_with_tools(
             model.
         fallback_reasoning_escalation: Same, for the fallback model — see
             :func:`extract_data`.
+        grounding_source: What ``Grounded()`` fields of the final answer are checked against — see
+            :func:`extract_data`.
 
     Returns:
         ``(model_instance, ExtractorRunStats)`` — *model_instance* is ``None`` on
@@ -1560,6 +1575,7 @@ async def extract_data_with_tools(
         on_exhausted=on_exhausted,
         reasoning_escalation=reasoning_escalation,
         fallback_reasoning_escalation=fallback_reasoning_escalation,
+        grounding_source=grounding_source,
     )
 
 
